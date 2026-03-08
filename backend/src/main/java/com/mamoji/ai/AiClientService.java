@@ -5,11 +5,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,7 +71,7 @@ public class AiClientService {
 
     private Mono<String> chatWithFallbackMono(String systemPrompt, String userPrompt, String traceId, String modelOverride) {
         String primaryModel = normalizeModel(modelOverride != null ? modelOverride : properties.getModel());
-        String fallbackModel = normalizeModel(properties.getFallbackModel());
+        String fallbackModel = normalizeOptionalModel(properties.getFallbackModel());
 
         Mono<String> primary = chatMono(systemPrompt, userPrompt, traceId, primaryModel);
         if (!shouldUseFallback(primaryModel, fallbackModel)) {
@@ -170,7 +172,24 @@ public class AiClientService {
     }
 
     private boolean isTransientError(Throwable throwable) {
-        return !(throwable instanceof IllegalArgumentException);
+        if (throwable == null) {
+            return false;
+        }
+        if (throwable instanceof java.util.concurrent.TimeoutException) {
+            return true;
+        }
+        if (throwable instanceof IOException) {
+            return true;
+        }
+        if (throwable instanceof WebClientResponseException responseException) {
+            int status = responseException.getStatusCode().value();
+            return status == 429 || status >= 500;
+        }
+        Throwable cause = throwable.getCause();
+        if (cause != null && cause != throwable) {
+            return isTransientError(cause);
+        }
+        return false;
     }
 
     private String shortTraceId() {
@@ -183,6 +202,13 @@ public class AiClientService {
 
     private boolean shouldUseFallback(String primaryModel, String fallbackModel) {
         return fallbackModel != null && !fallbackModel.isBlank() && !fallbackModel.equals(primaryModel);
+    }
+
+    private String normalizeOptionalModel(String model) {
+        if (model == null || model.isBlank()) {
+            return null;
+        }
+        return normalizeModel(model);
     }
 
     private String normalizeModel(String model) {

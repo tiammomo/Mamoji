@@ -1,6 +1,6 @@
 package com.mamoji.service;
 
-import com.mamoji.ai.AiClientService;
+import com.mamoji.ai.AiGateway;
 import com.mamoji.dto.AIChatResponse;
 import com.mamoji.entity.Budget;
 import com.mamoji.entity.Category;
@@ -42,7 +42,7 @@ public class AIService {
     private final BudgetRepository budgetRepository;
     private final CategoryRepository categoryRepository;
     private final WebClient.Builder webClientBuilder;
-    private final AiClientService aiClientService;
+    private final AiGateway aiGateway;
 
     public AIChatResponse chat(Long userId, String message, String assistantType) {
         String type = (assistantType == null || assistantType.isBlank()) ? "finance" : assistantType;
@@ -59,7 +59,7 @@ public class AIService {
             systemPrompt = FINANCE_SYSTEM_PROMPT;
         }
 
-        return new AIChatResponse(aiClientService.chat(systemPrompt, prompt));
+        return new AIChatResponse(aiGateway.chat(systemPrompt, prompt, null, type));
     }
 
     private String fetchStockData(String message) {

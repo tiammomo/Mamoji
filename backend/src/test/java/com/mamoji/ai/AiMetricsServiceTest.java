@@ -83,4 +83,63 @@ class AiMetricsServiceTest {
         Assertions.assertEquals(42.0, toolLatencyMs);
         Assertions.assertEquals(2.0, warnings);
     }
+
+    @Test
+    void shouldRecordModelRouteReasonMetrics() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory(Map.of("meterRegistry", registry));
+        AiMetricsService service = new AiMetricsService(beanFactory.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+
+        service.recordModelRouteReason("finance", "finance-model", "assistant_type_finance");
+
+        double count = registry.get("ai.model.route.reason.count")
+            .tag("assistantType", "finance")
+            .tag("model", "finance-model")
+            .tag("reason", "assistant_type_finance")
+            .counter()
+            .count();
+
+        Assertions.assertEquals(1.0, count);
+    }
+
+    @Test
+    void shouldNormalizeHighCardinalityTags() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory(Map.of("meterRegistry", registry));
+        AiMetricsService service = new AiMetricsService(beanFactory.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+
+        service.recordModelRouteReason("Finance Team #1", "model/very/unexpected", "custom reason");
+
+        double count = registry.get("ai.model.route.reason.count")
+            .tag("assistantType", "other")
+            .tag("model", "other")
+            .tag("reason", "other")
+            .counter()
+            .count();
+
+        Assertions.assertEquals(1.0, count);
+    }
+
+    @Test
+    void shouldRecordMissingDimensionMetric() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory(Map.of("meterRegistry", registry));
+        AiMetricsService service = new AiMetricsService(beanFactory.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+
+        service.recordRequest(null, true, 15, -1);
+
+        double providerMissing = registry.get("ai.metrics.dimension.missing.count")
+            .tag("metric", "ai.request")
+            .tag("dimension", "provider")
+            .counter()
+            .count();
+        double tokensMissing = registry.get("ai.metrics.dimension.missing.count")
+            .tag("metric", "ai.request")
+            .tag("dimension", "estimated_tokens")
+            .counter()
+            .count();
+
+        Assertions.assertEquals(1.0, providerMissing);
+        Assertions.assertEquals(1.0, tokensMissing);
+    }
 }

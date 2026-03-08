@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -13,7 +14,10 @@ import java.util.List;
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
 
     Page<Transaction> findByUserIdOrderByDateDesc(Long userId, Pageable pageable);
+
     long countByUserId(Long userId);
+
+    long countByUserIdAndTypeAndDateBetween(Long userId, Integer type, LocalDate startDate, LocalDate endDate);
 
     @Query("SELECT SUM(t.amount) FROM Transaction t WHERE t.userId = :userId AND t.type = :type AND t.date BETWEEN :startDate AND :endDate")
     BigDecimal sumByUserIdAndTypeAndDateBetween(
@@ -30,10 +34,62 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
         @Param("endDate") LocalDate endDate
     );
 
+    @Query("""
+        SELECT t
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.date BETWEEN :startDate AND :endDate
+          AND (:categoryId IS NULL OR t.categoryId = :categoryId)
+          AND (:type IS NULL OR t.type = :type)
+        ORDER BY t.date DESC
+        """)
+    List<Transaction> findByUserIdAndDateBetweenWithFilters(
+        @Param("userId") Long userId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("categoryId") Long categoryId,
+        @Param("type") Integer type
+    );
+
     @Query("SELECT t.categoryId, SUM(t.amount) FROM Transaction t WHERE t.userId = :userId AND t.type = :type AND t.date BETWEEN :startDate AND :endDate GROUP BY t.categoryId")
     List<Object[]> sumByCategoryAndType(
         @Param("userId") Long userId,
         @Param("type") Integer type,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+        SELECT
+            t.categoryId AS categoryId,
+            COALESCE(c.name, 'Unknown') AS categoryName,
+            SUM(t.amount) AS amount
+        FROM Transaction t
+        LEFT JOIN Category c ON c.id = t.categoryId
+        WHERE t.userId = :userId
+          AND t.type = :type
+          AND t.date BETWEEN :startDate AND :endDate
+        GROUP BY t.categoryId, c.name
+        """)
+    List<CategoryStatsProjection> sumByCategoryAndTypeWithCategoryName(
+        @Param("userId") Long userId,
+        @Param("type") Integer type,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+        SELECT SUM(t.amount)
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = :type
+          AND t.categoryId = :categoryId
+          AND t.date BETWEEN :startDate AND :endDate
+        """)
+    BigDecimal sumByUserIdAndTypeAndCategoryIdAndDateBetween(
+        @Param("userId") Long userId,
+        @Param("type") Integer type,
+        @Param("categoryId") Long categoryId,
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
     );
@@ -43,4 +99,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     Page<Transaction> findByUserIdAndDateBetweenOrderByDateDesc(Long userId, LocalDate startDate, LocalDate endDate, Pageable pageable);
 
     Page<Transaction> findByUserIdAndTypeAndDateBetweenOrderByDateDesc(Long userId, Integer type, LocalDate startDate, LocalDate endDate, Pageable pageable);
+
+    interface CategoryStatsProjection {
+        Long getCategoryId();
+
+        String getCategoryName();
+
+        BigDecimal getAmount();
+    }
 }

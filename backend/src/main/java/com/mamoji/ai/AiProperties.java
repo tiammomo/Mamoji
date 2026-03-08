@@ -13,6 +13,11 @@ import java.util.List;
 public class AiProperties {
 
     /**
+     * AI engine selector. Supported values: legacy (default), spring-ai.
+     */
+    private String engine = "legacy";
+
+    /**
      * Provider base URL, e.g. https://api.minimaxi.com
      */
     private String baseUrl = "https://api.minimaxi.com";
@@ -48,6 +53,8 @@ public class AiProperties {
 
     private final PromptOps promptOps = new PromptOps();
     private final ToolOps toolOps = new ToolOps();
+    private final ToolCallingOps toolCallingOps = new ToolCallingOps();
+    private final StreamOps streamOps = new StreamOps();
     private final ToolExecOps toolExecOps = new ToolExecOps();
     private final MemoryOps memoryOps = new MemoryOps();
     private final RagOps ragOps = new RagOps();
@@ -104,6 +111,29 @@ public class AiProperties {
 
     @Getter
     @Setter
+    public static class ToolCallingOps {
+        /**
+         * Whether spring-ai tool-calling bridge is enabled.
+         */
+        private boolean springEnabled = false;
+
+        /**
+         * Whether stock domain tool-calling is enabled on spring-ai bridge.
+         */
+        private boolean stockEnabled = true;
+    }
+
+    @Getter
+    @Setter
+    public static class StreamOps {
+        /**
+         * Whether /chat/stream uses ReAct/RAG/Tool main pipeline.
+         */
+        private boolean reactEnabled = true;
+    }
+
+    @Getter
+    @Setter
     public static class ToolExecOps {
         /**
          * Tool call timeout in milliseconds.
@@ -124,6 +154,31 @@ public class AiProperties {
          * Consecutive failure threshold to open circuit.
          */
         private int failureThreshold = 3;
+
+        /**
+         * Core thread pool size for tool execution.
+         */
+        private int executorCorePoolSize = 8;
+
+        /**
+         * Max thread pool size for tool execution.
+         */
+        private int executorMaxPoolSize = 32;
+
+        /**
+         * Queue capacity for tool execution tasks.
+         */
+        private int executorQueueCapacity = 256;
+
+        /**
+         * Max idempotent cache entries for tool execution.
+         */
+        private int cacheMaxEntries = 2000;
+
+        /**
+         * Idempotent cache TTL in seconds.
+         */
+        private int cacheTtlSeconds = 60;
     }
 
     @Getter

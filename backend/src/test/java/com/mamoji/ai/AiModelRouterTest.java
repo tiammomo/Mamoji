@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 class AiModelRouterTest {
 
     @Test
-    void shouldSelectAssistantSpecificModel() {
+    void shouldSelectAssistantSpecificModelAndReasons() {
         AiProperties properties = new AiProperties();
         properties.setModel("default-model");
         properties.getRoutingOps().setEnabled(true);
@@ -14,8 +14,13 @@ class AiModelRouterTest {
         properties.getRoutingOps().setStockModel("stock-model");
         AiModelRouter router = new AiModelRouter(properties);
 
-        Assertions.assertEquals("finance-model", router.pickPrimaryModel("finance", "预算建议"));
-        Assertions.assertEquals("stock-model", router.pickPrimaryModel("stock", "600519"));
+        AiModelRouter.RoutingDecision financeDecision = router.pickPrimaryModelDecision("finance", "budget advice");
+        Assertions.assertEquals("finance-model", financeDecision.model());
+        Assertions.assertEquals("assistant_type_finance", financeDecision.reason());
+
+        AiModelRouter.RoutingDecision stockDecision = router.pickPrimaryModelDecision("stock", "600519");
+        Assertions.assertEquals("stock-model", stockDecision.model());
+        Assertions.assertEquals("assistant_type_stock", stockDecision.reason());
     }
 
     @Test
@@ -28,6 +33,20 @@ class AiModelRouterTest {
         AiModelRouter router = new AiModelRouter(properties);
 
         String longQuestion = "a".repeat(120);
-        Assertions.assertEquals("complex-model", router.pickPrimaryModel("finance", longQuestion));
+        AiModelRouter.RoutingDecision decision = router.pickPrimaryModelDecision("finance", longQuestion);
+        Assertions.assertEquals("complex-model", decision.model());
+        Assertions.assertEquals("high_complexity", decision.reason());
+    }
+
+    @Test
+    void shouldExposeReasonWhenRoutingDisabled() {
+        AiProperties properties = new AiProperties();
+        properties.setModel("default-model");
+        properties.getRoutingOps().setEnabled(false);
+        AiModelRouter router = new AiModelRouter(properties);
+
+        AiModelRouter.RoutingDecision decision = router.pickPrimaryModelDecision("finance", "hello");
+        Assertions.assertEquals("default-model", decision.model());
+        Assertions.assertEquals("routing_disabled", decision.reason());
     }
 }

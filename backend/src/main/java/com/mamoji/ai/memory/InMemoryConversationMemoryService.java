@@ -55,6 +55,14 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         }
     }
 
+    @Override
+    public void clear(String sessionKey) {
+        if (sessionKey == null || sessionKey.isBlank()) {
+            return;
+        }
+        sessions.remove(sessionKey);
+    }
+
     private void compactIfNeeded(Deque<ConversationTurn> turns) {
         AiProperties.MemoryOps memoryOps = aiProperties.getMemoryOps();
         if (!memoryOps.isSummarizeOnOverflow()) {

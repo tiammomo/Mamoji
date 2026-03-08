@@ -76,6 +76,14 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         return turns;
     }
 
+    @Override
+    public void clear(String sessionKey) {
+        if (sessionKey == null || sessionKey.isBlank()) {
+            return;
+        }
+        redisTemplate.delete(buildKey(sessionKey));
+    }
+
     private String buildKey(String sessionKey) {
         return KEY_PREFIX + sessionKey;
     }

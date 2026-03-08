@@ -12,24 +12,28 @@ public class AiModelRouter {
     }
 
     public String pickPrimaryModel(String assistantType, String question) {
+        return pickPrimaryModelDecision(assistantType, question).model();
+    }
+
+    public RoutingDecision pickPrimaryModelDecision(String assistantType, String question) {
         AiProperties.RoutingOps routingOps = aiProperties.getRoutingOps();
         if (!routingOps.isEnabled()) {
-            return aiProperties.getModel();
+            return new RoutingDecision(aiProperties.getModel(), "routing_disabled");
         }
 
         if (isHighComplexity(question, routingOps) && notBlank(routingOps.getHighComplexityModel())) {
-            return routingOps.getHighComplexityModel().trim();
+            return new RoutingDecision(routingOps.getHighComplexityModel().trim(), "high_complexity");
         }
 
         if ("stock".equalsIgnoreCase(assistantType) && notBlank(routingOps.getStockModel())) {
-            return routingOps.getStockModel().trim();
+            return new RoutingDecision(routingOps.getStockModel().trim(), "assistant_type_stock");
         }
 
         if ("finance".equalsIgnoreCase(assistantType) && notBlank(routingOps.getFinanceModel())) {
-            return routingOps.getFinanceModel().trim();
+            return new RoutingDecision(routingOps.getFinanceModel().trim(), "assistant_type_finance");
         }
 
-        return aiProperties.getModel();
+        return new RoutingDecision(aiProperties.getModel(), "default");
     }
 
     private boolean isHighComplexity(String question, AiProperties.RoutingOps routingOps) {
@@ -41,5 +45,8 @@ public class AiModelRouter {
 
     private boolean notBlank(String value) {
         return value != null && !value.isBlank();
+    }
+
+    public record RoutingDecision(String model, String reason) {
     }
 }

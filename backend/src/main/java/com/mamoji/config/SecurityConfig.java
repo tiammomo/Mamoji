@@ -2,6 +2,7 @@ package com.mamoji.config;
 
 import com.mamoji.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -24,26 +25,32 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
+@EnableConfigurationProperties(SecurityProperties.class)
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final SecurityProperties securityProperties;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
             .csrf(AbstractHttpConfigurer::disable)
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+            .headers(headers -> headers.frameOptions(this::configureFrameOptions))
             .sessionManagement(session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/test", "/h2-console/**").permitAll()
-                .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
-                .requestMatchers("/error", "/h2-console/**").permitAll()
-                .anyRequest().authenticated())
+            .authorizeHttpRequests(auth -> {
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+                auth.requestMatchers("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/test").permitAll();
+                auth.requestMatchers("/actuator/health", "/actuator/prometheus").permitAll();
+                auth.requestMatchers("/error").permitAll();
+                if (securityProperties.isH2ConsoleEnabled()) {
+                    auth.requestMatchers("/h2-console/**").permitAll();
+                }
+                auth.anyRequest().authenticated();
+            })
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .build();
     }
@@ -51,16 +58,37 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:33000", "http://127.0.0.1:33000"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
-        configuration.setExposedHeaders(List.of("Authorization", "Content-Type"));
-        configuration.setMaxAge(3600L);
+        SecurityProperties.Cors cors = securityProperties.getCors();
+        List<String> allowedOrigins = cors.getAllowedOrigins() != null ? cors.getAllowedOrigins() : List.of();
+
+        if (allowedOrigins.contains("*")) {
+            configuration.setAllowedOriginPatterns(List.of("*"));
+        } else {
+            configuration.setAllowedOrigins(allowedOrigins);
+        }
+
+        configuration.setAllowedMethods(cors.getAllowedMethods());
+        configuration.setAllowedHeaders(cors.getAllowedHeaders());
+        configuration.setExposedHeaders(cors.getExposedHeaders());
+        configuration.setAllowCredentials(cors.isAllowCredentials() && !allowedOrigins.contains("*"));
+        configuration.setMaxAge(cors.getMaxAgeSeconds());
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    private void configureFrameOptions(org.springframework.security.config.annotation.web.configurers.HeadersConfigurer<HttpSecurity>.FrameOptionsConfig frame) {
+        String mode = securityProperties.normalizedFrameOptions();
+        if ("disable".equals(mode)) {
+            frame.disable();
+            return;
+        }
+        if ("sameorigin".equals(mode)) {
+            frame.sameOrigin();
+            return;
+        }
+        frame.deny();
     }
 
     @Bean

@@ -51,7 +51,7 @@ class AiClientServiceTest {
         });
         server.start();
 
-        AiClientService service = buildService("primary-model", "backup-model");
+        AiClientService service = buildService("primary-model", "backup-model", 0);
         String answer = service.chat("system", "user");
 
         Assertions.assertEquals("fallback-ok", answer);
@@ -59,14 +59,50 @@ class AiClientServiceTest {
         Assertions.assertEquals(1, fallbackCalls.get());
     }
 
-    private AiClientService buildService(String primaryModel, String fallbackModel) {
+    @Test
+    void shouldNotRetryOnClient4xxErrors() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/text/chatcompletion_v2", exchange -> {
+            calls.incrementAndGet();
+            writeResponse(exchange, 400, "{\"error\":{\"message\":\"bad request\"}}");
+        });
+        server.start();
+
+        AiClientService service = buildService("primary-model", null, 3);
+        String answer = service.chat("system", "user");
+
+        Assertions.assertEquals("Sorry, AI service is temporarily unavailable. Please try again later.", answer);
+        Assertions.assertEquals(1, calls.get());
+    }
+
+    @Test
+    void shouldRetryOnServer5xxErrorsAccordingToMaxRetries() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/text/chatcompletion_v2", exchange -> {
+            calls.incrementAndGet();
+            writeResponse(exchange, 503, "{\"error\":{\"message\":\"upstream unavailable\"}}");
+        });
+        server.start();
+
+        AiClientService service = buildService("primary-model", null, 2);
+        String answer = service.chat("system", "user");
+
+        Assertions.assertEquals("Sorry, AI service is temporarily unavailable. Please try again later.", answer);
+        Assertions.assertEquals(3, calls.get());
+    }
+
+    private AiClientService buildService(String primaryModel, String fallbackModel, int maxRetries) {
         AiProperties properties = new AiProperties();
         properties.setBaseUrl("http://localhost:" + server.getAddress().getPort());
         properties.setApiKey("test-token");
         properties.setModel(primaryModel);
         properties.setFallbackModel(fallbackModel);
         properties.setTimeoutSeconds(2);
-        properties.setMaxRetries(0);
+        properties.setMaxRetries(maxRetries);
 
         @SuppressWarnings("unchecked")
         ObjectProvider<MeterRegistry> registryProvider = Mockito.mock(ObjectProvider.class);

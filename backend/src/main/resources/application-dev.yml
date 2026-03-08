@@ -1,0 +1,21 @@
+spring:
+  h2:
+    console:
+      enabled: ${SPRING_H2_CONSOLE_ENABLED:true}
+
+app:
+  security:
+    h2-console-enabled: true
+    frame-options: sameorigin
+    cors:
+      allowed-origins:
+        - http://localhost:33000
+        - http://127.0.0.1:33000
+
+jwt:
+  secret: ${JWT_SECRET:mamoji-dev-secret-key-change-in-production-12345678901234567890}
+
+management:
+  endpoint:
+    health:
+      show-details: always

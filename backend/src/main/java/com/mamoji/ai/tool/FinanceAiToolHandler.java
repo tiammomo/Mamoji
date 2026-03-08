@@ -19,8 +19,6 @@ public class FinanceAiToolHandler implements AiToolHandler {
 
     @Override
     public AiToolResult execute(Long userId, Map<String, Object> params) {
-        financeTools.setUserId(userId);
-
         String operation = stringParam(params, "operation");
         if (operation == null || operation.isBlank()) {
             return AiToolResult.fail("finance", "operation is required");
@@ -28,11 +26,12 @@ public class FinanceAiToolHandler implements AiToolHandler {
 
         return switch (operation) {
             case "query_income_expense" -> AiToolResult.ok("finance.query_income_expense",
-                financeTools.queryIncomeExpense(stringParam(params, "startDate"), stringParam(params, "endDate")));
+                financeTools.queryIncomeExpense(userId, stringParam(params, "startDate"), stringParam(params, "endDate")));
             case "query_budget" -> AiToolResult.ok("finance.query_budget",
-                financeTools.queryBudget(longParam(params, "budgetId")));
+                financeTools.queryBudget(userId, longParam(params, "budgetId")));
             case "query_transactions" -> AiToolResult.ok("finance.query_transactions",
                 financeTools.queryTransactions(
+                    userId,
                     stringParam(params, "startDate"),
                     stringParam(params, "endDate"),
                     longParam(params, "categoryId"),
@@ -40,6 +39,7 @@ public class FinanceAiToolHandler implements AiToolHandler {
                 ));
             case "query_category_stats" -> AiToolResult.ok("finance.query_category_stats",
                 financeTools.queryCategoryStats(
+                    userId,
                     stringParam(params, "startDate"),
                     stringParam(params, "endDate"),
                     intParamOrDefault(params, "type", 2)

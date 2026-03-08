@@ -1,6 +1,8 @@
 spring:
   application:
     name: mamoji
+  profiles:
+    default: dev
 
   # H2 for MVP (in-memory) - 可切换为 MySQL
   datasource:
@@ -20,7 +22,7 @@ spring:
 
   h2:
     console:
-      enabled: ${SPRING_H2_CONSOLE_ENABLED:true}
+      enabled: ${SPRING_H2_CONSOLE_ENABLED:false}
       path: /h2-console
 
   data:
@@ -35,7 +37,7 @@ server:
 
 # JWT 配置
 jwt:
-  secret: ${JWT_SECRET:mamoji-dev-secret-key-change-in-production-12345678901234567890}
+  secret: ${JWT_SECRET}
   expiration: ${JWT_EXPIRATION:86400}
 
 logging:
@@ -43,8 +45,33 @@ logging:
     com.mamoji: ${LOG_LEVEL:INFO}
     org.springframework.security: ${LOG_LEVEL_SECURITY:INFO}
 
+app:
+  security:
+    h2-console-enabled: ${APP_SECURITY_H2_CONSOLE_ENABLED:false}
+    frame-options: ${APP_SECURITY_FRAME_OPTIONS:deny}
+    cors:
+      allowed-origins: ${APP_SECURITY_CORS_ALLOWED_ORIGINS:}
+      allowed-methods: ${APP_SECURITY_CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
+      allowed-headers: ${APP_SECURITY_CORS_ALLOWED_HEADERS:*}
+      exposed-headers: ${APP_SECURITY_CORS_EXPOSED_HEADERS:Authorization,Content-Type}
+      allow-credentials: ${APP_SECURITY_CORS_ALLOW_CREDENTIALS:true}
+      max-age-seconds: ${APP_SECURITY_CORS_MAX_AGE_SECONDS:3600}
+  web-client:
+    max-connections: ${APP_WEB_CLIENT_MAX_CONNECTIONS:200}
+    pending-acquire-max-count: ${APP_WEB_CLIENT_PENDING_ACQUIRE_MAX_COUNT:500}
+    pending-acquire-timeout-ms: ${APP_WEB_CLIENT_PENDING_ACQUIRE_TIMEOUT_MS:2000}
+    connect-timeout-ms: ${APP_WEB_CLIENT_CONNECT_TIMEOUT_MS:3000}
+    response-timeout-ms: ${APP_WEB_CLIENT_RESPONSE_TIMEOUT_MS:10000}
+    read-timeout-ms: ${APP_WEB_CLIENT_READ_TIMEOUT_MS:10000}
+    write-timeout-ms: ${APP_WEB_CLIENT_WRITE_TIMEOUT_MS:10000}
+    max-idle-seconds: ${APP_WEB_CLIENT_MAX_IDLE_SECONDS:30}
+    max-life-seconds: ${APP_WEB_CLIENT_MAX_LIFE_SECONDS:300}
+
 # AI 配置
 ai:
+  engine: ${AI_ENGINE:legacy}
+  stream:
+    react-enabled: ${AI_STREAM_REACT_ENABLED:true}
   base-url: ${ANTHROPIC_BASE_URL:https://api.minimaxi.com}
   api-key: ${ANTHROPIC_AUTH_TOKEN:}
   model: ${ANTHROPIC_DEFAULT_SONNET_MODEL:abab6.5s-chat}
@@ -63,6 +90,9 @@ ai:
     enabled: ${AI_TOOL_OPS_ENABLED:true}
     per-user-tool-per-minute: ${AI_TOOL_PER_USER_PER_MINUTE:30}
     blocked-tools: ${AI_TOOL_BLOCKED_TOOLS:}
+  tool-calling-ops:
+    spring-enabled: ${AI_TOOL_CALLING_SPRING_ENABLED:false}
+    stock-enabled: ${AI_TOOL_CALLING_STOCK_ENABLED:true}
   tool-exec-ops:
     timeout-ms: ${AI_TOOL_TIMEOUT_MS:3000}
     max-concurrent-per-tool: ${AI_TOOL_MAX_CONCURRENT:4}

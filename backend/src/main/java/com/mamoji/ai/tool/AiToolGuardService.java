@@ -12,8 +12,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class AiToolGuardService {
 
+    private static final int STALE_WINDOW_MINUTES = 2;
+    private static final int CLEANUP_EVERY_CALLS = 64;
+
     private final AiProperties aiProperties;
     private final Map<String, ToolCounterWindow> counters = new ConcurrentHashMap<>();
+    private final AtomicInteger cleanupTicker = new AtomicInteger(0);
 
     public AiToolGuardService(AiProperties aiProperties) {
         this.aiProperties = aiProperties;
@@ -33,6 +37,7 @@ public class AiToolGuardService {
         int limit = Math.max(1, toolOps.getPerUserToolPerMinute());
         String key = normalizeUser(userId) + ":" + safeToolName;
         long currentMinute = Instant.now().getEpochSecond() / 60;
+        cleanupIfNeeded(currentMinute);
 
         ToolCounterWindow window = counters.computeIfAbsent(key, k -> new ToolCounterWindow(currentMinute));
         synchronized (window) {
@@ -47,6 +52,18 @@ public class AiToolGuardService {
             }
             return GuardDecision.allow();
         }
+    }
+
+    int counterSizeForTest() {
+        return counters.size();
+    }
+
+    private void cleanupIfNeeded(long currentMinute) {
+        if (cleanupTicker.incrementAndGet() % CLEANUP_EVERY_CALLS != 0) {
+            return;
+        }
+        long minKeptMinute = currentMinute - STALE_WINDOW_MINUTES;
+        counters.entrySet().removeIf(entry -> entry.getValue().minute < minKeptMinute);
     }
 
     private boolean isBlocked(String toolName, AiProperties.ToolOps toolOps) {
