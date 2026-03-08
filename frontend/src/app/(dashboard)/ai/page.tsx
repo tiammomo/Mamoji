@@ -56,11 +56,14 @@ const assistantConfig: Record<AssistantType, {
 
 export default function AIPage() {
   const router = useRouter();
+  const messageListRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastAutoScrollAtRef = useRef(0);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
   const [assistantType, setAssistantType] = useState<AssistantType>("finance");
 
   const currentConfig = useMemo(() => assistantConfig[assistantType], [assistantType]);
@@ -83,7 +86,9 @@ export default function AIPage() {
   }, [router, assistantType, currentConfig.welcomeMessage]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: loading ? "auto" : "smooth" });
+    if (!loading) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages.length, loading]);
 
   async function handleSend(message?: string): Promise<void> {
@@ -102,6 +107,7 @@ export default function AIPage() {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
+    setAwaitingFirstChunk(true);
 
     const assistantId = `${Date.now()}-assistant`;
     let streamChunkCount = 0;
@@ -155,8 +161,27 @@ export default function AIPage() {
       await aiApi.chatStream(userContent, assistantType, {
         onChunk: (chunk) => {
           streamChunkCount += 1;
+          if (streamChunkCount === 1) {
+            setAwaitingFirstChunk(false);
+          }
+          const container = messageListRef.current;
+          const shouldStickToBottom = container
+            ? container.scrollHeight - container.scrollTop - container.clientHeight < 64
+            : true;
           chunkBuffer += chunk;
           scheduleFlush();
+          if (shouldStickToBottom) {
+            const now = Date.now();
+            if (now - lastAutoScrollAtRef.current > 120) {
+              lastAutoScrollAtRef.current = now;
+              requestAnimationFrame(() => {
+                const currentContainer = messageListRef.current;
+                if (currentContainer) {
+                  currentContainer.scrollTop = currentContainer.scrollHeight;
+                }
+              });
+            }
+          }
         },
         onDone: (payload) => {
           if (flushTimer) {
@@ -183,6 +208,7 @@ export default function AIPage() {
 
       if (streamChunkCount === 0) {
         const fallback = await aiApi.chat(userContent, assistantType);
+        setAwaitingFirstChunk(false);
         setMessages((prev) =>
           prev.map((item) =>
             item.id === assistantId
@@ -220,6 +246,7 @@ export default function AIPage() {
         clearTimeout(flushTimer);
         flushTimer = null;
       }
+      setAwaitingFirstChunk(false);
       setLoading(false);
     }
   }
@@ -266,7 +293,7 @@ export default function AIPage() {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border flex flex-col h-[calc(100vh-18rem)]">
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div ref={messageListRef} className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
@@ -292,7 +319,7 @@ export default function AIPage() {
             </div>
           ))}
 
-          {loading && (
+          {loading && awaitingFirstChunk && (
             <div className="flex justify-start">
               <div className="bg-gray-100 rounded-2xl px-4 py-3">
                 <div className="flex items-center gap-2">
