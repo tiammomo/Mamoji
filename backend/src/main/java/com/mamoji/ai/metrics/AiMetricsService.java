@@ -168,6 +168,30 @@ public class AiMetricsService {
             .increment();
     }
 
+    public void recordChatMode(String modeRequested, String modeUsed, String assistantType) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Counter.builder("ai.chat.mode.count")
+            .tag("requested", normalizeGenericTag(modeRequested))
+            .tag("used", normalizeGenericTag(modeUsed))
+            .tag("assistantType", normalizeAssistantType(assistantType))
+            .register(meterRegistry)
+            .increment();
+    }
+
+    public void recordChatModeFallback(String fromMode, String toMode, String reason) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Counter.builder("ai.chat.mode.fallback.count")
+            .tag("from", normalizeGenericTag(fromMode))
+            .tag("to", normalizeGenericTag(toMode))
+            .tag("reason", normalizeGenericTag(reason))
+            .register(meterRegistry)
+            .increment();
+    }
+
     public void recordCacheAccess(String layer, String cacheName, boolean hit) {
         if (meterRegistry == null) {
             return;

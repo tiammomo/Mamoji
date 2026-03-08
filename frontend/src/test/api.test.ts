@@ -215,7 +215,7 @@ describe("Domain API wrappers", () => {
     const chunks: string[] = [];
     let donePayload: unknown;
 
-    await aiApi.chatStream("hello", "finance", {
+    await aiApi.chatStream("hello", "finance", "agent", {
       onChunk: (chunk) => chunks.push(chunk),
       onDone: (payload) => {
         donePayload = payload;

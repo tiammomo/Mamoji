@@ -74,15 +74,18 @@ export function useTransactions(params?: {
   page?: number;
   pageSize?: number;
   type?: number;
+  types?: number[];
   accountId?: number;
   categoryId?: number;
   startDate?: string;
   endDate?: string;
   keyword?: string;
+  enabled?: boolean;
 }) {
   return useQuery({
     queryKey: ["transactions", params],
     queryFn: () => transactionApi.getTransactions(params),
+    enabled: params?.enabled ?? true,
   });
 }
 

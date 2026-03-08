@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -78,6 +79,19 @@ public class GlobalExceptionHandler {
             ? ex.getMessage()
             : "Invalid request.";
         return buildResponse(HttpStatus.BAD_REQUEST, message, request, ex);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResourceFoundException(
+        NoResourceFoundException ex,
+        HttpServletRequest request
+    ) {
+        return buildResponse(
+            HttpStatus.NOT_FOUND,
+            "Requested resource was not found.",
+            request,
+            ex
+        );
     }
 
     @ExceptionHandler(RuntimeException.class)

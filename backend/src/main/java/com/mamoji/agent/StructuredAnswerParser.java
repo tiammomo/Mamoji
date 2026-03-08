@@ -70,6 +70,9 @@ public class StructuredAnswerParser {
 
             String answer = firstNonBlank(
                 textOrNull(node.get("answer")),
+                textOrNull(node.get("reply")),
+                textOrNull(node.get("text")),
+                textOrNull(node.get("result")),
                 textOrNull(node.get("content")),
                 textOrNull(node.path("output").get("text"))
             );

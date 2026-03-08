@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, Download, Trash2, X } from 'lucide-react';
-import { receiptApi, Receipt } from '@/lib/api';
+import { receiptApi, Receipt, getErrorMessage } from '@/lib/api';
 
 const PAGE_SIZE = 20;
 
@@ -14,15 +14,24 @@ export default function ReceiptsPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
+  const [errorText, setErrorText] = useState('');
 
   const fetchReceipts = useCallback(async () => {
     setLoading(true);
+    setErrorText('');
     try {
       const result = await receiptApi.getReceipts({ page, pageSize: PAGE_SIZE });
       setReceipts(result.list);
       setTotal(result.total);
     } catch (error) {
-      console.error('获取收据失败:', error);
+      const status = (error as { status?: number; code?: number })?.status ?? (error as { status?: number; code?: number })?.code;
+      if (status === 404) {
+        setErrorText('收据接口未启用（/api/v1/receipts 不存在）。请先实现后端收据模块。');
+      } else {
+        setErrorText(getErrorMessage(error, '获取收据失败，请稍后重试'));
+      }
+      setReceipts([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -35,11 +44,12 @@ export default function ReceiptsPage() {
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
       setUploading(true);
+      setErrorText('');
       try {
         await Promise.all(acceptedFiles.map((file) => receiptApi.upload(file)));
         await fetchReceipts();
       } catch (error) {
-        console.error('上传失败:', error);
+        setErrorText(getErrorMessage(error, '上传失败，请稍后重试'));
       } finally {
         setUploading(false);
       }
@@ -47,12 +57,14 @@ export default function ReceiptsPage() {
     [fetchReceipts]
   );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
     accept: {
       'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'],
     },
     maxSize: 10 * 1024 * 1024,
+    noClick: true,
+    noKeyboard: true,
   });
 
   async function handleDelete(id: number) {
@@ -63,7 +75,7 @@ export default function ReceiptsPage() {
       await receiptApi.deleteReceipt(id);
       await fetchReceipts();
     } catch (error) {
-      console.error('删除失败:', error);
+      setErrorText(getErrorMessage(error, '删除失败，请稍后重试'));
     }
   }
 
@@ -100,9 +112,25 @@ export default function ReceiptsPage() {
             <p className="text-gray-600">拖拽收据图片到这里，或点击选择文件</p>
           )}
           <p className="text-sm text-gray-400 mt-2">支持 JPEG/PNG/GIF/WebP，最大 10MB</p>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+          >
+            <Upload className="w-4 h-4" />
+            选择文件
+          </button>
         </div>
 
         <div className="bg-white rounded-lg shadow">
+          {errorText && (
+            <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              {errorText}
+            </div>
+          )}
           <div className="p-4 border-b flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold">收据列表</h2>

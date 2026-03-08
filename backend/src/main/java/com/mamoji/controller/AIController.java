@@ -1,6 +1,6 @@
 package com.mamoji.controller;
 
-import com.mamoji.agent.ReActAgentService;
+import com.mamoji.ai.AiOrchestratorService;
 import com.mamoji.ai.AiProperties;
 import com.mamoji.ai.model.StructuredAiResponse;
 import com.mamoji.dto.AIChatRequest;
@@ -33,27 +33,29 @@ public class AIController {
     private static final String LEGACY_CHAT_SUNSET_RFC1123 = "Thu, 30 Apr 2026 23:59:59 GMT";
 
     private final AIService aiService;
-    private final ReActAgentService reActAgentService;
+    private final AiOrchestratorService aiOrchestratorService;
     private final AiProperties aiProperties;
 
     @PostMapping("/chat")
     public ResponseEntity<Map<String, Object>> chat(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        String reply = reActAgentService.processMessage(
+        StructuredAiResponse response = aiOrchestratorService.chatStructured(
             user.getId(),
             request.getMessage(),
             request.getAssistantType(),
-            request.getSessionId()
+            request.getSessionId(),
+            request.getMode()
         );
-        return ResponseEntity.ok(wrapSuccess(new AIChatResponse(reply)));
+        return ResponseEntity.ok(wrapSuccess(new AIChatResponse(response.answer())));
     }
 
     @PostMapping("/chat/v2")
     public ResponseEntity<Map<String, Object>> chatV2(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        StructuredAiResponse response = reActAgentService.processMessageStructured(
+        StructuredAiResponse response = aiOrchestratorService.chatStructured(
             user.getId(),
             request.getMessage(),
             request.getAssistantType(),
-            request.getSessionId()
+            request.getSessionId(),
+            request.getMode()
         );
         return ResponseEntity.ok(wrapSuccess(response));
     }
@@ -78,16 +80,17 @@ public class AIController {
 
     @PostMapping(path = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<Map<String, Object>>> chatStream(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        if (!aiProperties.getStreamOps().isReactEnabled()) {
-            AIChatResponse response = aiService.chat(user.getId(), request.getMessage(), request.getAssistantType());
-            return streamFromAnswer(response.getReply(), List.of(), List.of(), List.of());
+        String requestedMode = request.getMode();
+        if (!aiProperties.getStreamOps().isReactEnabled() && (requestedMode == null || requestedMode.isBlank())) {
+            requestedMode = "llm";
         }
 
-        StructuredAiResponse response = reActAgentService.processMessageStructured(
+        StructuredAiResponse response = aiOrchestratorService.chatStructured(
             user.getId(),
             request.getMessage(),
             request.getAssistantType(),
-            request.getSessionId()
+            request.getSessionId(),
+            requestedMode
         );
 
         return streamFromAnswer(
@@ -95,7 +98,9 @@ public class AIController {
             response.warnings() != null ? response.warnings() : List.of(),
             response.sources() != null ? response.sources() : List.of(),
             response.actions() != null ? response.actions() : List.of(),
-            response.usage() != null ? response.usage() : Map.of()
+            response.usage() != null ? response.usage() : Map.of(),
+            response.modeUsed(),
+            response.traceId()
         );
     }
 
@@ -103,17 +108,10 @@ public class AIController {
         String answer,
         List<String> warnings,
         List<String> sources,
-        List<String> actions
-    ) {
-        return streamFromAnswer(answer, warnings, sources, actions, defaultUsage(answer));
-    }
-
-    private Flux<ServerSentEvent<Map<String, Object>>> streamFromAnswer(
-        String answer,
-        List<String> warnings,
-        List<String> sources,
         List<String> actions,
-        Map<String, Object> usage
+        Map<String, Object> usage,
+        String modeUsed,
+        String traceId
     ) {
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("done", true);
@@ -121,6 +119,8 @@ public class AIController {
         doneData.put("sources", sources != null ? sources : List.of());
         doneData.put("actions", actions != null ? actions : List.of());
         doneData.put("usage", usage != null ? usage : Map.of());
+        doneData.put("modeUsed", modeUsed);
+        doneData.put("traceId", traceId);
 
         return chunkAnswer(answer)
             .map(chunk -> ServerSentEvent.<Map<String, Object>>builder()
@@ -131,14 +131,6 @@ public class AIController {
                 .event("done")
                 .data(doneData)
                 .build());
-    }
-
-    private Map<String, Object> defaultUsage(String answer) {
-        String content = answer != null ? answer : "";
-        return Map.of(
-            "outputChars", content.length(),
-            "estimatedTokens", Math.max(1, content.length() / 4)
-        );
     }
 
     private Flux<String> chunkAnswer(String answer) {

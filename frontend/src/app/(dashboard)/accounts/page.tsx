@@ -15,7 +15,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { accountApi, getErrorMessage, type Account } from "@/lib/api";
+import { accountApi, api, getErrorMessage, type Account } from "@/lib/api";
 
 interface AccountSummary {
   totalAssets: number;
@@ -110,13 +110,8 @@ export default function AccountsPage() {
 
   async function fetchSummary(): Promise<void> {
     try {
-      const response = await fetch("/api/v1/accounts/summary", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      const raw = (await response.json()) as { data?: AccountSummary };
-      setSummary(raw.data || { totalAssets: 0, totalLiabilities: 0, netWorth: 0 });
+      const data = await api.get<AccountSummary>("/accounts/summary");
+      setSummary(data || { totalAssets: 0, totalLiabilities: 0, netWorth: 0 });
     } catch (error) {
       console.error("获取汇总失败:", error);
     }

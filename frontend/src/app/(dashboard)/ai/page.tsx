@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MessageCircle, Send, TrendingUp, Wallet } from "lucide-react";
 import { aiApi, getErrorMessage } from "@/lib/api";
-import type { AIStreamDonePayload } from "@/lib/api";
+import type { AIChatMode, AIStreamDonePayload } from "@/lib/api";
 
 type AssistantType = "finance" | "stock";
 
@@ -17,6 +17,8 @@ interface ChatMessage {
   sources?: string[];
   actions?: string[];
   usage?: Record<string, unknown>;
+  modeUsed?: AIChatMode;
+  traceId?: string;
 }
 
 type StreamingMessage = ChatMessage & { role: "assistant" };
@@ -24,6 +26,11 @@ type StreamingMessage = ChatMessage & { role: "assistant" };
 const NEAR_BOTTOM_THRESHOLD_PX = 64;
 const STREAM_FLUSH_MS = 45;
 const AUTO_SCROLL_THROTTLE_MS = 120;
+const modeOptions: Array<{ mode: AIChatMode; label: string; description: string }> = [
+  { mode: "auto", label: "Auto", description: "Smart routing" },
+  { mode: "llm", label: "LLM", description: "Direct model answer" },
+  { mode: "agent", label: "Agent", description: "Tool-assisted reasoning" },
+];
 
 const assistantConfig: Record<AssistantType, {
   name: string;
@@ -60,7 +67,97 @@ const assistantConfig: Record<AssistantType, {
   },
 };
 
+type MetricPair = {
+  label: string;
+  value: string;
+};
+
+type ParsedAssistantContent = {
+  summary: string;
+  metrics: MetricPair[];
+  bullets: string[];
+  details: string[];
+};
+
+function splitMetricLine(rawLine: string): MetricPair | null {
+  const trimmed = rawLine.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const line = trimmed.startsWith("- ") ? trimmed.slice(2).trim() : trimmed;
+  const delimiter = line.includes("：") ? "：" : line.includes(":") ? ":" : null;
+  if (!delimiter) {
+    return null;
+  }
+  const separatorIndex = line.indexOf(delimiter);
+  if (separatorIndex <= 0 || separatorIndex >= line.length - 1) {
+    return null;
+  }
+  const label = line.slice(0, separatorIndex).trim();
+  const value = line.slice(separatorIndex + 1).trim();
+  if (!label || !value || label.length > 24) {
+    return null;
+  }
+  return { label, value };
+}
+
+function parseAssistantContent(content: string): ParsedAssistantContent {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    return { summary: "", metrics: [], bullets: [], details: [] };
+  }
+
+  const summary = lines[0];
+  const metrics: MetricPair[] = [];
+  const bullets: string[] = [];
+  const details: string[] = [];
+
+  for (const line of lines.slice(1)) {
+    const metric = splitMetricLine(line);
+    if (metric && line.startsWith("-")) {
+      metrics.push(metric);
+      continue;
+    }
+    if (line.startsWith("-")) {
+      bullets.push(line.slice(1).trim());
+      continue;
+    }
+    if (!(line.endsWith("：") || line.endsWith(":"))) {
+      details.push(line);
+    }
+  }
+
+  return { summary, metrics, bullets, details };
+}
+
+function formatWarningLabel(warning: string): string {
+  const normalized = warning.trim().toLowerCase();
+  if (normalized === "schema_parse_failed") {
+    return "模型输出格式异常，已自动使用兜底回答。";
+  }
+  if (normalized === "schema_repair_retry") {
+    return "模型输出格式异常，已自动修复后返回。";
+  }
+  if (normalized === "internal_error") {
+    return "系统处理异常，请稍后再试。";
+  }
+  if (normalized.includes("tool call failed")) {
+    return "工具调用失败，建议稍后重试。";
+  }
+  return warning;
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
+  const parsed = message.role === "assistant" ? parseAssistantContent(message.content) : null;
+  const showStructured =
+    message.role === "assistant" &&
+    parsed !== null &&
+    (parsed.metrics.length > 0 || parsed.bullets.length > 0 || parsed.details.length > 0);
+
   return (
     <div className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
       <div
@@ -68,13 +165,69 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           message.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
         }`}
       >
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        {message.role === "assistant" && message.modeUsed && (
+          <div className="mb-2 flex flex-wrap gap-2 text-[11px]">
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-indigo-700">
+              {message.modeUsed.toUpperCase()}
+            </span>
+          </div>
+        )}
+
+        {showStructured && parsed ? (
+          <div className="space-y-3">
+            <p className="whitespace-pre-wrap leading-7 font-medium">{parsed.summary}</p>
+            {parsed.metrics.length > 0 && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {parsed.metrics.map((item, index) => (
+                  <div key={`${item.label}-${index}`} className="rounded-lg bg-white/80 px-3 py-2">
+                    <p className="text-xs text-gray-500">{item.label}</p>
+                    <p className="text-sm font-semibold">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.bullets.length > 0 && (
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                {parsed.bullets.map((item, index) => (
+                  <li key={`${item}-${index}`}>{item}</li>
+                ))}
+              </ul>
+            )}
+            {parsed.details.length > 0 &&
+              parsed.details.map((line, index) => (
+                <p key={`${line}-${index}`} className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                  {line}
+                </p>
+              ))}
+          </div>
+        ) : (
+          <p className="whitespace-pre-wrap leading-7">{message.content}</p>
+        )}
+
         {message.role === "assistant" && message.warnings && message.warnings.length > 0 && (
-          <p className="text-xs mt-2 text-amber-600">提示：{message.warnings.join("；")}</p>
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <p className="mb-1 font-medium">提示</p>
+            <ul className="list-disc space-y-1 pl-4">
+              {message.warnings.map((warning) => (
+                <li key={warning}>{formatWarningLabel(warning)}</li>
+              ))}
+            </ul>
+          </div>
         )}
+
         {message.role === "assistant" && message.sources && message.sources.length > 0 && (
-          <p className="text-xs mt-1 text-gray-500">来源：{message.sources.join("，")}</p>
+          <div className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+            <p className="mb-1 font-medium text-gray-700">来源</p>
+            <ul className="space-y-1">
+              {message.sources.map((source) => (
+                <li key={source} className="break-all">
+                  {source}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
+
         <p className={`text-xs mt-1 ${message.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
           {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
         </p>
@@ -82,7 +235,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     </div>
   );
 }
-
 export default function AIPage() {
   const router = useRouter();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -96,6 +248,7 @@ export default function AIPage() {
   const [loading, setLoading] = useState(false);
   const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
   const [assistantType, setAssistantType] = useState<AssistantType>("finance");
+  const [chatMode, setChatMode] = useState<AIChatMode>("auto");
 
   const currentConfig = useMemo(() => assistantConfig[assistantType], [assistantType]);
 
@@ -217,7 +370,7 @@ export default function AIPage() {
     };
 
     try {
-      await aiApi.chatStream(userContent, assistantType, {
+      await aiApi.chatStream(userContent, assistantType, chatMode, {
         onChunk: (chunk) => {
           streamChunkCount += 1;
           if (streamChunkCount === 1) {
@@ -238,7 +391,7 @@ export default function AIPage() {
       flushChunks();
 
       if (streamChunkCount === 0) {
-        const fallback = await aiApi.chat(userContent, assistantType);
+        const fallback = await aiApi.chat(userContent, assistantType, chatMode);
         assembledContent = fallback.reply;
         setStreamingMessage((prev) => (prev ? { ...prev, content: fallback.reply } : prev));
       }
@@ -252,6 +405,8 @@ export default function AIPage() {
         sources: donePayload.sources,
         actions: donePayload.actions,
         usage: donePayload.usage,
+        modeUsed: donePayload.modeUsed,
+        traceId: donePayload.traceId,
       };
 
       setMessages((prev) => [...prev, finalAssistantMessage]);
@@ -325,6 +480,25 @@ export default function AIPage() {
         })}
       </div>
 
+      <div className="flex flex-wrap gap-2 mb-6">
+        {modeOptions.map((option) => (
+          <button
+            key={option.mode}
+            type="button"
+            onClick={() => setChatMode(option.mode)}
+            disabled={loading}
+            className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+              chatMode === option.mode
+                ? "bg-indigo-50 border-indigo-500 text-indigo-700"
+                : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"
+            } disabled:opacity-60`}
+            title={option.description}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
       <div className="bg-white rounded-2xl shadow-sm border flex flex-col h-[calc(100vh-18rem)]">
         <div
           ref={messageListRef}
@@ -390,3 +564,4 @@ export default function AIPage() {
     </div>
   );
 }
+

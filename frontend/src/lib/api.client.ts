@@ -77,7 +77,9 @@ class ApiClient {
     }
 
     if (status >= 500) {
-      message = "服务器错误，请稍后重试";
+      if (message === "请求失败" || message.trim() === "") {
+        message = "服务器错误，请稍后重试";
+      }
     } else if (status === 429) {
       message = "请求过于频繁，请稍后再试";
     }

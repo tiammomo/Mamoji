@@ -30,12 +30,16 @@ export interface AIChatResponse {
   reply: string;
 }
 
+export type AIChatMode = "auto" | "llm" | "agent";
+
 export interface AIStreamDonePayload {
   done: boolean;
   warnings: string[];
   sources: string[];
   actions: string[];
   usage: Record<string, unknown>;
+  modeUsed?: AIChatMode;
+  traceId?: string;
 }
 
 export interface Account {

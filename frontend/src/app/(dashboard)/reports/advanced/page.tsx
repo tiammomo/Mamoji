@@ -65,21 +65,69 @@ interface Comparison {
 
 const COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
 
+function niceIntegerStep(span: number, segments = 5): number {
+  const raw = Math.max(1, span) / Math.max(1, segments);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const normalized = raw / magnitude;
+  const niceBase = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return Math.max(1, Math.ceil(niceBase * magnitude));
+}
+
+function buildIntegerScale(values: number[], forceMinZero = false): { domain: [number, number]; ticks: number[] } {
+  if (values.length === 0) {
+    return { domain: forceMinZero ? [0, 100] : [-100, 100], ticks: forceMinZero ? [0, 25, 50, 75, 100] : [-100, -50, 0, 50, 100] };
+  }
+
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = Math.max(1, max - min);
+  const pad = span * 0.12;
+  const roughMin = forceMinZero ? Math.max(0, min - pad) : min - pad;
+  const roughMax = max + pad;
+  const step = niceIntegerStep(roughMax - roughMin);
+  const lower = forceMinZero ? 0 : Math.floor(roughMin / step) * step;
+  const upper = Math.ceil(roughMax / step) * step;
+  const ticks: number[] = [];
+  for (let value = lower; value <= upper; value += step) {
+    ticks.push(value);
+  }
+  return { domain: [lower, upper], ticks };
+}
+
 export default function AdvancedReportsPage() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [annualReport, setAnnualReport] = useState<AnnualReport | null>(null);
   const [balanceSheet, setBalanceSheet] = useState<BalanceSheet | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'annual' | 'balance' | 'comparison'>('annual');
+  const annualYAxisScale = annualReport
+    ? buildIntegerScale(annualReport.monthlyData.flatMap((item) => [item.income, item.expense]), true)
+    : buildIntegerScale([], true);
+  const comparisonYAxisScale = comparison
+    ? buildIntegerScale(
+        [
+          comparison.monthOverMonth.incomeChange,
+          comparison.monthOverMonth.expenseChange,
+          comparison.monthOverMonth.balanceChange,
+          comparison.yearOverYear.incomeChange,
+          comparison.yearOverYear.expenseChange,
+          comparison.yearOverYear.balanceChange,
+        ],
+        false
+      )
+    : buildIntegerScale([], false);
 
   const fetchAnnualReport = useCallback(async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
       const data = await api.get<AnnualReport>(`/stats/annual?year=${year}`);
       setAnnualReport(data);
     } catch (error) {
-      console.error('获取年度报告失败:', error);
+      const message = error instanceof Error ? error.message : '获取年度报告失败';
+      setErrorMessage(message);
     } finally {
       setLoading(false);
     }
@@ -87,11 +135,13 @@ export default function AdvancedReportsPage() {
 
   const fetchBalanceSheet = useCallback(async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
       const data = await api.get<BalanceSheet>('/stats/balance-sheet');
       setBalanceSheet(data);
     } catch (error) {
-      console.error('获取资产负债表失败:', error);
+      const message = error instanceof Error ? error.message : '获取资产负债表失败';
+      setErrorMessage(message);
     } finally {
       setLoading(false);
     }
@@ -99,11 +149,14 @@ export default function AdvancedReportsPage() {
 
   const fetchComparison = useCallback(async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
-      const data = await api.get<Comparison>(`/stats/comparison?month=${year}-01`);
+      const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+      const data = await api.get<Comparison>(`/stats/comparison?month=${year}-${currentMonth}`);
       setComparison(data);
     } catch (error) {
-      console.error('获取同比环比数据失败:', error);
+      const message = error instanceof Error ? error.message : '获取同比环比数据失败';
+      setErrorMessage(message);
     } finally {
       setLoading(false);
     }
@@ -123,9 +176,13 @@ export default function AdvancedReportsPage() {
     return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value);
   }
 
+  function formatIntegerCurrency(value: number): string {
+    return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', maximumFractionDigits: 0 }).format(Math.round(value));
+  }
+
   function formatPercent(value: number): string {
     const sign = value >= 0 ? '+' : '';
-    return `${sign}${value.toFixed(1)}%`;
+    return `${sign}${Math.round(value)}%`;
   }
 
   return (
@@ -153,6 +210,8 @@ export default function AdvancedReportsPage() {
 
         {loading ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">加载中...</div>
+        ) : errorMessage ? (
+          <div className="bg-red-50 text-red-700 border border-red-200 rounded-lg shadow p-4">{errorMessage}</div>
         ) : (
           <>
             {activeTab === 'annual' && annualReport && (
@@ -169,8 +228,13 @@ export default function AdvancedReportsPage() {
                     <BarChart data={annualReport.monthlyData}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                      <YAxis
+                        allowDecimals={false}
+                        domain={annualYAxisScale.domain}
+                        ticks={annualYAxisScale.ticks}
+                        tickFormatter={(value: number) => formatIntegerCurrency(value)}
+                      />
+                      <Tooltip formatter={(value: number) => formatIntegerCurrency(value)} />
                       <Legend />
                       <Bar dataKey="income" name="收入" fill="#10B981" />
                       <Bar dataKey="expense" name="支出" fill="#EF4444" />
@@ -204,35 +268,49 @@ export default function AdvancedReportsPage() {
 
                 <div className="bg-white rounded-lg shadow p-4">
                   <h3 className="text-lg font-semibold mb-4">变化幅度</h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart
-                      data={[
-                        {
-                          name: '收入',
-                          monthOverMonth: comparison.monthOverMonth.incomeChange,
-                          yearOverYear: comparison.yearOverYear.incomeChange,
-                        },
-                        {
-                          name: '支出',
-                          monthOverMonth: comparison.monthOverMonth.expenseChange,
-                          yearOverYear: comparison.yearOverYear.expenseChange,
-                        },
-                        {
-                          name: '结余',
-                          monthOverMonth: comparison.monthOverMonth.balanceChange,
-                          yearOverYear: comparison.yearOverYear.balanceChange,
-                        },
-                      ]}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip formatter={(value: number) => formatPercent(value)} />
-                      <Legend />
-                      <Line type="monotone" dataKey="monthOverMonth" name="环比" stroke="#4F46E5" />
-                      <Line type="monotone" dataKey="yearOverYear" name="同比" stroke="#10B981" />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  {Number.isFinite(comparison.monthOverMonth.incomeChange) &&
+                  Number.isFinite(comparison.monthOverMonth.expenseChange) &&
+                  Number.isFinite(comparison.monthOverMonth.balanceChange) &&
+                  Number.isFinite(comparison.yearOverYear.incomeChange) &&
+                  Number.isFinite(comparison.yearOverYear.expenseChange) &&
+                  Number.isFinite(comparison.yearOverYear.balanceChange) ? (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart
+                        data={[
+                          {
+                            name: '收入',
+                            monthOverMonth: comparison.monthOverMonth.incomeChange,
+                            yearOverYear: comparison.yearOverYear.incomeChange,
+                          },
+                          {
+                            name: '支出',
+                            monthOverMonth: comparison.monthOverMonth.expenseChange,
+                            yearOverYear: comparison.yearOverYear.expenseChange,
+                          },
+                          {
+                            name: '结余',
+                            monthOverMonth: comparison.monthOverMonth.balanceChange,
+                            yearOverYear: comparison.yearOverYear.balanceChange,
+                          },
+                        ]}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis
+                          allowDecimals={false}
+                          domain={comparisonYAxisScale.domain}
+                          ticks={comparisonYAxisScale.ticks}
+                          tickFormatter={(value: number) => `${Math.round(value)}%`}
+                        />
+                        <Tooltip formatter={(value: number) => formatPercent(value)} />
+                        <Legend />
+                        <Line type="monotone" dataKey="monthOverMonth" name="环比" stroke="#4F46E5" />
+                        <Line type="monotone" dataKey="yearOverYear" name="同比" stroke="#10B981" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-[260px] flex items-center justify-center text-gray-500">暂无可展示的同比环比数据</div>
+                  )}
                 </div>
               </div>
             )}

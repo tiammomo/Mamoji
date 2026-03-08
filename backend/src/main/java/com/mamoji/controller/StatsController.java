@@ -3,6 +3,7 @@ package com.mamoji.controller;
 import com.mamoji.entity.Category;
 import com.mamoji.entity.Transaction;
 import com.mamoji.entity.User;
+import com.mamoji.repository.AccountRepository;
 import com.mamoji.repository.CategoryRepository;
 import com.mamoji.repository.TransactionRepository;
 import com.mamoji.security.AuthenticationUser;
@@ -23,6 +24,7 @@ public class StatsController {
 
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
+    private final AccountRepository accountRepository;
 
     @GetMapping("/overview")
     public ResponseEntity<Map<String, Object>> getOverview(
@@ -182,5 +184,180 @@ public class StatsController {
         result.put("data", stats);
 
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/annual")
+    public ResponseEntity<Map<String, Object>> getAnnualReport(
+            @AuthenticationUser User user,
+            @RequestParam int year) {
+
+        LocalDate start = LocalDate.of(year, 1, 1);
+        LocalDate end = LocalDate.of(year, 12, 31);
+
+        BigDecimal totalIncome = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(user.getId(), 1, start, end));
+        BigDecimal totalExpense = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(user.getId(), 2, start, end));
+        BigDecimal totalBalance = totalIncome.subtract(totalExpense);
+
+        List<Map<String, Object>> monthlyData = new ArrayList<>();
+        for (int month = 1; month <= 12; month++) {
+            YearMonth ym = YearMonth.of(year, month);
+            BigDecimal income = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(user.getId(), 1, ym.atDay(1), ym.atEndOfMonth()));
+            BigDecimal expense = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(user.getId(), 2, ym.atDay(1), ym.atEndOfMonth()));
+            monthlyData.add(Map.of(
+                "month", month,
+                "income", income,
+                "expense", expense,
+                "balance", income.subtract(expense)
+            ));
+        }
+
+        List<Map<String, Object>> incomeByCategory = toCategoryItems(
+            transactionRepository.sumByCategoryAndTypeWithCategoryName(user.getId(), 1, start, end)
+        );
+        List<Map<String, Object>> expenseByCategory = toCategoryItems(
+            transactionRepository.sumByCategoryAndTypeWithCategoryName(user.getId(), 2, start, end)
+        );
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("year", year);
+        data.put("totalIncome", totalIncome);
+        data.put("totalExpense", totalExpense);
+        data.put("totalBalance", totalBalance);
+        data.put("monthlyData", monthlyData);
+        data.put("incomeByCategory", incomeByCategory);
+        data.put("expenseByCategory", expenseByCategory);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", 0);
+        result.put("message", "success");
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/balance-sheet")
+    public ResponseEntity<Map<String, Object>> getBalanceSheet(@AuthenticationUser User user) {
+        YearMonth current = YearMonth.now();
+
+        BigDecimal monthlyIncome = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(
+            user.getId(), 1, current.atDay(1), current.atEndOfMonth()));
+        BigDecimal monthlyExpense = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(
+            user.getId(), 2, current.atDay(1), current.atEndOfMonth()));
+        BigDecimal monthlyBalance = monthlyIncome.subtract(monthlyExpense);
+
+        LocalDate yearStart = LocalDate.of(current.getYear(), 1, 1);
+        LocalDate yearEnd = LocalDate.of(current.getYear(), 12, 31);
+        BigDecimal yearlyIncome = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(
+            user.getId(), 1, yearStart, yearEnd));
+        BigDecimal yearlyExpense = safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(
+            user.getId(), 2, yearStart, yearEnd));
+        BigDecimal yearlyBalance = yearlyIncome.subtract(yearlyExpense);
+
+        BigDecimal totalAssets = safeAmount(accountRepository.getTotalAssets(user.getId()));
+        BigDecimal totalLiabilities = safeAmount(accountRepository.getTotalLiabilities(user.getId()));
+        BigDecimal netWorth = totalAssets.subtract(totalLiabilities);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("monthlyIncome", monthlyIncome);
+        data.put("monthlyExpense", monthlyExpense);
+        data.put("monthlyBalance", monthlyBalance);
+        data.put("yearlyIncome", yearlyIncome);
+        data.put("yearlyExpense", yearlyExpense);
+        data.put("yearlyBalance", yearlyBalance);
+        data.put("netWorth", netWorth);
+        data.put("totalAssets", totalAssets);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", 0);
+        result.put("message", "success");
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/comparison")
+    public ResponseEntity<Map<String, Object>> getComparison(
+            @AuthenticationUser User user,
+            @RequestParam(required = false) String month) {
+
+        YearMonth currentMonth;
+        if (month == null || month.isBlank()) {
+            currentMonth = YearMonth.now();
+        } else {
+            try {
+                currentMonth = YearMonth.parse(month);
+            } catch (Exception ex) {
+                currentMonth = YearMonth.from(LocalDate.parse(month));
+            }
+        }
+
+        YearMonth previousMonth = currentMonth.minusMonths(1);
+        YearMonth sameMonthLastYear = currentMonth.minusYears(1);
+
+        BigDecimal currentIncome = sumTypeByMonth(user.getId(), 1, currentMonth);
+        BigDecimal currentExpense = sumTypeByMonth(user.getId(), 2, currentMonth);
+        BigDecimal currentBalance = currentIncome.subtract(currentExpense);
+
+        BigDecimal previousIncome = sumTypeByMonth(user.getId(), 1, previousMonth);
+        BigDecimal previousExpense = sumTypeByMonth(user.getId(), 2, previousMonth);
+        BigDecimal previousBalance = previousIncome.subtract(previousExpense);
+
+        BigDecimal yearlyIncome = sumTypeByMonth(user.getId(), 1, sameMonthLastYear);
+        BigDecimal yearlyExpense = sumTypeByMonth(user.getId(), 2, sameMonthLastYear);
+        BigDecimal yearlyBalance = yearlyIncome.subtract(yearlyExpense);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("currentMonth", currentMonth.toString());
+        data.put("currentIncome", currentIncome);
+        data.put("currentExpense", currentExpense);
+        data.put("currentBalance", currentBalance);
+        data.put("previousMonth", previousMonth.toString());
+        data.put("previousIncome", previousIncome);
+        data.put("previousExpense", previousExpense);
+        data.put("sameMonthLastYear", sameMonthLastYear.toString());
+        data.put("yearlyIncome", yearlyIncome);
+        data.put("yearlyExpense", yearlyExpense);
+        data.put("monthOverMonth", Map.of(
+            "incomeChange", pctChange(currentIncome, previousIncome),
+            "expenseChange", pctChange(currentExpense, previousExpense),
+            "balanceChange", pctChange(currentBalance, previousBalance)
+        ));
+        data.put("yearOverYear", Map.of(
+            "incomeChange", pctChange(currentIncome, yearlyIncome),
+            "expenseChange", pctChange(currentExpense, yearlyExpense),
+            "balanceChange", pctChange(currentBalance, yearlyBalance)
+        ));
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", 0);
+        result.put("message", "success");
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
+    private BigDecimal sumTypeByMonth(Long userId, int type, YearMonth month) {
+        return safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(userId, type, month.atDay(1), month.atEndOfMonth()));
+    }
+
+    private List<Map<String, Object>> toCategoryItems(List<TransactionRepository.CategoryStatsProjection> projections) {
+        return projections.stream().map(item -> {
+            Map<String, Object> row = new HashMap<>();
+            row.put("categoryId", item.getCategoryId());
+            row.put("categoryName", item.getCategoryName());
+            row.put("amount", item.getAmount());
+            return row;
+        }).toList();
+    }
+
+    private BigDecimal safeAmount(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private double pctChange(BigDecimal current, BigDecimal previous) {
+        if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
+            return current.compareTo(BigDecimal.ZERO) == 0 ? 0D : 100D;
+        }
+        BigDecimal delta = current.subtract(previous);
+        return delta.multiply(BigDecimal.valueOf(100))
+            .divide(previous.abs(), 1, java.math.RoundingMode.HALF_UP)
+            .doubleValue();
     }
 }

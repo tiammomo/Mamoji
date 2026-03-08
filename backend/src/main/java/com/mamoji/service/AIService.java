@@ -29,14 +29,26 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AIService {
 
+    private static final String HUMAN_READABLE_STYLE = "Answer in Chinese for end users with this structure:\n"
+        + "结论：<one short sentence>\n"
+        + "关键数据：\n"
+        + "- 指标：数值\n"
+        + "- 指标：数值\n"
+        + "建议：\n"
+        + "- 建议1\n"
+        + "- 建议2\n"
+        + "Keep output concise (max 8 lines), avoid long paragraphs.";
+
     private static final String FINANCE_SYSTEM_PROMPT = "You are a professional family finance assistant. " +
         "Help users analyze income/expense, create budgets, and answer finance-related questions. " +
         "Reply in Chinese, be friendly, professional and concise. " +
-        "Only answer finance-related questions.";
+        "Only answer finance-related questions. " +
+        HUMAN_READABLE_STYLE;
 
     private static final String STOCK_SYSTEM_PROMPT = "You are a professional stock market analyst assistant. " +
         "Help users analyze stock trends, provide investment suggestions, and answer stock-related questions. " +
-        "Reply in Chinese and always remind users that stock investment carries risks.";
+        "Reply in Chinese and always remind users that stock investment carries risks. " +
+        HUMAN_READABLE_STYLE;
 
     private final TransactionRepository transactionRepository;
     private final BudgetRepository budgetRepository;
@@ -218,6 +230,11 @@ public class AIService {
                 prompt.append("- ").append(tx).append("\n");
             }
         }
+        prompt.append("\n");
+        prompt.append("Formatting requirements:\n");
+        prompt.append("- Use short lines and avoid dense paragraphs.\n");
+        prompt.append("- Must include sections: 结论, 关键数据, 建议.\n");
+        prompt.append("- Key data should be bullet key-value pairs.\n");
 
         return prompt.toString();
     }
@@ -230,6 +247,11 @@ public class AIService {
         } else {
             prompt.append("No real-time stock data available.\n");
         }
+        prompt.append("\n");
+        prompt.append("Formatting requirements:\n");
+        prompt.append("- Use short lines and avoid dense paragraphs.\n");
+        prompt.append("- Must include sections: 结论, 关键数据, 建议.\n");
+        prompt.append("- Include a risk reminder in 建议 section.\n");
         return prompt.toString();
     }
 }

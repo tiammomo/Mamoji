@@ -95,10 +95,20 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     );
 
     Page<Transaction> findByUserIdAndTypeOrderByDateDesc(Long userId, Integer type, Pageable pageable);
+    
+    Page<Transaction> findByUserIdAndTypeInOrderByDateDesc(Long userId, List<Integer> types, Pageable pageable);
 
     Page<Transaction> findByUserIdAndDateBetweenOrderByDateDesc(Long userId, LocalDate startDate, LocalDate endDate, Pageable pageable);
 
     Page<Transaction> findByUserIdAndTypeAndDateBetweenOrderByDateDesc(Long userId, Integer type, LocalDate startDate, LocalDate endDate, Pageable pageable);
+
+    Page<Transaction> findByUserIdAndTypeInAndDateBetweenOrderByDateDesc(
+        Long userId,
+        List<Integer> types,
+        LocalDate startDate,
+        LocalDate endDate,
+        Pageable pageable
+    );
 
     interface CategoryStatsProjection {
         Long getCategoryId();

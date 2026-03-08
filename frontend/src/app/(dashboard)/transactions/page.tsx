@@ -11,7 +11,8 @@ export default function TransactionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [page, setPage] = useState(1);
+  const [expensePage, setExpensePage] = useState(1);
+  const [incomePage, setIncomePage] = useState(1);
   const [typeFilter, setTypeFilter] = useState<number | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: "", end: "" });
@@ -36,45 +37,97 @@ export default function TransactionsPage() {
     }
   }, [router]);
 
-  const queryParams = useMemo(
+  useEffect(() => {
+    setExpensePage(1);
+    setIncomePage(1);
+  }, [typeFilter, dateRange.start, dateRange.end]);
+
+  const expenseTypes = useMemo(() => {
+    if (typeFilter === 2) {
+      return [2];
+    }
+    if (typeFilter === 3) {
+      return [3];
+    }
+    return [2, 3];
+  }, [typeFilter]);
+
+  const expenseQueryParams = useMemo(
     () => ({
-      page,
+      page: expensePage,
       pageSize: 20,
-      type: typeFilter || undefined,
+      types: expenseTypes,
       startDate: dateRange.start || undefined,
       endDate: dateRange.end || undefined,
     }),
-    [page, typeFilter, dateRange]
+    [expensePage, expenseTypes, dateRange]
   );
 
-  const { data: transactionsData, isLoading, refetch } = useTransactions(queryParams);
+  const incomeQueryParams = useMemo(
+    () => ({
+      page: incomePage,
+      pageSize: 20,
+      type: 1,
+      startDate: dateRange.start || undefined,
+      endDate: dateRange.end || undefined,
+    }),
+    [incomePage, dateRange]
+  );
+
+  const {
+    data: expenseTransactionsData,
+    isLoading: isExpenseLoading,
+    refetch: refetchExpense,
+  } = useTransactions(expenseQueryParams);
+  const {
+    data: incomeTransactionsData,
+    isLoading: isIncomeLoading,
+    refetch: refetchIncome,
+  } = useTransactions(incomeQueryParams);
   const { data: categoriesData } = useCategories();
   const { data: accountsData } = useAccounts();
 
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
 
-  const transactions = transactionsData?.list || [];
-  const total = transactionsData?.total || 0;
+  const isLoading = isExpenseLoading || isIncomeLoading;
+  const expenseTransactions = useMemo(() => expenseTransactionsData?.list ?? [], [expenseTransactionsData]);
+  const incomeTransactions = useMemo(() => incomeTransactionsData?.list ?? [], [incomeTransactionsData]);
+  const expenseTotal = expenseTransactionsData?.total || 0;
+  const incomeTotal = incomeTransactionsData?.total || 0;
   const categories = categoriesData || { income: [], expense: [] };
   const accounts = accountsData || [];
 
-  const filteredTransactions = useMemo(() => {
-    if (!searchKeyword) {
-      return transactions;
-    }
-    const keyword = searchKeyword.toLowerCase();
-    return transactions.filter(
-      (tx) =>
+  const matchesKeyword = useCallback(
+    (tx: Transaction) => {
+      if (!searchKeyword) {
+        return true;
+      }
+      const keyword = searchKeyword.toLowerCase();
+      return (
         tx.category?.name.toLowerCase().includes(keyword) ||
         tx.account?.name.toLowerCase().includes(keyword) ||
         Boolean(tx.remark && tx.remark.toLowerCase().includes(keyword)) ||
         tx.date.includes(keyword) ||
         tx.user?.nickname.toLowerCase().includes(keyword)
-    );
-  }, [transactions, searchKeyword]);
+      );
+    },
+    [searchKeyword]
+  );
 
-  const totalPages = Math.ceil(total / 20);
+  const filteredExpenseTransactions = useMemo(
+    () => expenseTransactions.filter(matchesKeyword),
+    [expenseTransactions, matchesKeyword]
+  );
+  const filteredIncomeTransactions = useMemo(
+    () => incomeTransactions.filter(matchesKeyword),
+    [incomeTransactions, matchesKeyword]
+  );
+
+  const expenseTotalPages = Math.ceil(expenseTotal / 20);
+  const incomeTotalPages = Math.ceil(incomeTotal / 20);
+  const showExpenseColumn = typeFilter !== 1;
+  const showIncomeColumn = typeFilter !== 2 && typeFilter !== 3;
 
   const handleSubmit = useCallback(
     async (data: {
@@ -102,9 +155,9 @@ export default function TransactionsPage() {
 
       setShowModal(false);
       setEditingTransaction(null);
-      refetch();
+      await Promise.all([refetchExpense(), refetchIncome()]);
     },
-    [editingTransaction, createMutation, updateMutation, refetch]
+    [editingTransaction, createMutation, updateMutation, refetchExpense, refetchIncome]
   );
 
   const handleRefund = useCallback(
@@ -120,9 +173,9 @@ export default function TransactionsPage() {
 
       setShowRefundModal(false);
       setRefundingTransaction(null);
-      refetch();
+      await Promise.all([refetchExpense(), refetchIncome()]);
     },
-    [refundingTransaction, refetch]
+    [refundingTransaction, refetchExpense, refetchIncome]
   );
 
   const handleEdit = useCallback((tx: Transaction) => {
@@ -180,7 +233,7 @@ export default function TransactionsPage() {
         setShowDateFilter={setShowDateFilter}
       />
 
-      {filteredTransactions.length === 0 ? (
+      {!showExpenseColumn && !showIncomeColumn ? (
         <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Wallet className="w-8 h-8 text-gray-400" />
@@ -195,32 +248,80 @@ export default function TransactionsPage() {
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm">
-          <div className="divide-y">
-            {filteredTransactions.map((tx) => (
-              <TransactionItem key={tx.id} tx={tx} onEdit={handleEdit} onRefund={handleRefundClick} />
-            ))}
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {showExpenseColumn && (
+            <div className="bg-white rounded-2xl shadow-sm">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">支出（含退款）</h2>
+              </div>
+              {filteredExpenseTransactions.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">暂无支出记录</div>
+              ) : (
+                <div className="divide-y">
+                  {filteredExpenseTransactions.map((tx) => (
+                    <TransactionItem key={tx.id} tx={tx} onEdit={handleEdit} onRefund={handleRefundClick} />
+                  ))}
+                </div>
+              )}
+              {expenseTotalPages > 1 && (
+                <div className="p-4 flex justify-center gap-2">
+                  <button
+                    onClick={() => setExpensePage((p) => Math.max(1, p - 1))}
+                    disabled={expensePage === 1}
+                    className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                  >
+                    上一页
+                  </button>
+                  <span className="px-4 py-2 text-gray-600">
+                    {expensePage} / {expenseTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setExpensePage((p) => Math.min(expenseTotalPages, p + 1))}
+                    disabled={expensePage === expenseTotalPages}
+                    className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                  >
+                    下一页
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-          {totalPages > 1 && (
-            <div className="p-4 flex justify-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
-              >
-                上一页
-              </button>
-              <span className="px-4 py-2 text-gray-600">
-                {page} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
-              >
-                下一页
-              </button>
+          {showIncomeColumn && (
+            <div className="bg-white rounded-2xl shadow-sm">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">收入</h2>
+              </div>
+              {filteredIncomeTransactions.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">暂无收入记录</div>
+              ) : (
+                <div className="divide-y">
+                  {filteredIncomeTransactions.map((tx) => (
+                    <TransactionItem key={tx.id} tx={tx} onEdit={handleEdit} onRefund={handleRefundClick} />
+                  ))}
+                </div>
+              )}
+              {incomeTotalPages > 1 && (
+                <div className="p-4 flex justify-center gap-2">
+                  <button
+                    onClick={() => setIncomePage((p) => Math.max(1, p - 1))}
+                    disabled={incomePage === 1}
+                    className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                  >
+                    上一页
+                  </button>
+                  <span className="px-4 py-2 text-gray-600">
+                    {incomePage} / {incomeTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setIncomePage((p) => Math.min(incomeTotalPages, p + 1))}
+                    disabled={incomePage === incomeTotalPages}
+                    className="px-4 py-2 bg-gray-100 rounded-lg disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                  >
+                    下一页
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -246,3 +347,4 @@ export default function TransactionsPage() {
     </div>
   );
 }
+

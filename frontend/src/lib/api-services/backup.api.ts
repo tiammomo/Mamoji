@@ -25,13 +25,7 @@ export const backupApi = {
   importData: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return fetch(`${API_BASE}/backup/import`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
-      },
-      body: formData,
-    }).then((res) => res.json() as Promise<BackupImportResponse>);
+    return api.postForm<BackupImportResponse>("/backup/import", formData);
   },
   getStatus: () => api.get<BackupStatus>("/backup/status"),
 };

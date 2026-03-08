@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,21 +37,33 @@ public class TransactionController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize,
             @RequestParam(required = false) Integer type,
+            @RequestParam(required = false) String types,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
 
         PageRequest pageRequest = PageRequest.of(page - 1, pageSize);
         Page<Transaction> transactionPage;
+        List<Integer> typeList = parseTypes(types);
 
         // 根据条件查询
         if (startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty()) {
             LocalDate start = LocalDate.parse(startDate);
             LocalDate end = LocalDate.parse(endDate);
-            if (type != null) {
+            if (typeList != null && !typeList.isEmpty()) {
+                transactionPage = transactionRepository.findByUserIdAndTypeInAndDateBetweenOrderByDateDesc(
+                    user.getId(),
+                    typeList,
+                    start,
+                    end,
+                    pageRequest
+                );
+            } else if (type != null) {
                 transactionPage = transactionRepository.findByUserIdAndTypeAndDateBetweenOrderByDateDesc(user.getId(), type, start, end, pageRequest);
             } else {
                 transactionPage = transactionRepository.findByUserIdAndDateBetweenOrderByDateDesc(user.getId(), start, end, pageRequest);
             }
+        } else if (typeList != null && !typeList.isEmpty()) {
+            transactionPage = transactionRepository.findByUserIdAndTypeInOrderByDateDesc(user.getId(), typeList, pageRequest);
         } else if (type != null) {
             transactionPage = transactionRepository.findByUserIdAndTypeOrderByDateDesc(user.getId(), type, pageRequest);
         } else {
@@ -269,6 +282,17 @@ public class TransactionController {
         map.put("refundedAmount", refunded);
         map.put("canRefund", refundable.compareTo(BigDecimal.ZERO) > 0);
         return map;
+    }
+
+    private List<Integer> parseTypes(String types) {
+        if (types == null || types.isBlank()) {
+            return null;
+        }
+        return Arrays.stream(types.split(","))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .map(Integer::parseInt)
+            .toList();
     }
 
     private Map<String, Object> toMap(Transaction transaction) {

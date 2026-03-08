@@ -1,6 +1,6 @@
 package com.mamoji.controller;
 
-import com.mamoji.agent.ReActAgentService;
+import com.mamoji.ai.AiOrchestratorService;
 import com.mamoji.ai.AiProperties;
 import com.mamoji.ai.model.StructuredAiResponse;
 import com.mamoji.dto.AIChatRequest;
@@ -19,12 +19,12 @@ import java.util.Map;
 class AIControllerTest {
 
     @Test
-    void shouldStreamChunksAndDoneMetadataFromReactPipeline() {
+    void shouldStreamChunksAndDoneMetadataFromOrchestrator() {
         AIService aiService = Mockito.mock(AIService.class);
-        ReActAgentService reActAgentService = Mockito.mock(ReActAgentService.class);
+        AiOrchestratorService aiOrchestratorService = Mockito.mock(AiOrchestratorService.class);
         AiProperties aiProperties = new AiProperties();
         aiProperties.getStreamOps().setReactEnabled(true);
-        AIController controller = new AIController(aiService, reActAgentService, aiProperties);
+        AIController controller = new AIController(aiService, aiOrchestratorService, aiProperties);
 
         String answer = "12345678901234567890123456789012345678901234567890";
         StructuredAiResponse structured = new StructuredAiResponse(
@@ -32,15 +32,18 @@ class AIControllerTest {
             List.of("kb:budget"),
             List.of("tool:query_budget"),
             List.of("schema_repair_retry"),
-            Map.of("estimatedTokens", 42)
+            Map.of("estimatedTokens", 42),
+            "agent",
+            "trace001"
         );
-        Mockito.when(reActAgentService.processMessageStructured(7L, "budget suggestion", "finance", "s1"))
+        Mockito.when(aiOrchestratorService.chatStructured(7L, "budget suggestion", "finance", "s1", "agent"))
             .thenReturn(structured);
 
         AIChatRequest request = new AIChatRequest();
         request.setMessage("budget suggestion");
         request.setAssistantType("finance");
         request.setSessionId("s1");
+        request.setMode("agent");
         User user = User.builder().id(7L).build();
 
         List<ServerSentEvent<Map<String, Object>>> events = controller.chatStream(request, user)
@@ -63,17 +66,19 @@ class AIControllerTest {
         Assertions.assertEquals(List.of("kb:budget"), done.data().get("sources"));
         Assertions.assertEquals(List.of("tool:query_budget"), done.data().get("actions"));
         Assertions.assertEquals(Map.of("estimatedTokens", 42), done.data().get("usage"));
+        Assertions.assertEquals("agent", done.data().get("modeUsed"));
+        Assertions.assertEquals("trace001", done.data().get("traceId"));
 
-        Mockito.verify(reActAgentService).processMessageStructured(7L, "budget suggestion", "finance", "s1");
+        Mockito.verify(aiOrchestratorService).chatStructured(7L, "budget suggestion", "finance", "s1", "agent");
         Mockito.verifyNoInteractions(aiService);
     }
 
     @Test
     void shouldExposeLegacyDeprecationHeadersAndMigrationInfo() {
         AIService aiService = Mockito.mock(AIService.class);
-        ReActAgentService reActAgentService = Mockito.mock(ReActAgentService.class);
+        AiOrchestratorService aiOrchestratorService = Mockito.mock(AiOrchestratorService.class);
         AiProperties aiProperties = new AiProperties();
-        AIController controller = new AIController(aiService, reActAgentService, aiProperties);
+        AIController controller = new AIController(aiService, aiOrchestratorService, aiProperties);
 
         Mockito.when(aiService.chat(7L, "hello", "finance")).thenReturn(new AIChatResponse("legacy-reply"));
 
@@ -101,14 +106,23 @@ class AIControllerTest {
     }
 
     @Test
-    void shouldFallbackToLegacyStreamWhenReactStreamDisabled() {
+    void shouldForceLlmModeWhenReactStreamDisabled() {
         AIService aiService = Mockito.mock(AIService.class);
-        ReActAgentService reActAgentService = Mockito.mock(ReActAgentService.class);
+        AiOrchestratorService aiOrchestratorService = Mockito.mock(AiOrchestratorService.class);
         AiProperties aiProperties = new AiProperties();
         aiProperties.getStreamOps().setReactEnabled(false);
-        AIController controller = new AIController(aiService, reActAgentService, aiProperties);
+        AIController controller = new AIController(aiService, aiOrchestratorService, aiProperties);
 
-        Mockito.when(aiService.chat(7L, "hello", "finance")).thenReturn(new AIChatResponse("legacy answer body"));
+        Mockito.when(aiOrchestratorService.chatStructured(7L, "hello", "finance", null, "llm"))
+            .thenReturn(new StructuredAiResponse(
+                "legacy answer body",
+                List.of(),
+                List.of(),
+                List.of(),
+                Map.of("estimatedTokens", 5),
+                "llm",
+                "trace-llm"
+            ));
 
         AIChatRequest request = new AIChatRequest();
         request.setMessage("hello");
@@ -122,7 +136,8 @@ class AIControllerTest {
         Assertions.assertEquals("chunk", events.get(0).event());
         Assertions.assertEquals("legacy answer body", events.get(0).data().get("content"));
         Assertions.assertEquals("done", events.get(events.size() - 1).event());
-        Mockito.verify(aiService).chat(7L, "hello", "finance");
-        Mockito.verifyNoInteractions(reActAgentService);
+        Mockito.verify(aiOrchestratorService).chatStructured(7L, "hello", "finance", null, "llm");
+        Mockito.verifyNoInteractions(aiService);
     }
 }
+

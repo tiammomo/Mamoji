@@ -34,4 +34,14 @@ class StructuredAnswerParserTest {
         Assertions.assertEquals("from-spring-ai", parsed.answer());
         Assertions.assertTrue(parsed.warnings().isEmpty());
     }
+
+    @Test
+    void shouldParseReplyStylePayload() {
+        StructuredAnswerParser parser = new StructuredAnswerParser(new ObjectMapper());
+        String raw = "{\"reply\":\"this month expense is stable\",\"warnings\":[],\"sources\":[],\"actions\":[]}";
+
+        StructuredAnswerParser.ParsedAnswer parsed = parser.parse(raw).orElseThrow();
+
+        Assertions.assertEquals("this month expense is stable", parsed.answer());
+    }
 }

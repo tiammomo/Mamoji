@@ -23,6 +23,7 @@ export const transactionApi = {
     page?: number;
     pageSize?: number;
     type?: number;
+    types?: number[];
     accountId?: number;
     categoryId?: number;
     startDate?: string;
@@ -33,6 +34,7 @@ export const transactionApi = {
       page: params?.page,
       pageSize: params?.pageSize,
       type: params?.type,
+      types: params?.types?.join(","),
       accountId: params?.accountId,
       categoryId: params?.categoryId,
       startDate: params?.startDate,

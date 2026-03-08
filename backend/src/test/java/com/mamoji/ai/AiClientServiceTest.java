@@ -95,6 +95,36 @@ class AiClientServiceTest {
         Assertions.assertEquals(3, calls.get());
     }
 
+    @Test
+    void shouldExtractReplyFromChoiceTextShape() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/text/chatcompletion_v2", exchange -> {
+            readBody(exchange);
+            writeResponse(exchange, 200, "{\"choices\":[{\"text\":\"text-shape-ok\"}]}");
+        });
+        server.start();
+
+        AiClientService service = buildService("primary-model", null, 0);
+        String answer = service.chat("system", "user");
+
+        Assertions.assertEquals("text-shape-ok", answer);
+    }
+
+    @Test
+    void shouldExtractReplyFromTopLevelOutputShape() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/text/chatcompletion_v2", exchange -> {
+            readBody(exchange);
+            writeResponse(exchange, 200, "{\"output\":{\"text\":\"output-shape-ok\"}}");
+        });
+        server.start();
+
+        AiClientService service = buildService("primary-model", null, 0);
+        String answer = service.chat("system", "user");
+
+        Assertions.assertEquals("output-shape-ok", answer);
+    }
+
     private AiClientService buildService(String primaryModel, String fallbackModel, int maxRetries) {
         AiProperties properties = new AiProperties();
         properties.setBaseUrl("http://localhost:" + server.getAddress().getPort());

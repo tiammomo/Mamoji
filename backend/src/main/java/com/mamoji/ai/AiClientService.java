@@ -24,9 +24,11 @@ import java.util.UUID;
 public class AiClientService {
 
     private static final String CHAT_PATH = "/v1/text/chatcompletion_v2";
+    private static final String ANTHROPIC_CHAT_PATH = "/v1/messages";
     private static final Duration STREAM_CHUNK_DELAY = Duration.ofMillis(40);
     private static final String DEFAULT_MODEL = "abab6.5s-chat";
     private static final String FALLBACK_ERROR_MESSAGE = "Sorry, AI service is temporarily unavailable. Please try again later.";
+    private static final String ANTHROPIC_VERSION = "2023-06-01";
 
     private final AiProperties properties;
     private final WebClient.Builder webClientBuilder;
@@ -92,15 +94,26 @@ public class AiClientService {
     }
 
     private Mono<String> chatMono(String systemPrompt, String userPrompt, String traceId, String model) {
-        return webClientBuilder
+        boolean anthropicMode = isAnthropicMode();
+        WebClient client = webClientBuilder
             .baseUrl(properties.getBaseUrl())
-            .defaultHeader("Authorization", "Bearer " + safeToken(properties.getApiKey()))
             .defaultHeader("X-Trace-Id", traceId)
-            .build()
+            .build();
+
+        WebClient.RequestBodySpec requestBodySpec = client
             .post()
-            .uri(CHAT_PATH)
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(buildRequestBody(systemPrompt, userPrompt, model))
+            .uri(anthropicMode ? ANTHROPIC_CHAT_PATH : CHAT_PATH)
+            .contentType(MediaType.APPLICATION_JSON);
+
+        if (anthropicMode) {
+            requestBodySpec.header("x-api-key", safeToken(properties.getApiKey()));
+            requestBodySpec.header("anthropic-version", ANTHROPIC_VERSION);
+        } else {
+            requestBodySpec.header("Authorization", "Bearer " + safeToken(properties.getApiKey()));
+        }
+
+        return requestBodySpec
+            .bodyValue(buildRequestBody(systemPrompt, userPrompt, model, anthropicMode))
             .retrieve()
             .bodyToMono(Map.class)
             .map(this::extractReply)
@@ -112,7 +125,19 @@ public class AiClientService {
             );
     }
 
-    private Map<String, Object> buildRequestBody(String systemPrompt, String userPrompt, String model) {
+    private Map<String, Object> buildRequestBody(String systemPrompt, String userPrompt, String model, boolean anthropicMode) {
+        if (anthropicMode) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("model", model);
+            payload.put("max_tokens", properties.getMaxTokens());
+            payload.put("temperature", properties.getTemperature());
+            payload.put("system", systemPrompt);
+            payload.put("messages", List.of(
+                Map.of("role", "user", "content", userPrompt)
+            ));
+            return payload;
+        }
+
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
         payload.put("max_tokens", properties.getMaxTokens());
@@ -138,6 +163,40 @@ public class AiClientService {
 
         Object choicesObj = response.get("choices");
         if (!(choicesObj instanceof List<?> choices) || choices.isEmpty()) {
+            String directReply = extractFirstString(response, "reply", "text", "output_text", "outputText", "result");
+            if (directReply != null) {
+                return directReply;
+            }
+
+            String outputText = extractTextFromContent(response.get("output"));
+            if (outputText != null) {
+                return outputText;
+            }
+
+            Object contentObj = response.get("content");
+            String topContent = extractTextFromContent(contentObj);
+            if (topContent != null) {
+                return topContent;
+            }
+
+            Object dataObj = response.get("data");
+            if (dataObj instanceof Map<?, ?> dataMap) {
+                String nestedReply = extractFirstString(dataMap, "reply", "text", "output_text", "outputText", "result");
+                if (nestedReply != null) {
+                    return nestedReply;
+                }
+                String nestedContent = extractTextFromContent(dataMap.get("content"));
+                if (nestedContent != null) {
+                    return nestedContent;
+                }
+
+                String nestedOutput = extractTextFromContent(dataMap.get("output"));
+                if (nestedOutput != null) {
+                    return nestedOutput;
+                }
+            }
+
+            log.warn("AI reply format not recognized, keys={}", response.keySet());
             return "AI service returned invalid response format";
         }
 
@@ -146,13 +205,124 @@ public class AiClientService {
             return "AI service returned invalid response choice";
         }
 
-        Object messageObj = choiceMap.get("message");
-        if (!(messageObj instanceof Map<?, ?> messageMap)) {
-            return "AI service returned invalid response message";
+        String choiceContent = extractChoiceText(choiceMap);
+        if (choiceContent != null) {
+            return choiceContent;
         }
 
-        Object content = messageMap.get("content");
-        return content != null ? content.toString() : "AI service returned empty message";
+        Object messageObj = choiceMap.get("message");
+        if (messageObj instanceof Map<?, ?> messageMap) {
+            Object content = messageMap.get("content");
+            String normalized = extractTextFromContent(content);
+            if (normalized != null) {
+                return normalized;
+            }
+            return "AI service returned empty message";
+        }
+
+        Object contentObj = choiceMap.get("content");
+        String normalized = extractTextFromContent(contentObj);
+        if (normalized != null) {
+            return normalized;
+        }
+
+        log.warn("AI reply choice format not recognized, keys={}", choiceMap.keySet());
+        return "AI service returned invalid response message";
+    }
+
+    private String extractChoiceText(Map<?, ?> choiceMap) {
+        String direct = extractFirstString(choiceMap, "text", "output_text", "outputText", "reply", "result");
+        if (direct != null) {
+            return direct;
+        }
+
+        Object output = choiceMap.get("output");
+        String outputText = extractTextFromContent(output);
+        if (outputText != null) {
+            return outputText;
+        }
+
+        Object delta = choiceMap.get("delta");
+        String deltaText = extractTextFromContent(delta);
+        if (deltaText != null) {
+            return deltaText;
+        }
+
+        Object messagesObj = choiceMap.get("messages");
+        if (messagesObj instanceof List<?> messages && !messages.isEmpty()) {
+            Object firstMessage = messages.get(0);
+            if (firstMessage instanceof Map<?, ?> messageMap) {
+                String msgText = extractTextFromContent(messageMap.get("content"));
+                if (msgText != null) {
+                    return msgText;
+                }
+                msgText = extractFirstString(messageMap, "text", "reply", "result");
+                if (msgText != null) {
+                    return msgText;
+                }
+            }
+            return extractTextFromContent(firstMessage);
+        }
+
+        return null;
+    }
+
+    private String extractFirstString(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value instanceof String text && !text.isBlank()) {
+                return text.trim();
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractTextFromContent(Object content) {
+        if (content == null) {
+            return null;
+        }
+        if (content instanceof String text) {
+            return text.isBlank() ? null : text.trim();
+        }
+        if (content instanceof List<?> list) {
+            StringBuilder builder = new StringBuilder();
+            for (Object item : list) {
+                if (item instanceof String part) {
+                    if (!part.isBlank()) {
+                        if (!builder.isEmpty()) {
+                            builder.append('\n');
+                        }
+                        builder.append(part.trim());
+                    }
+                    continue;
+                }
+                if (item instanceof Map<?, ?> block) {
+                    Object blockText = block.get("text");
+                    if (!(blockText instanceof String textPart) || textPart.isBlank()) {
+                        Object nestedContent = block.get("content");
+                        String nested = extractTextFromContent(nestedContent);
+                        if (nested != null) {
+                            if (!builder.isEmpty()) {
+                                builder.append('\n');
+                            }
+                            builder.append(nested);
+                        }
+                        continue;
+                    }
+                    if (!builder.isEmpty()) {
+                        builder.append('\n');
+                    }
+                    builder.append(textPart.trim());
+                }
+            }
+            return builder.isEmpty() ? null : builder.toString();
+        }
+        if (content instanceof Map<?, ?> contentMap) {
+            String text = extractFirstString(contentMap, "text", "content", "value");
+            return text != null ? text : null;
+        }
+        return content.toString();
     }
 
     private Flux<String> chunkText(String fullText) {
@@ -202,6 +372,11 @@ public class AiClientService {
 
     private boolean shouldUseFallback(String primaryModel, String fallbackModel) {
         return fallbackModel != null && !fallbackModel.isBlank() && !fallbackModel.equals(primaryModel);
+    }
+
+    private boolean isAnthropicMode() {
+        String baseUrl = properties.getBaseUrl();
+        return baseUrl != null && baseUrl.toLowerCase().contains("/anthropic");
     }
 
     private String normalizeOptionalModel(String model) {
