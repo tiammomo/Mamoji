@@ -83,8 +83,8 @@ export default function AIPage() {
   }, [router, assistantType, currentConfig.welcomeMessage]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    messagesEndRef.current?.scrollIntoView({ behavior: loading ? "auto" : "smooth" });
+  }, [messages.length, loading]);
 
   async function handleSend(message?: string): Promise<void> {
     const userContent = (message ?? input).trim();
@@ -103,11 +103,45 @@ export default function AIPage() {
     setInput("");
     setLoading(true);
 
-    try {
-      const assistantId = `${Date.now()}-assistant`;
-      let streamChunkCount = 0;
-      let donePayload: AIStreamDonePayload | null = null;
+    const assistantId = `${Date.now()}-assistant`;
+    let streamChunkCount = 0;
+    let donePayload: AIStreamDonePayload | null = null;
+    let chunkBuffer = "";
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const scrollToBottom = (behavior: ScrollBehavior): void => {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior });
+      });
+    };
+
+    const flushChunks = (): void => {
+      if (!chunkBuffer) {
+        return;
+      }
+      const contentToAppend = chunkBuffer;
+      chunkBuffer = "";
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === assistantId
+            ? { ...item, content: `${item.content}${contentToAppend}` }
+            : item
+        )
+      );
+      scrollToBottom("auto");
+    };
+
+    const scheduleFlush = (): void => {
+      if (flushTimer) {
+        return;
+      }
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        flushChunks();
+      }, 40);
+    };
+
+    try {
       setMessages((prev) => [
         ...prev,
         {
@@ -121,15 +155,15 @@ export default function AIPage() {
       await aiApi.chatStream(userContent, assistantType, {
         onChunk: (chunk) => {
           streamChunkCount += 1;
-          setMessages((prev) =>
-            prev.map((item) =>
-              item.id === assistantId
-                ? { ...item, content: `${item.content}${chunk}` }
-                : item
-            )
-          );
+          chunkBuffer += chunk;
+          scheduleFlush();
         },
         onDone: (payload) => {
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          flushChunks();
           donePayload = payload;
           setMessages((prev) =>
             prev.map((item) =>
@@ -163,6 +197,7 @@ export default function AIPage() {
               : item
           )
         );
+        scrollToBottom("auto");
       }
     } catch (error: unknown) {
       setMessages((prev) => {
@@ -177,7 +212,14 @@ export default function AIPage() {
           },
         ];
       });
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+      });
     } finally {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       setLoading(false);
     }
   }
