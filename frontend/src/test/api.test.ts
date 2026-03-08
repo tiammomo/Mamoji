@@ -1,6 +1,7 @@
 ﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   accountApi,
+  aiApi,
   api,
   getErrorMessage,
   receiptApi,
@@ -178,5 +179,65 @@ describe("Domain API wrappers", () => {
       "/api/v1/stats/overview?month=2024-01",
       expect.any(Object)
     );
+  });
+
+  it("aiApi.chatStream should parse chunk and done events", async () => {
+    vi.mocked(localStorage.getItem).mockReturnValue("stream-token");
+    const streamChunks = [
+      "event: chunk\ndata: {\"content\":\"你好\"}\n\n",
+      "event: chunk\ndata: {\"content\":\"，世界\"}\n\n",
+      "event: done\ndata: {\"done\":true,\"warnings\":[\"w1\"],\"sources\":[\"s1\"],\"actions\":[\"a1\"],\"usage\":{\"estimatedTokens\":5}}\n\n",
+    ];
+    const encoder = new TextEncoder();
+    const body = {
+      getReader: () => {
+        let index = 0;
+        return {
+          read: vi.fn(async () => {
+            if (index >= streamChunks.length) {
+              return { done: true, value: undefined };
+            }
+            const value = encoder.encode(streamChunks[index]);
+            index += 1;
+            return { done: false, value };
+          }),
+        };
+      },
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      body,
+      text: () => Promise.resolve(""),
+    });
+
+    const chunks: string[] = [];
+    let donePayload: unknown;
+
+    await aiApi.chatStream("hello", "finance", {
+      onChunk: (chunk) => chunks.push(chunk),
+      onDone: (payload) => {
+        donePayload = payload;
+      },
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/v1/ai/chat/stream",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer stream-token",
+        }),
+      })
+    );
+    expect(chunks.join("")).toBe("你好，世界");
+    expect(donePayload).toEqual({
+      done: true,
+      warnings: ["w1"],
+      sources: ["s1"],
+      actions: ["a1"],
+      usage: { estimatedTokens: 5 },
+    });
   });
 });

@@ -6,6 +6,7 @@ spring:
 app:
   security:
     h2-console-enabled: true
+    prometheus-public-enabled: true
     frame-options: sameorigin
     cors:
       allowed-origins:

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MessageCircle, Send, TrendingUp, Wallet } from "lucide-react";
 import { aiApi, getErrorMessage } from "@/lib/api";
+import type { AIStreamDonePayload } from "@/lib/api";
 
 type AssistantType = "finance" | "stock";
 
@@ -12,6 +13,10 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  warnings?: string[];
+  sources?: string[];
+  actions?: string[];
+  usage?: Record<string, unknown>;
 }
 
 const assistantConfig: Record<AssistantType, {
@@ -99,26 +104,79 @@ export default function AIPage() {
     setLoading(true);
 
     try {
-      const response = await aiApi.chat(userContent, assistantType);
+      const assistantId = `${Date.now()}-assistant`;
+      let streamChunkCount = 0;
+      let donePayload: AIStreamDonePayload | null = null;
+
       setMessages((prev) => [
         ...prev,
         {
-          id: `${Date.now()}-assistant`,
+          id: assistantId,
           role: "assistant",
-          content: response.reply,
+          content: "",
           timestamp: new Date(),
         },
       ]);
+
+      await aiApi.chatStream(userContent, assistantType, {
+        onChunk: (chunk) => {
+          streamChunkCount += 1;
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.id === assistantId
+                ? { ...item, content: `${item.content}${chunk}` }
+                : item
+            )
+          );
+        },
+        onDone: (payload) => {
+          donePayload = payload;
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.id === assistantId
+                ? {
+                    ...item,
+                    warnings: payload.warnings,
+                    sources: payload.sources,
+                    actions: payload.actions,
+                    usage: payload.usage,
+                  }
+                : item
+            )
+          );
+        },
+      });
+
+      if (streamChunkCount === 0) {
+        const fallback = await aiApi.chat(userContent, assistantType);
+        setMessages((prev) =>
+          prev.map((item) =>
+            item.id === assistantId
+              ? {
+                  ...item,
+                  content: fallback.reply,
+                  warnings: donePayload?.warnings,
+                  sources: donePayload?.sources,
+                  actions: donePayload?.actions,
+                  usage: donePayload?.usage,
+                }
+              : item
+          )
+        );
+      }
     } catch (error: unknown) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-error`,
-          role: "assistant",
-          content: getErrorMessage(error, "抱歉，我暂时无法回答，请稍后重试。"),
-          timestamp: new Date(),
-        },
-      ]);
+      setMessages((prev) => {
+        const withoutPendingAssistant = prev.filter((item) => !(item.role === "assistant" && item.content === ""));
+        return [
+          ...withoutPendingAssistant,
+          {
+            id: `${Date.now()}-error`,
+            role: "assistant",
+            content: getErrorMessage(error, "抱歉，我暂时无法回答，请稍后重试。"),
+            timestamp: new Date(),
+          },
+        ];
+      });
     } finally {
       setLoading(false);
     }
@@ -175,6 +233,16 @@ export default function AIPage() {
                 }`}
               >
                 <p className="whitespace-pre-wrap">{message.content}</p>
+                {message.role === "assistant" && message.warnings && message.warnings.length > 0 && (
+                  <p className="text-xs mt-2 text-amber-600">
+                    提示：{message.warnings.join("；")}
+                  </p>
+                )}
+                {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+                  <p className="text-xs mt-1 text-gray-500">
+                    来源：{message.sources.join("，")}
+                  </p>
+                )}
                 <p className={`text-xs mt-1 ${message.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
                   {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                 </p>

@@ -30,6 +30,14 @@ export interface AIChatResponse {
   reply: string;
 }
 
+export interface AIStreamDonePayload {
+  done: boolean;
+  warnings: string[];
+  sources: string[];
+  actions: string[];
+  usage: Record<string, unknown>;
+}
+
 export interface Account {
   id: number;
   name: string;

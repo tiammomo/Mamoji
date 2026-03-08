@@ -24,10 +24,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = SecurityConfigDevTest.TestController.class)
+@WebMvcTest(controllers = {
+    SecurityConfigDevTest.TestController.class,
+    SecurityConfigDevTest.ActuatorController.class
+})
 @Import(SecurityConfig.class)
 @TestPropertySource(properties = {
     "app.security.h2-console-enabled=true",
+    "app.security.prometheus-public-enabled=true",
     "app.security.frame-options=sameorigin",
     "app.security.cors.allowed-origins=http://localhost:33000,http://127.0.0.1:33000",
     "app.security.cors.allowed-methods=GET,POST,PUT,DELETE,OPTIONS",
@@ -86,12 +90,27 @@ class SecurityConfigDevTest {
             .andExpect(header().string("X-Frame-Options", "SAMEORIGIN"));
     }
 
+    @Test
+    void shouldPermitPrometheusWhenPublicAccessEnabled() throws Exception {
+        mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().is5xxServerError());
+    }
+
     @RestController
     @RequestMapping("/api/test")
     public static class TestController {
         @GetMapping("/ping")
         public ResponseEntity<String> ping() {
             return ResponseEntity.ok("ok");
+        }
+    }
+
+    @RestController
+    @RequestMapping("/actuator")
+    public static class ActuatorController {
+        @GetMapping("/prometheus")
+        public ResponseEntity<String> prometheus() {
+            return ResponseEntity.ok("metrics");
         }
     }
 }

@@ -44,7 +44,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
                 auth.requestMatchers("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/test").permitAll();
-                auth.requestMatchers("/actuator/health", "/actuator/prometheus").permitAll();
+                auth.requestMatchers("/actuator/health").permitAll();
+                if (securityProperties.isPrometheusPublicEnabled()) {
+                    auth.requestMatchers("/actuator/prometheus").permitAll();
+                }
                 auth.requestMatchers("/error").permitAll();
                 if (securityProperties.isH2ConsoleEnabled()) {
                     auth.requestMatchers("/h2-console/**").permitAll();

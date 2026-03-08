@@ -14,6 +14,7 @@ import java.util.Locale;
 public class SecurityProperties {
 
     private boolean h2ConsoleEnabled = false;
+    private boolean prometheusPublicEnabled = false;
 
     /**
      * Supported values: deny, sameorigin, disable.
