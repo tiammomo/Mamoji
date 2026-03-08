@@ -1,35 +1,32 @@
-# Mamoji Frontend Dockerfile
-# 构建: docker build -t mamoji/frontend:latest ./frontend
-# 运行: docker run -d -p 33000:80 --network mamoji-network mamoji/frontend:latest
+# Mamoji Frontend Dockerfile (Next.js standalone)
+# Build: docker build -t mamoji/frontend:latest ./frontend
+# Run:   docker run -d -p 33000:80 --network mamoji-network mamoji/frontend:latest
 
-# 阶段一：构建
-FROM node:20-alpine AS builder
-
+FROM node:20-alpine AS deps
 WORKDIR /app
-
-# 复制依赖文件
 COPY package*.json ./
+RUN npm ci
 
-# 安装依赖
-RUN npm ci --only=production
-
-# 复制源码
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# 构建生产版本
 RUN npm run build
 
-# 阶段二：运行
-FROM nginx:alpine
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=80
+ENV HOSTNAME=0.0.0.0
 
-# 复制构建产物
-COPY --from=builder /app/out /usr/share/nginx/html
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
 
-# 复制 nginx 配置
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
-# 暴露端口
+USER nextjs
 EXPOSE 80
 
-# 启动 nginx
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]

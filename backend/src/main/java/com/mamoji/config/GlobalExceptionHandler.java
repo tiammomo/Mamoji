@@ -69,15 +69,28 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, message, request, ex);
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgumentException(
+        IllegalArgumentException ex,
+        HttpServletRequest request
+    ) {
+        String message = ex.getMessage() != null && !ex.getMessage().isBlank()
+            ? ex.getMessage()
+            : "Invalid request.";
+        return buildResponse(HttpStatus.BAD_REQUEST, message, request, ex);
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, Object>> handleRuntimeException(
         RuntimeException ex,
         HttpServletRequest request
     ) {
-        String message = ex.getMessage() != null && !ex.getMessage().isBlank()
-            ? ex.getMessage()
-            : "Request processing failed.";
-        return buildResponse(HttpStatus.BAD_REQUEST, message, request, ex);
+        return buildResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "Internal server error.",
+            request,
+            ex
+        );
     }
 
     @ExceptionHandler(Exception.class)

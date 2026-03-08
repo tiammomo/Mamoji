@@ -66,6 +66,24 @@ class GlobalExceptionHandlerTest {
             .andExpect(jsonPath("$.message").value("name: must not be blank"));
     }
 
+    @Test
+    void shouldReturnBadRequestForIllegalArgumentException() throws Exception {
+        mockMvc.perform(get("/test/illegal-argument"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.traceId").exists())
+            .andExpect(jsonPath("$.code").value(400))
+            .andExpect(jsonPath("$.message").value("invalid query param"));
+    }
+
+    @Test
+    void shouldReturnInternalServerErrorForUnexpectedRuntimeException() throws Exception {
+        mockMvc.perform(get("/test/runtime-error"))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.traceId").exists())
+            .andExpect(jsonPath("$.code").value(500))
+            .andExpect(jsonPath("$.message").value("Internal server error."));
+    }
+
     @RestController
     static class ThrowingController {
 
@@ -82,6 +100,16 @@ class GlobalExceptionHandlerTest {
         @PostMapping("/test/validate")
         String validate(@Valid @RequestBody ValidateBody body) {
             return body.name;
+        }
+
+        @GetMapping("/test/illegal-argument")
+        String illegalArgument() {
+            throw new IllegalArgumentException("invalid query param");
+        }
+
+        @GetMapping("/test/runtime-error")
+        String runtimeError() {
+            throw new IllegalStateException("unexpected runtime failure");
         }
     }
 
