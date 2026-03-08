@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,12 @@ interface ChatMessage {
   actions?: string[];
   usage?: Record<string, unknown>;
 }
+
+type StreamingMessage = ChatMessage & { role: "assistant" };
+
+const NEAR_BOTTOM_THRESHOLD_PX = 64;
+const STREAM_FLUSH_MS = 45;
+const AUTO_SCROLL_THROTTLE_MS = 120;
 
 const assistantConfig: Record<AssistantType, {
   name: string;
@@ -54,13 +60,38 @@ const assistantConfig: Record<AssistantType, {
   },
 };
 
+function MessageBubble({ message }: { message: ChatMessage }) {
+  return (
+    <div className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+          message.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
+        }`}
+      >
+        <p className="whitespace-pre-wrap">{message.content}</p>
+        {message.role === "assistant" && message.warnings && message.warnings.length > 0 && (
+          <p className="text-xs mt-2 text-amber-600">提示：{message.warnings.join("；")}</p>
+        )}
+        {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+          <p className="text-xs mt-1 text-gray-500">来源：{message.sources.join("，")}</p>
+        )}
+        <p className={`text-xs mt-1 ${message.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
+          {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function AIPage() {
   const router = useRouter();
   const messageListRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const lastAutoScrollAtRef = useRef(0);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
@@ -68,13 +99,43 @@ export default function AIPage() {
 
   const currentConfig = useMemo(() => assistantConfig[assistantType], [assistantType]);
 
+  const renderedHistory = useMemo(
+    () => messages.map((message) => <MessageBubble key={message.id} message={message} />),
+    [messages]
+  );
+
+  const updateStickToBottomFlag = (): void => {
+    const container = messageListRef.current;
+    if (!container) {
+      return;
+    }
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    stickToBottomRef.current = distanceToBottom < NEAR_BOTTOM_THRESHOLD_PX;
+  };
+
+  const maybeStickToBottom = (): void => {
+    if (!stickToBottomRef.current) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastAutoScrollAtRef.current < AUTO_SCROLL_THROTTLE_MS) {
+      return;
+    }
+    lastAutoScrollAtRef.current = now;
+    requestAnimationFrame(() => {
+      const container = messageListRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+  };
+
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
       return;
     }
-
     setMessages([
       {
         id: "welcome",
@@ -83,13 +144,15 @@ export default function AIPage() {
         timestamp: new Date(),
       },
     ]);
+    setStreamingMessage(null);
+    setAwaitingFirstChunk(false);
   }, [router, assistantType, currentConfig.welcomeMessage]);
 
   useEffect(() => {
-    if (!loading) {
+    if (!loading && !streamingMessage && stickToBottomRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length, loading]);
+  }, [messages.length, loading, streamingMessage]);
 
   async function handleSend(message?: string): Promise<void> {
     const userContent = (message ?? input).trim();
@@ -98,7 +161,7 @@ export default function AIPage() {
     }
 
     const userMessage: ChatMessage = {
-      id: `${Date.now()}`,
+      id: `${Date.now()}-user`,
       role: "user",
       content: userContent,
       timestamp: new Date(),
@@ -108,33 +171,39 @@ export default function AIPage() {
     setInput("");
     setLoading(true);
     setAwaitingFirstChunk(true);
+    stickToBottomRef.current = true;
 
     const assistantId = `${Date.now()}-assistant`;
+    const assistantTimestamp = new Date();
+    setStreamingMessage({
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      timestamp: assistantTimestamp,
+    });
+    maybeStickToBottom();
+
     let streamChunkCount = 0;
-    let donePayload: AIStreamDonePayload | null = null;
     let chunkBuffer = "";
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const scrollToBottom = (behavior: ScrollBehavior): void => {
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior });
-      });
+    let assembledContent = "";
+    let donePayload: AIStreamDonePayload = {
+      done: true,
+      warnings: [],
+      sources: [],
+      actions: [],
+      usage: {},
     };
 
     const flushChunks = (): void => {
       if (!chunkBuffer) {
         return;
       }
-      const contentToAppend = chunkBuffer;
+      const append = chunkBuffer;
       chunkBuffer = "";
-      setMessages((prev) =>
-        prev.map((item) =>
-          item.id === assistantId
-            ? { ...item, content: `${item.content}${contentToAppend}` }
-            : item
-        )
-      );
-      scrollToBottom("auto");
+      assembledContent += append;
+      setStreamingMessage((prev) => (prev ? { ...prev, content: `${prev.content}${append}` } : prev));
+      maybeStickToBottom();
     };
 
     const scheduleFlush = (): void => {
@@ -144,108 +213,67 @@ export default function AIPage() {
       flushTimer = setTimeout(() => {
         flushTimer = null;
         flushChunks();
-      }, 40);
+      }, STREAM_FLUSH_MS);
     };
 
     try {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantId,
-          role: "assistant",
-          content: "",
-          timestamp: new Date(),
-        },
-      ]);
-
       await aiApi.chatStream(userContent, assistantType, {
         onChunk: (chunk) => {
           streamChunkCount += 1;
           if (streamChunkCount === 1) {
             setAwaitingFirstChunk(false);
           }
-          const container = messageListRef.current;
-          const shouldStickToBottom = container
-            ? container.scrollHeight - container.scrollTop - container.clientHeight < 64
-            : true;
           chunkBuffer += chunk;
           scheduleFlush();
-          if (shouldStickToBottom) {
-            const now = Date.now();
-            if (now - lastAutoScrollAtRef.current > 120) {
-              lastAutoScrollAtRef.current = now;
-              requestAnimationFrame(() => {
-                const currentContainer = messageListRef.current;
-                if (currentContainer) {
-                  currentContainer.scrollTop = currentContainer.scrollHeight;
-                }
-              });
-            }
-          }
         },
         onDone: (payload) => {
-          if (flushTimer) {
-            clearTimeout(flushTimer);
-            flushTimer = null;
-          }
-          flushChunks();
           donePayload = payload;
-          setMessages((prev) =>
-            prev.map((item) =>
-              item.id === assistantId
-                ? {
-                    ...item,
-                    warnings: payload.warnings,
-                    sources: payload.sources,
-                    actions: payload.actions,
-                    usage: payload.usage,
-                  }
-                : item
-            )
-          );
         },
       });
 
-      if (streamChunkCount === 0) {
-        const fallback = await aiApi.chat(userContent, assistantType);
-        setAwaitingFirstChunk(false);
-        setMessages((prev) =>
-          prev.map((item) =>
-            item.id === assistantId
-              ? {
-                  ...item,
-                  content: fallback.reply,
-                  warnings: donePayload?.warnings,
-                  sources: donePayload?.sources,
-                  actions: donePayload?.actions,
-                  usage: donePayload?.usage,
-                }
-              : item
-          )
-        );
-        scrollToBottom("auto");
-      }
-    } catch (error: unknown) {
-      setMessages((prev) => {
-        const withoutPendingAssistant = prev.filter((item) => !(item.role === "assistant" && item.content === ""));
-        return [
-          ...withoutPendingAssistant,
-          {
-            id: `${Date.now()}-error`,
-            role: "assistant",
-            content: getErrorMessage(error, "抱歉，我暂时无法回答，请稍后重试。"),
-            timestamp: new Date(),
-          },
-        ];
-      });
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-      });
-    } finally {
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
       }
+      flushChunks();
+
+      if (streamChunkCount === 0) {
+        const fallback = await aiApi.chat(userContent, assistantType);
+        assembledContent = fallback.reply;
+        setStreamingMessage((prev) => (prev ? { ...prev, content: fallback.reply } : prev));
+      }
+
+      const finalAssistantMessage: ChatMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: assembledContent,
+        timestamp: assistantTimestamp,
+        warnings: donePayload.warnings,
+        sources: donePayload.sources,
+        actions: donePayload.actions,
+        usage: donePayload.usage,
+      };
+
+      setMessages((prev) => [...prev, finalAssistantMessage]);
+      setStreamingMessage(null);
+      maybeStickToBottom();
+    } catch (error: unknown) {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      setStreamingMessage(null);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-error`,
+          role: "assistant",
+          content: getErrorMessage(error, "抱歉，我暂时无法回答，请稍后重试。"),
+          timestamp: new Date(),
+        },
+      ]);
+      maybeStickToBottom();
+    } finally {
       setAwaitingFirstChunk(false);
       setLoading(false);
     }
@@ -259,8 +287,13 @@ export default function AIPage() {
   }
 
   function handleAssistantChange(type: AssistantType): void {
+    if (loading) {
+      return;
+    }
     setAssistantType(type);
     setMessages([]);
+    setStreamingMessage(null);
+    setAwaitingFirstChunk(false);
   }
 
   return (
@@ -293,31 +326,13 @@ export default function AIPage() {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border flex flex-col h-[calc(100vh-18rem)]">
-        <div ref={messageListRef} className="flex-1 overflow-y-auto p-6 space-y-4">
-          {messages.map((message) => (
-            <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                  message.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
-                }`}
-              >
-                <p className="whitespace-pre-wrap">{message.content}</p>
-                {message.role === "assistant" && message.warnings && message.warnings.length > 0 && (
-                  <p className="text-xs mt-2 text-amber-600">
-                    提示：{message.warnings.join("；")}
-                  </p>
-                )}
-                {message.role === "assistant" && message.sources && message.sources.length > 0 && (
-                  <p className="text-xs mt-1 text-gray-500">
-                    来源：{message.sources.join("，")}
-                  </p>
-                )}
-                <p className={`text-xs mt-1 ${message.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
-                  {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
-                </p>
-              </div>
-            </div>
-          ))}
+        <div
+          ref={messageListRef}
+          onScroll={updateStickToBottomFlag}
+          className="flex-1 overflow-y-auto p-6 space-y-4"
+        >
+          {renderedHistory}
+          {streamingMessage && <MessageBubble message={streamingMessage} />}
 
           {loading && awaitingFirstChunk && (
             <div className="flex justify-start">
@@ -333,7 +348,7 @@ export default function AIPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {messages.length <= 1 && (
+        {messages.length <= 1 && !loading && !streamingMessage && (
           <div className="px-6 pb-4">
             <p className="text-sm text-gray-500 mb-2">可以这样问：</p>
             <div className="flex flex-wrap gap-2">
