@@ -2,6 +2,9 @@ package com.mamoji.dto;
 
 import lombok.Data;
 
+/**
+ * Chat request payload for AI assistant endpoints.
+ */
 @Data
 public class AIChatRequest {
     private String message;

@@ -19,6 +19,12 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Executes AI tool handlers with resilience controls.
+ *
+ * <p>Controls included:
+ * timeout, per-tool concurrency, circuit breaker, idempotent cache, and bounded executor.
+ */
 @Service
 public class AiToolExecutionService {
 
@@ -39,6 +45,9 @@ public class AiToolExecutionService {
         this.executor = buildExecutor(aiProperties);
     }
 
+    /**
+     * Executes a tool call under guardrails and returns a normalized result.
+     */
     public AiToolResult execute(AiToolHandler handler, Long userId, Map<String, Object> params) {
         String tool = handler.name();
         long now = System.currentTimeMillis();
@@ -96,6 +105,9 @@ public class AiToolExecutionService {
         }
     }
 
+    /**
+     * Marks one failure and opens circuit after threshold is reached.
+     */
     private void markFailure(CircuitState state) {
         int threshold = Math.max(1, aiProperties.getToolExecOps().getFailureThreshold());
         int openSeconds = Math.max(1, aiProperties.getToolExecOps().getCircuitOpenSeconds());
@@ -105,11 +117,17 @@ public class AiToolExecutionService {
         }
     }
 
+    /**
+     * Resets circuit after successful execution.
+     */
     private void resetCircuit(CircuitState state) {
         state.failures.set(0);
         state.openUntilMs = 0L;
     }
 
+    /**
+     * Builds bounded thread pool for tool execution isolation.
+     */
     private ExecutorService buildExecutor(AiProperties properties) {
         AiProperties.ToolExecOps ops = properties.getToolExecOps();
         int corePoolSize = Math.max(2, ops.getExecutorCorePoolSize());
@@ -125,6 +143,9 @@ public class AiToolExecutionService {
         );
     }
 
+    /**
+     * Stores successful result for short-term idempotent reuse.
+     */
     private void putCache(String requestKey, AiToolResult result) {
         AiProperties.ToolExecOps ops = aiProperties.getToolExecOps();
         long ttlMs = Math.max(1, ops.getCacheTtlSeconds()) * 1000L;
@@ -137,6 +158,9 @@ public class AiToolExecutionService {
         evictOneEntry();
     }
 
+    /**
+     * Runs periodic lazy cleanup to remove expired cache entries.
+     */
     private void cleanupCacheIfNeeded(long now) {
         long tick = cacheCleanupTicker.incrementAndGet();
         if (tick % CACHE_CLEANUP_EVERY_REQUESTS != 0) {
@@ -145,6 +169,9 @@ public class AiToolExecutionService {
         idempotentCache.entrySet().removeIf(entry -> entry.getValue().expireAtMs <= now);
     }
 
+    /**
+     * Evicts one arbitrary entry to enforce max cache capacity.
+     */
     private void evictOneEntry() {
         String firstKey = idempotentCache.keySet().stream().findFirst().orElse(null);
         if (firstKey != null) {
@@ -152,21 +179,33 @@ public class AiToolExecutionService {
         }
     }
 
+    /**
+     * Shuts down tool executor on bean destruction.
+     */
     @PreDestroy
     public void shutdownExecutor() {
         executor.shutdownNow();
     }
 
+    /**
+     * Mutable circuit state per tool.
+     */
     private static class CircuitState {
         private final AtomicInteger failures = new AtomicInteger();
         private volatile long openUntilMs = 0L;
     }
 
+    /**
+     * Builds an idempotency key from tool name, user, and params hash.
+     */
     private String buildRequestKey(String tool, Long userId, Map<String, Object> params) {
         int paramHash = params == null ? 0 : params.toString().hashCode();
         return tool + ":" + (userId == null ? "anonymous" : userId) + ":" + paramHash;
     }
 
+    /**
+     * Cached tool result with expiration timestamp.
+     */
     private record CachedResult(AiToolResult result, long expireAtMs) {
     }
 }

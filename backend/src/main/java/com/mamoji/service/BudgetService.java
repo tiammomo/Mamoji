@@ -19,11 +19,23 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+/**
+ * 预算服务层。
+ *
+ * <p>核心职责：
+ * 1) 提供预算的增删改查；
+ * 2) 维护预算 spent 与状态（active/completed/overrun）一致性；
+ * 3) 提供交易到预算的匹配能力；
+ * 4) 输出预算风险信息（usageRate、riskLevel、riskMessage）。
+ */
 public class BudgetService {
 
     private final BudgetRepository budgetRepository;
     private final TransactionRepository transactionRepository;
 
+    /**
+     * 查询用户当前激活预算并转换为 DTO。
+     */
     public List<BudgetDTO> getBudgets(Long userId) {
         return budgetRepository.findByUserIdAndStatus(userId, BudgetStatus.ACTIVE)
             .stream()
@@ -31,6 +43,9 @@ public class BudgetService {
             .toList();
     }
 
+    /**
+     * 按时间范围筛选预算，返回与区间有重叠的激活预算。
+     */
     public List<BudgetDTO> getBudgetsByDateRange(Long userId, LocalDate startDate, LocalDate endDate) {
         return budgetRepository.findByUserIdAndStatus(userId, BudgetStatus.ACTIVE)
             .stream()
@@ -39,6 +54,9 @@ public class BudgetService {
             .toList();
     }
 
+    /**
+     * 查询当前日期下生效的预算列表。
+     */
     public List<BudgetDTO> getActiveBudgets(Long userId) {
         return budgetRepository.findActiveBudgets(userId, LocalDate.now())
             .stream()
@@ -46,11 +64,21 @@ public class BudgetService {
             .toList();
     }
 
+    /**
+     * 查询单个预算详情并校验归属权限。
+     */
     public BudgetDTO getBudget(Long id, Long userId) {
         return toDto(findOwnedBudget(id, userId));
     }
 
     @Transactional
+    /**
+     * 创建预算。
+     *
+     * <p>关键校验：
+     * 1) 名称、金额、预算周期、预警阈值合法；
+     * 2) 同分类同时间段预算不可重叠。
+     */
     public BudgetDTO createBudget(BudgetDTO dto, Long userId) {
         validateBudgetName(dto.getName());
         validateBudgetAmount(dto.getAmount());
@@ -75,6 +103,9 @@ public class BudgetService {
     }
 
     @Transactional
+    /**
+     * 局部更新预算并重算 spent 与状态。
+     */
     public BudgetDTO updateBudget(Long id, BudgetDTO dto, Long userId) {
         Budget budget = findOwnedBudget(id, userId);
 
@@ -123,6 +154,9 @@ public class BudgetService {
     }
 
     @Transactional
+    /**
+     * 软删除预算（置为 INACTIVE）。
+     */
     public void deleteBudget(Long id, Long userId) {
         Budget budget = findOwnedBudget(id, userId);
         budget.setStatus(BudgetStatus.INACTIVE);
@@ -130,6 +164,9 @@ public class BudgetService {
     }
 
     @Transactional
+    /**
+     * 增量更新预算 spent，适用于已明确增量金额的场景。
+     */
     public void updateBudgetSpent(Long budgetId, BigDecimal amount) {
         Budget budget = budgetRepository.findById(budgetId)
             .orElseThrow(() -> new ResourceNotFoundException("Budget not found."));
@@ -139,6 +176,9 @@ public class BudgetService {
     }
 
     @Transactional
+    /**
+     * 基于交易快照全量重算预算 spent，修正可能的累积误差。
+     */
     public void syncBudgetSnapshot(Long budgetId, Long userId) {
         Budget budget = findOwnedBudget(budgetId, userId);
         budget.setSpent(calculateBudgetSpent(budget));
@@ -146,6 +186,11 @@ public class BudgetService {
         budgetRepository.save(budget);
     }
 
+    /**
+     * 匹配支出交易可关联预算：
+     * 1) 优先匹配分类预算；
+     * 2) 再匹配不分分类的兜底预算。
+     */
     public Optional<Budget> matchActiveBudgetForExpense(Long userId, Long categoryId, LocalDate date) {
         if (categoryId != null) {
             Optional<Budget> categoryBudget = budgetRepository.findActiveBudgetByCategory(userId, categoryId, date);
@@ -195,6 +240,9 @@ public class BudgetService {
         }
     }
 
+    /**
+     * 校验预算时间段是否与现有激活预算冲突。
+     */
     private void validateNoOverlap(Long userId, Long categoryId, LocalDate startDate, LocalDate endDate, Long excludeBudgetId) {
         long overlapCount = budgetRepository.countOverlappingActiveBudgets(
             userId,
@@ -208,6 +256,9 @@ public class BudgetService {
         }
     }
 
+    /**
+     * 以“有效支出”（支出-已退款）计算预算 spent。
+     */
     private BigDecimal calculateBudgetSpent(Budget budget) {
         if (budget.getCategoryId() == null) {
             return defaultAmount(transactionRepository.sumEffectiveExpenseByUserIdAndDateBetween(
@@ -228,6 +279,9 @@ public class BudgetService {
         return value != null ? value : BigDecimal.ZERO;
     }
 
+    /**
+     * 按当前日期与执行进度更新预算状态。
+     */
     private void updateBudgetStatus(Budget budget) {
         LocalDate today = LocalDate.now();
         if (today.isAfter(budget.getEndDate())) {
@@ -246,6 +300,9 @@ public class BudgetService {
         );
     }
 
+    /**
+     * 转换为 BudgetDTO，并补充风险衍生字段。
+     */
     private BudgetDTO toDto(Budget budget) {
         BudgetDTO dto = new BudgetDTO();
         dto.setId(budget.getId());

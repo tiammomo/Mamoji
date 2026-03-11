@@ -6,6 +6,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * Transaction entity for income/expense and refund tracking.
+ */
 @Entity
 @Table(name = "transactions")
 @Data
@@ -60,12 +63,18 @@ public class Transaction {
     @Column(name = "budget_id")
     private Long budgetId;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

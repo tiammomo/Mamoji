@@ -17,6 +17,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Collections;
 
+/**
+ * Spring Security filter that resolves JWT bearer token into authenticated user context.
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -25,12 +28,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserRepository userRepository;
 
+    /**
+     * Keep filter enabled on async dispatch so SSE requests remain authenticated.
+     */
     @Override
     protected boolean shouldNotFilterAsyncDispatch() {
         // SSE endpoints use async dispatch; auth must be applied on async dispatch as well.
         return false;
     }
 
+    /**
+     * Extracts bearer token, validates it, and sets authentication in security context.
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,

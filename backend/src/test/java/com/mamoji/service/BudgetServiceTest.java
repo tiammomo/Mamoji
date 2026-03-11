@@ -18,6 +18,9 @@ import java.time.LocalDate;
 import java.util.Optional;
 
 @ExtendWith(MockitoExtension.class)
+/**
+ * Test suite for BudgetServiceTest.
+ */
 class BudgetServiceTest {
 
     @Mock
@@ -126,3 +129,4 @@ class BudgetServiceTest {
         Assertions.assertEquals(3, saved.getStatus());
     }
 }
+

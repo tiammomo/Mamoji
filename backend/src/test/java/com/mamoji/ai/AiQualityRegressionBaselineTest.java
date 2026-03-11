@@ -14,6 +14,10 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Test suite for AiQualityRegressionBaselineTest.
+ */
+
 class AiQualityRegressionBaselineTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -44,3 +48,6 @@ class AiQualityRegressionBaselineTest {
         return new AiQualityGateService(new AiProperties(), metricsService);
     }
 }
+
+
+

@@ -4,6 +4,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/**
+ * Minimal AI chat response payload.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

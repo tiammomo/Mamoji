@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Finance toolset providing structured JSON data for agent/tool calls.
+ */
 @Slf4j
 @Component
 public class FinanceTools extends BaseTool {
@@ -38,6 +41,9 @@ public class FinanceTools extends BaseTool {
         this.budgetRepository = budgetRepository;
     }
 
+    /**
+     * Returns income/expense summary for given period.
+     */
     public String queryIncomeExpense(Long userId, String startDate, String endDate) {
         if (userId == null) {
             return buildError("userId is required");
@@ -72,6 +78,9 @@ public class FinanceTools extends BaseTool {
         }
     }
 
+    /**
+     * Returns transaction list with optional filters.
+     */
     public String queryTransactions(Long userId, String startDate, String endDate, Long categoryId, Integer type) {
         if (userId == null) {
             return buildError("userId is required");
@@ -105,6 +114,9 @@ public class FinanceTools extends BaseTool {
         }
     }
 
+    /**
+     * Returns budget status and usage metrics.
+     */
     public String queryBudget(Long userId, Long budgetId) {
         if (userId == null) {
             return buildError("userId is required");
@@ -151,6 +163,9 @@ public class FinanceTools extends BaseTool {
         }
     }
 
+    /**
+     * Returns category-level amount and percentage statistics.
+     */
     public String queryCategoryStats(Long userId, String startDate, String endDate, Integer type) {
         if (userId == null) {
             return buildError("userId is required");
@@ -193,6 +208,9 @@ public class FinanceTools extends BaseTool {
         }
     }
 
+    /**
+     * Resolves requested budget or best active fallback budget.
+     */
     private Budget resolveBudget(Long userId, Long budgetId, LocalDate today) {
         if (budgetId != null) {
             return budgetRepository.findByIdAndUserId(budgetId, userId).orElse(null);
@@ -207,6 +225,9 @@ public class FinanceTools extends BaseTool {
         return activeBudgets.isEmpty() ? null : activeBudgets.get(0);
     }
 
+    /**
+     * Calculates spent amount for budget range/category.
+     */
     private BigDecimal resolveSpent(Long userId, Budget budget) {
         if (budget.getStartDate() == null || budget.getEndDate() == null) {
             return BigDecimal.ZERO;

@@ -16,6 +16,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+/**
+ * File-based knowledge retriever that loads JSON documents and ranks by token overlap.
+ */
 @Component
 @ConditionalOnProperty(prefix = "ai.rag-ops", name = "file-enabled", havingValue = "true", matchIfMissing = true)
 public class FileKnowledgeRetriever implements KnowledgeRetriever {
@@ -30,6 +33,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         this.knowledgeBase = loadKnowledgeBase(aiProperties.getRagOps().getKnowledgePath(), resourceLoader, objectMapper);
     }
 
+    /**
+     * Retrieves top-k snippets from loaded file knowledge base.
+     */
     @Override
     public List<KnowledgeSnippet> retrieve(String assistantType, String question, int topK) {
         int limit = Math.max(0, topK);
@@ -63,6 +69,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         return results;
     }
 
+    /**
+     * Loads knowledge documents from configured resource path.
+     */
     private List<KnowledgeDocument> loadKnowledgeBase(String path, ResourceLoader resourceLoader, ObjectMapper objectMapper) {
         if (path == null || path.isBlank()) {
             return List.of();
@@ -82,6 +91,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         }
     }
 
+    /**
+     * Checks whether document applies to requested assistant type.
+     */
     private boolean supportsType(String docType, String queryType) {
         if (docType == null || docType.isBlank()) {
             return true;
@@ -90,6 +102,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         return "all".equals(normalized) || normalized.equals(queryType);
     }
 
+    /**
+     * Scores one document by token containment count.
+     */
     private int score(KnowledgeDocument document, Set<String> tokens) {
         String haystack = (safe(document.title()) + " " + safe(document.content()) + " " + safe(document.tags()))
             .toLowerCase(Locale.ROOT);
@@ -102,6 +117,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         return score;
     }
 
+    /**
+     * Tokenizes free text into normalized unique terms.
+     */
     private Set<String> tokenize(String text) {
         if (text == null || text.isBlank()) {
             return Set.of();
@@ -116,6 +134,9 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         return tokens;
     }
 
+    /**
+     * Normalizes assistant type to stock/finance.
+     */
     private String normalizeType(String assistantType) {
         if ("stock".equalsIgnoreCase(assistantType)) {
             return "stock";
@@ -123,13 +144,22 @@ public class FileKnowledgeRetriever implements KnowledgeRetriever {
         return "finance";
     }
 
+    /**
+     * Converts nullable string to safe non-null value.
+     */
     private String safe(String value) {
         return value == null ? "" : value;
     }
 
+    /**
+     * Scored document holder.
+     */
     private record ScoredDocument(KnowledgeDocument document, int score) {
     }
 
+    /**
+     * File knowledge document schema.
+     */
     private record KnowledgeDocument(
         String assistantType,
         String source,

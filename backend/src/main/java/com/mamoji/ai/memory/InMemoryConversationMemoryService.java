@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * In-process memory implementation for conversation turns.
+ */
 @Service
 @ConditionalOnProperty(prefix = "ai.memory-ops", name = "redis-enabled", havingValue = "false", matchIfMissing = true)
 public class InMemoryConversationMemoryService implements ConversationMemoryService {
@@ -23,6 +26,9 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         this.aiProperties = aiProperties;
     }
 
+    /**
+     * Appends one turn and compacts/limits stored turns.
+     */
     @Override
     public void append(String sessionKey, String role, String content) {
         if (sessionKey == null || sessionKey.isBlank() || content == null || content.isBlank()) {
@@ -39,6 +45,9 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         }
     }
 
+    /**
+     * Reads recent turns from in-memory session buffer.
+     */
     @Override
     public List<ConversationTurn> recent(String sessionKey, int maxTurns) {
         if (sessionKey == null || sessionKey.isBlank()) {
@@ -55,6 +64,9 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         }
     }
 
+    /**
+     * Removes one session from memory map.
+     */
     @Override
     public void clear(String sessionKey) {
         if (sessionKey == null || sessionKey.isBlank()) {
@@ -63,6 +75,9 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         sessions.remove(sessionKey);
     }
 
+    /**
+     * Compacts oldest turns into a synthetic summary turn when overflowed.
+     */
     private void compactIfNeeded(Deque<ConversationTurn> turns) {
         AiProperties.MemoryOps memoryOps = aiProperties.getMemoryOps();
         if (!memoryOps.isSummarizeOnOverflow()) {
@@ -81,6 +96,9 @@ public class InMemoryConversationMemoryService implements ConversationMemoryServ
         turns.addFirst(new ConversationTurn("system_summary", summarize(compactBatch), Instant.now()));
     }
 
+    /**
+     * Builds compact summary text from old turns.
+     */
     private String summarize(List<ConversationTurn> turns) {
         StringBuilder sb = new StringBuilder("Summary:");
         int max = Math.min(6, turns.size());

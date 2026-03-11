@@ -7,6 +7,9 @@ import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
+/**
+ * Strict schema for model structured-output payload validation.
+ */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public record StructuredAnswerPayload(
     @NotBlank @Size(max = 4000) String answer,

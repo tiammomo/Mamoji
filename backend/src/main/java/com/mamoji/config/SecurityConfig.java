@@ -22,6 +22,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+/**
+ * Spring Security configuration for stateless JWT authentication.
+ */
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
@@ -31,6 +34,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final SecurityProperties securityProperties;
 
+    /**
+     * Configures security filter chain and endpoint authorization rules.
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
@@ -58,6 +64,9 @@ public class SecurityConfig {
             .build();
     }
 
+    /**
+     * Builds CORS configuration source from externalized security properties.
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
@@ -81,6 +90,9 @@ public class SecurityConfig {
         return source;
     }
 
+    /**
+     * Applies frame-options policy based on configured mode.
+     */
     private void configureFrameOptions(org.springframework.security.config.annotation.web.configurers.HeadersConfigurer<HttpSecurity>.FrameOptionsConfig frame) {
         String mode = securityProperties.normalizedFrameOptions();
         if ("disable".equals(mode)) {
@@ -94,6 +106,9 @@ public class SecurityConfig {
         frame.deny();
     }
 
+    /**
+     * Password encoder bean for user credentials.
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

@@ -14,6 +14,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Test suite for VectorKnowledgeRetrieverTest.
+ */
+
 class VectorKnowledgeRetrieverTest {
 
     @Test
@@ -59,3 +63,6 @@ class VectorKnowledgeRetrieverTest {
         Assertions.assertEquals("Market Rule", snippets.get(0).title());
     }
 }
+
+
+

@@ -11,6 +11,10 @@ import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.List;
 
+/**
+ * Test suite for SpringAiChatMemoryAdapterTest.
+ */
+
 class SpringAiChatMemoryAdapterTest {
 
     @Test
@@ -32,3 +36,6 @@ class SpringAiChatMemoryAdapterTest {
         Assertions.assertTrue(adapter.get("conv-1").isEmpty());
     }
 }
+
+
+

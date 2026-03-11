@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
 
+/**
+ * Ledger entity representing a bookkeeping scope.
+ */
 @Data
 @Entity
 @Table(name = "ledger")
@@ -35,12 +38,18 @@ public class Ledger {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

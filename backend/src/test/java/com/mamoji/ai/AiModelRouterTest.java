@@ -3,6 +3,10 @@ package com.mamoji.ai;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Test suite for AiModelRouterTest.
+ */
+
 class AiModelRouterTest {
 
     @Test
@@ -50,3 +54,6 @@ class AiModelRouterTest {
         Assertions.assertEquals("routing_disabled", decision.reason());
     }
 }
+
+
+

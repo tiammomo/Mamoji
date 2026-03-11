@@ -6,17 +6,26 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
+/**
+ * Finance tool handler that routes operation names to {@link FinanceTools}.
+ */
 @Component
 @RequiredArgsConstructor
 public class FinanceAiToolHandler implements AiToolHandler {
 
     private final FinanceTools financeTools;
 
+    /**
+     * Tool namespace.
+     */
     @Override
     public String name() {
         return "finance";
     }
 
+    /**
+     * Executes one finance operation.
+     */
     @Override
     public AiToolResult execute(Long userId, Map<String, Object> params) {
         String operation = stringParam(params, "operation");
@@ -48,11 +57,17 @@ public class FinanceAiToolHandler implements AiToolHandler {
         };
     }
 
+    /**
+     * Reads string parameter.
+     */
     private String stringParam(Map<String, Object> params, String key) {
         Object value = params.get(key);
         return value == null ? null : value.toString();
     }
 
+    /**
+     * Reads long parameter.
+     */
     private Long longParam(Map<String, Object> params, String key) {
         Object value = params.get(key);
         if (value == null) {
@@ -68,6 +83,9 @@ public class FinanceAiToolHandler implements AiToolHandler {
         }
     }
 
+    /**
+     * Reads integer parameter.
+     */
     private Integer intParam(Map<String, Object> params, String key) {
         Object value = params.get(key);
         if (value == null) {
@@ -83,6 +101,9 @@ public class FinanceAiToolHandler implements AiToolHandler {
         }
     }
 
+    /**
+     * Reads integer parameter with default.
+     */
     private Integer intParamOrDefault(Map<String, Object> params, String key, int defaultValue) {
         Integer value = intParam(params, key);
         return value != null ? value : defaultValue;

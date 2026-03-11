@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * Vector-store first retriever with file/local fallback chain.
+ */
 @Primary
 @Component
 @RequiredArgsConstructor
@@ -23,6 +26,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
     private final ObjectProvider<FileKnowledgeRetriever> fileKnowledgeRetrieverProvider;
     private final ObjectProvider<LocalKnowledgeRetriever> localKnowledgeRetrieverProvider;
 
+    /**
+     * Retrieves snippets from vector store, then falls back when needed.
+     */
     @Override
     public List<KnowledgeSnippet> retrieve(String assistantType, String question, int topK) {
         int limit = Math.max(0, topK);
@@ -38,6 +44,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return fallbackRetrieve(assistantType, question, topK);
     }
 
+    /**
+     * Queries vector store and maps documents to snippets.
+     */
     private List<KnowledgeSnippet> fromVectorStore(String assistantType, String question, int topK) {
         List<Document> documents = vectorStore.similaritySearch(question);
         if (documents == null || documents.isEmpty()) {
@@ -67,6 +76,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return snippets;
     }
 
+    /**
+     * Falls back to file retriever and then local retriever.
+     */
     private List<KnowledgeSnippet> fallbackRetrieve(String assistantType, String question, int topK) {
         FileKnowledgeRetriever fileRetriever = fileKnowledgeRetrieverProvider.getIfAvailable();
         if (fileRetriever != null) {
@@ -84,6 +96,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return List.of();
     }
 
+    /**
+     * Checks metadata assistant type compatibility.
+     */
     private boolean supportsType(Map<String, Object> metadata, String assistantType) {
         if (metadata == null || metadata.isEmpty()) {
             return true;
@@ -92,6 +107,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return "all".equals(docType) || assistantType.equals(docType);
     }
 
+    /**
+     * Normalizes assistant type to stock/finance.
+     */
     private String normalizeType(String assistantType) {
         if ("stock".equalsIgnoreCase(assistantType)) {
             return "stock";
@@ -99,6 +117,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return "finance";
     }
 
+    /**
+     * Reads metadata key with fallback.
+     */
     private String readMetadata(Map<String, Object> metadata, String key, String fallback) {
         if (metadata == null) {
             return fallback;
@@ -111,6 +132,9 @@ public class VectorKnowledgeRetriever implements KnowledgeRetriever {
         return text.isBlank() ? fallback : text;
     }
 
+    /**
+     * Null-safe text fallback.
+     */
     private String safe(String value) {
         return value == null ? "unknown" : value;
     }

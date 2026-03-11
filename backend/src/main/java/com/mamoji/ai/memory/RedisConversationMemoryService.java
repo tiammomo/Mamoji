@@ -11,6 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Redis-backed conversation memory implementation.
+ */
 @Service
 @ConditionalOnProperty(prefix = "ai.memory-ops", name = "redis-enabled", havingValue = "true")
 public class RedisConversationMemoryService implements ConversationMemoryService {
@@ -31,6 +34,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         this.aiProperties = aiProperties;
     }
 
+    /**
+     * Appends one turn and enforces size/ttl constraints.
+     */
     @Override
     public void append(String sessionKey, String role, String content) {
         if (sessionKey == null || sessionKey.isBlank() || content == null || content.isBlank()) {
@@ -50,6 +56,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         redisTemplate.expire(key, ttlSeconds, TimeUnit.SECONDS);
     }
 
+    /**
+     * Reads recent turns from Redis list storage.
+     */
     @Override
     public List<ConversationTurn> recent(String sessionKey, int maxTurns) {
         if (sessionKey == null || sessionKey.isBlank()) {
@@ -76,6 +85,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         return turns;
     }
 
+    /**
+     * Deletes one session memory key.
+     */
     @Override
     public void clear(String sessionKey) {
         if (sessionKey == null || sessionKey.isBlank()) {
@@ -84,10 +96,16 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         redisTemplate.delete(buildKey(sessionKey));
     }
 
+    /**
+     * Builds Redis key from session id.
+     */
     private String buildKey(String sessionKey) {
         return KEY_PREFIX + sessionKey;
     }
 
+    /**
+     * Serializes memory item to JSON.
+     */
     private String toJson(MemoryItem item) {
         try {
             return objectMapper.writeValueAsString(item);
@@ -96,6 +114,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         }
     }
 
+    /**
+     * Deserializes one JSON entry to memory turn.
+     */
     private ConversationTurn fromJson(String value) {
         try {
             MemoryItem item = objectMapper.readValue(value, MemoryItem.class);
@@ -105,6 +126,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         }
     }
 
+    /**
+     * Compacts oldest turns into summary when stored size exceeds limit.
+     */
     private void compactIfNeeded(String key, int maxStoredTurns) {
         AiProperties.MemoryOps memoryOps = aiProperties.getMemoryOps();
         if (!memoryOps.isSummarizeOnOverflow()) {
@@ -134,6 +158,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         redisTemplate.opsForList().leftPush(key, toJson(new MemoryItem("system_summary", summary, Instant.now().toString())));
     }
 
+    /**
+     * Builds compact summary text from old turns.
+     */
     private String summarize(List<ConversationTurn> turns) {
         StringBuilder sb = new StringBuilder("Summary:");
         int max = Math.min(6, turns.size());
@@ -149,6 +176,9 @@ public class RedisConversationMemoryService implements ConversationMemoryService
         return sb.toString();
     }
 
+    /**
+     * Redis serialization payload.
+     */
     private record MemoryItem(String role, String content, String timestamp) {
     }
 }

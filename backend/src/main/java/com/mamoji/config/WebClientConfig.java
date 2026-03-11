@@ -13,6 +13,9 @@ import reactor.netty.resources.ConnectionProvider;
 
 import java.time.Duration;
 
+/**
+ * Reactive WebClient infrastructure configuration.
+ */
 @Configuration
 @EnableConfigurationProperties(WebClientProperties.class)
 public class WebClientConfig {
@@ -23,6 +26,9 @@ public class WebClientConfig {
         this.properties = properties;
     }
 
+    /**
+     * Creates a shared {@link WebClient.Builder} backed by tuned Reactor Netty client.
+     */
     @Bean
     public WebClient.Builder webClientBuilder() {
         ConnectionProvider provider = ConnectionProvider.builder("mamoji-webclient")

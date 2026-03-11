@@ -30,6 +30,11 @@ import java.util.regex.Pattern;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+/**
+ * AI 对话服务（财务/股票双助手）。
+ *
+ * <p>该服务负责上下文构建、提示词组装、模型调用和回复规范化。
+ */
 public class AIService {
 
     private static final String OUTPUT_STYLE = """
@@ -64,6 +69,11 @@ public class AIService {
     private final AiGateway aiGateway;
     private final FinanceIntentClassifier financeIntentClassifier;
 
+    /**
+     * AI 问答主入口。
+     *
+     * <p>流程：识别助手类型 -> 构建上下文与提示词 -> 调用网关 -> 输出规范化。
+     */
     public AIChatResponse chat(Long userId, String message, String assistantType) {
         String safeMessage = message == null ? "" : message.trim();
         if (safeMessage.isBlank()) {
@@ -94,6 +104,9 @@ public class AIService {
         return "stock".equalsIgnoreCase(assistantType) ? "stock" : "finance";
     }
 
+    /**
+     * 获取股票行情文本快照，作为股票问答上下文。
+     */
     private String fetchStockData(String message) {
         StringBuilder stockData = new StringBuilder();
         List<String> stockCodes = extractStockCodes(message);
@@ -157,6 +170,9 @@ public class AIService {
         );
     }
 
+    /**
+     * 构建财务问答上下文（当月收支、分类支出、最近交易、预算信息）。
+     */
     private Map<String, Object> buildFinanceContext(Long userId) {
         Map<String, Object> context = new HashMap<>();
         YearMonth currentMonth = YearMonth.now();

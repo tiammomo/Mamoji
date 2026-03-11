@@ -25,6 +25,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Backup/export/import endpoints for user financial data.
+ */
 @RestController
 @RequestMapping("/api/v1/backup")
 @RequiredArgsConstructor
@@ -37,6 +40,9 @@ public class BackupController {
     private final LedgerRepository ledgerRepository;
     private final ObjectMapper objectMapper;
 
+    /**
+     * Returns backup-related data volume statistics.
+     */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> status(@AuthenticationUser User user) {
         Map<String, Object> data = new HashMap<>();
@@ -49,6 +55,9 @@ public class BackupController {
         return ResponseEntity.ok(wrapSuccess(data));
     }
 
+    /**
+     * Exports user data as JSON attachment.
+     */
     @GetMapping("/export")
     public ResponseEntity<byte[]> export(@AuthenticationUser User user) throws Exception {
         Map<String, Object> data = new HashMap<>();
@@ -73,6 +82,9 @@ public class BackupController {
             .body(body);
     }
 
+    /**
+     * Validates backup file format and returns import placeholder response.
+     */
     @PostMapping(path = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> importBackup(
         @AuthenticationUser User user,
@@ -93,6 +105,9 @@ public class BackupController {
         return ResponseEntity.ok(wrapSuccess(payload));
     }
 
+    /**
+     * Builds standard success envelope.
+     */
     private Map<String, Object> wrapSuccess(Object data) {
         Map<String, Object> result = new HashMap<>();
         result.put("code", 0);
@@ -101,6 +116,9 @@ public class BackupController {
         return result;
     }
 
+    /**
+     * Builds standard error envelope.
+     */
     private Map<String, Object> wrapError(int code, String message) {
         Map<String, Object> result = new HashMap<>();
         result.put("code", code);

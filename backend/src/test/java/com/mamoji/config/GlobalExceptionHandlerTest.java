@@ -20,6 +20,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Test suite for GlobalExceptionHandlerTest.
+ */
+
 class GlobalExceptionHandlerTest {
 
     private MockMvc mockMvc;
@@ -119,3 +123,6 @@ class GlobalExceptionHandlerTest {
         public String name;
     }
 }
+
+
+

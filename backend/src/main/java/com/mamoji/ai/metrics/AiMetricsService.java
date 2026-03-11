@@ -11,6 +11,12 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Centralized metric recorder for AI runtime observability.
+ *
+ * <p>The service is tolerant to missing meter registry (for local/dev tests) and
+ * normalizes tag values to avoid high-cardinality or invalid metrics.
+ */
 @Service
 public class AiMetricsService {
 
@@ -32,6 +38,9 @@ public class AiMetricsService {
         this.meterRegistry = registryProvider.getIfAvailable();
     }
 
+    /**
+     * Records base request metrics: latency, volume, and token estimate.
+     */
     public void recordRequest(String provider, boolean success, long latencyMs, int estimatedTokens) {
         if (meterRegistry == null) {
             return;
@@ -62,6 +71,9 @@ public class AiMetricsService {
             .record(Math.max(0, estimatedTokens));
     }
 
+    /**
+     * Records selected model per assistant type.
+     */
     public void recordModelRoute(String assistantType, String modelName) {
         if (meterRegistry == null) {
             return;
@@ -78,6 +90,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records model routing decision reason.
+     */
     public void recordModelRouteReason(String assistantType, String modelName, String reason) {
         if (meterRegistry == null) {
             return;
@@ -96,6 +111,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records model fallback from primary to secondary model.
+     */
     public void recordModelFallback(String primaryModel, String fallbackModel) {
         if (meterRegistry == null) {
             return;
@@ -115,6 +133,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records tool invocation latency and success rate.
+     */
     public void recordToolCall(String toolName, boolean success, long latencyMs) {
         if (meterRegistry == null) {
             return;
@@ -137,6 +158,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records quality warning count for each response.
+     */
     public void recordQualityWarnings(String assistantType, int warningCount) {
         if (meterRegistry == null) {
             return;
@@ -152,6 +176,9 @@ public class AiMetricsService {
             .record(Math.max(0, warningCount));
     }
 
+    /**
+     * Records quality-rule hit counter.
+     */
     public void recordQualityRuleHit(String assistantType, String rule) {
         if (meterRegistry == null) {
             return;
@@ -168,6 +195,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records requested mode versus actual used mode.
+     */
     public void recordChatMode(String modeRequested, String modeUsed, String assistantType) {
         if (meterRegistry == null) {
             return;
@@ -180,6 +210,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records mode fallback events.
+     */
     public void recordChatModeFallback(String fromMode, String toMode, String reason) {
         if (meterRegistry == null) {
             return;
@@ -192,6 +225,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Records cache hit/miss status.
+     */
     public void recordCacheAccess(String layer, String cacheName, boolean hit) {
         if (meterRegistry == null) {
             return;
@@ -210,6 +246,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Emits metric for missing tagging dimensions.
+     */
     private void recordMissingDimension(String metric, String dimension) {
         Counter.builder("ai.metrics.dimension.missing.count")
             .tag("metric", metric)
@@ -218,6 +257,9 @@ public class AiMetricsService {
             .increment();
     }
 
+    /**
+     * Normalizes provider tag to known providers; others map to {@code other}.
+     */
     private String normalizeProvider(String value) {
         String normalized = normalizeGenericTag(value);
         if ("unknown".equals(normalized)) {
@@ -229,16 +271,25 @@ public class AiMetricsService {
         };
     }
 
+    /**
+     * Normalizes assistant type to controlled enum-like values.
+     */
     private String normalizeAssistantType(String value) {
         String normalized = normalizeGenericTag(value);
         return ASSISTANT_TYPES.contains(normalized) ? normalized : "other";
     }
 
+    /**
+     * Normalizes routing reason tag.
+     */
     private String normalizeRoutingReason(String value) {
         String normalized = normalizeGenericTag(value);
         return ROUTING_REASONS.contains(normalized) ? normalized : "other";
     }
 
+    /**
+     * Common sanitizer for metric tag values.
+     */
     private String normalizeGenericTag(String value) {
         if (value == null || value.isBlank()) {
             return "unknown";

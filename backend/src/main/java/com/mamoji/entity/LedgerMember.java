@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
 
+/**
+ * Ledger membership entity describing user role within a ledger.
+ */
 @Data
 @Entity
 @Table(name = "ledger_member")
@@ -27,6 +30,9 @@ public class LedgerMember {
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
+    /**
+     * Initializes creation timestamp.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

@@ -9,6 +9,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Enforces runtime guardrails for tool invocation.
+ *
+ * <p>Current guards include:
+ * global on/off switch, blocked-tool list, and per-user per-tool rate limiting.
+ */
 @Service
 public class AiToolGuardService {
 
@@ -23,6 +29,9 @@ public class AiToolGuardService {
         this.aiProperties = aiProperties;
     }
 
+    /**
+     * Checks whether a tool call is allowed and consumes quota when accepted.
+     */
     public GuardDecision checkAndConsume(Long userId, String toolName) {
         AiProperties.ToolOps toolOps = aiProperties.getToolOps();
         if (!toolOps.isEnabled()) {
@@ -54,10 +63,16 @@ public class AiToolGuardService {
         }
     }
 
+    /**
+     * Testing helper to assert internal counter map growth and cleanup.
+     */
     int counterSizeForTest() {
         return counters.size();
     }
 
+    /**
+     * Performs lazy cleanup for stale minute windows.
+     */
     private void cleanupIfNeeded(long currentMinute) {
         if (cleanupTicker.incrementAndGet() % CLEANUP_EVERY_CALLS != 0) {
             return;
@@ -66,6 +81,9 @@ public class AiToolGuardService {
         counters.entrySet().removeIf(entry -> entry.getValue().minute < minKeptMinute);
     }
 
+    /**
+     * Checks whether a tool is explicitly blocked by configuration.
+     */
     private boolean isBlocked(String toolName, AiProperties.ToolOps toolOps) {
         if (toolOps.getBlockedTools() == null || toolOps.getBlockedTools().isEmpty()) {
             return false;
@@ -78,6 +96,9 @@ public class AiToolGuardService {
         return false;
     }
 
+    /**
+     * Normalizes text inputs for stable guard comparisons.
+     */
     private String normalize(String value) {
         if (value == null || value.isBlank()) {
             return "unknown";
@@ -85,20 +106,35 @@ public class AiToolGuardService {
         return value.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Normalizes nullable user id to key-safe string.
+     */
     private String normalizeUser(Long userId) {
         return userId == null ? "anonymous" : String.valueOf(userId);
     }
 
+    /**
+     * Decision object returned by guard checks.
+     */
     public record GuardDecision(boolean allowed, String reason) {
+        /**
+         * Allowed decision factory.
+         */
         public static GuardDecision allow() {
             return new GuardDecision(true, null);
         }
 
+        /**
+         * Denied decision factory with explicit reason.
+         */
         public static GuardDecision deny(String reason) {
             return new GuardDecision(false, reason);
         }
     }
 
+    /**
+     * Per-user-per-tool rolling one-minute counter.
+     */
     private static class ToolCounterWindow {
         private long minute;
         private final AtomicInteger counter = new AtomicInteger();

@@ -16,6 +16,10 @@ import org.springframework.http.codec.ServerSentEvent;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Test suite for AIControllerTest.
+ */
+
 class AIControllerTest {
 
     @Test
@@ -140,4 +144,7 @@ class AIControllerTest {
         Mockito.verifyNoInteractions(aiService);
     }
 }
+
+
+
 

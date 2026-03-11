@@ -8,6 +8,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * In-memory registry of available AI tool handlers.
+ *
+ * <p>Spring injects all {@link AiToolHandler} beans and this registry indexes
+ * them by handler name for routing lookup.
+ */
 @Component
 public class AiToolRegistry {
 
@@ -19,10 +25,16 @@ public class AiToolRegistry {
         }
     }
 
+    /**
+     * Returns handler by tool name.
+     */
     public Optional<AiToolHandler> find(String name) {
         return Optional.ofNullable(handlers.get(name));
     }
 
+    /**
+     * Returns all registered tool names.
+     */
     public Set<String> allNames() {
         return handlers.keySet();
     }

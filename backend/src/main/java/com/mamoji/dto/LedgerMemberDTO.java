@@ -2,6 +2,9 @@ package com.mamoji.dto;
 
 import lombok.Data;
 
+/**
+ * Ledger member transfer object.
+ */
 @Data
 public class LedgerMemberDTO {
     private Long id;

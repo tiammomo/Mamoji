@@ -13,6 +13,12 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Parses model output into structured answer fields.
+ *
+ * <p>The parser tolerates multiple response shapes:
+ * raw JSON object, JSON fenced in markdown code block, or mixed prose+JSON text.
+ */
 @Component
 @RequiredArgsConstructor
 public class StructuredAnswerParser {
@@ -21,6 +27,9 @@ public class StructuredAnswerParser {
 
     private final ObjectMapper objectMapper;
 
+    /**
+     * Parses structured answer from raw model text.
+     */
     public Optional<ParsedAnswer> parse(String rawAnswer) {
         if (rawAnswer == null || rawAnswer.isBlank()) {
             return Optional.empty();
@@ -36,6 +45,9 @@ public class StructuredAnswerParser {
         return Optional.empty();
     }
 
+    /**
+     * Builds ordered candidate JSON strings for robust parsing attempts.
+     */
     private Set<String> candidateJsonStrings(String rawAnswer) {
         Set<String> candidates = new LinkedHashSet<>();
         String trimmed = rawAnswer.trim();
@@ -61,6 +73,9 @@ public class StructuredAnswerParser {
         return candidates;
     }
 
+    /**
+     * Attempts to deserialize one candidate string and normalize field aliases.
+     */
     private Optional<ParsedAnswer> parseCandidate(String candidate) {
         try {
             JsonNode node = objectMapper.readTree(candidate);
@@ -94,6 +109,9 @@ public class StructuredAnswerParser {
         }
     }
 
+    /**
+     * Extracts first markdown fenced code block body.
+     */
     private String extractMarkdownBody(String raw) {
         Matcher matcher = MARKDOWN_CODE_BLOCK.matcher(raw);
         if (matcher.find()) {
@@ -102,6 +120,9 @@ public class StructuredAnswerParser {
         return "";
     }
 
+    /**
+     * Extracts outer-most JSON object by first '{' and last '}'.
+     */
     private String extractJsonObject(String text) {
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
@@ -111,6 +132,9 @@ public class StructuredAnswerParser {
         return "";
     }
 
+    /**
+     * Reads node as nullable text.
+     */
     private String textOrNull(JsonNode node) {
         if (node == null || node.isNull()) {
             return null;
@@ -118,6 +142,9 @@ public class StructuredAnswerParser {
         return node.asText(null);
     }
 
+    /**
+     * Reads a JSON array as non-blank string list.
+     */
     private List<String> readStringArray(JsonNode node) {
         if (node == null || !node.isArray()) {
             return List.of();
@@ -134,6 +161,9 @@ public class StructuredAnswerParser {
         return values;
     }
 
+    /**
+     * Returns first non-blank value from candidates.
+     */
     private String firstNonBlank(String... values) {
         for (String value : values) {
             if (value != null && !value.isBlank()) {
@@ -143,6 +173,9 @@ public class StructuredAnswerParser {
         return null;
     }
 
+    /**
+     * Normalized structured answer payload.
+     */
     public record ParsedAnswer(String answer, List<String> warnings, List<String> sources, List<String> actions) {
     }
 }

@@ -22,6 +22,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * Initializes default seed data for local/dev environments.
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -34,6 +37,9 @@ public class DataInitializer {
     private final TransactionRepository transactionRepository;
     private final PasswordEncoder passwordEncoder;
 
+    /**
+     * Creates default categories, test user, default accounts/budget, and sample transactions.
+     */
     @PostConstruct
     public void initDefaultData() {
         // 初始化分类
@@ -138,6 +144,9 @@ public class DataInitializer {
         }
     }
 
+    /**
+     * Generates deterministic sample transactions for dashboard/demo views.
+     */
     private void generateTestTransactions(Long userId) {
         if (transactionRepository.count() > 0) {
             return; // 已有数据，跳过
@@ -242,6 +251,9 @@ public class DataInitializer {
         log.info("Generated {} test transactions", transactions.size());
     }
 
+    /**
+     * Helper for building one transaction record.
+     */
     private Transaction createTransaction(Long userId, LocalDate date, Category category, Integer type,
                                          BigDecimal amount, String remark) {
         return Transaction.builder()

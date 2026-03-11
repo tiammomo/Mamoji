@@ -14,6 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Orchestrates chat mode routing between AGENT and LLM pipelines.
+ *
+ * <p>The service centralizes mode normalization, AUTO strategy, metric emission,
+ * and fallback behavior when agent execution is unavailable.
+ */
 @Service
 @RequiredArgsConstructor
 public class AiOrchestratorService {
@@ -31,6 +37,9 @@ public class AiOrchestratorService {
     private final ReActAgentService reActAgentService;
     private final AiMetricsService aiMetricsService;
 
+    /**
+     * Executes one chat request and returns a structured response with route metadata.
+     */
     public StructuredAiResponse chatStructured(
         Long userId,
         String message,
@@ -59,6 +68,9 @@ public class AiOrchestratorService {
         return llmResponse(userId, safeMessage, type, AiChatMode.LLM, traceId, agentResponse.warnings());
     }
 
+    /**
+     * Calls agent pipeline with exception isolation.
+     */
     private StructuredAiResponse safeAgentCall(Long userId, String message, String assistantType, String sessionId) {
         try {
             return reActAgentService.processMessageStructured(userId, message, assistantType, sessionId);
@@ -73,6 +85,9 @@ public class AiOrchestratorService {
         }
     }
 
+    /**
+     * Calls the LLM path and wraps plain text answer into structured payload.
+     */
     private StructuredAiResponse llmResponse(
         Long userId,
         String message,
@@ -107,6 +122,9 @@ public class AiOrchestratorService {
         );
     }
 
+    /**
+     * Copies response body while ensuring mode and trace metadata are present.
+     */
     private StructuredAiResponse withMeta(StructuredAiResponse response, String modeUsed, String traceId) {
         return new StructuredAiResponse(
             response.answer(),
@@ -119,6 +137,9 @@ public class AiOrchestratorService {
         );
     }
 
+    /**
+     * Determines whether the agent response should be treated as failed.
+     */
     private boolean isAgentFailure(StructuredAiResponse response) {
         if (response == null) {
             return true;
@@ -137,6 +158,9 @@ public class AiOrchestratorService {
         return false;
     }
 
+    /**
+     * AUTO routing strategy between AGENT and LLM.
+     */
     private AiChatMode selectAutoMode(String assistantType, String message) {
         String lower = message.toLowerCase();
         if ("stock".equals(assistantType)) {
@@ -156,6 +180,9 @@ public class AiOrchestratorService {
         return AiChatMode.AGENT;
     }
 
+    /**
+     * Returns true when the input contains any candidate keyword.
+     */
     private boolean containsAny(String text, List<String> candidates) {
         for (String candidate : candidates) {
             if (text.contains(candidate.toLowerCase())) {
@@ -165,10 +192,16 @@ public class AiOrchestratorService {
         return false;
     }
 
+    /**
+     * Detects a six-digit stock code.
+     */
     private boolean containsSixDigitCode(String text) {
         return text != null && text.matches(".*\\b\\d{6}\\b.*");
     }
 
+    /**
+     * Detects amount hints in free-text questions.
+     */
     private boolean containsAmount(String text) {
         if (text == null) {
             return false;
@@ -177,6 +210,9 @@ public class AiOrchestratorService {
             || text.matches(".*[¥￥]\\s*\\d+(?:\\.\\d+)?.*");
     }
 
+    /**
+     * Detects month/year/date related hints.
+     */
     private boolean containsDateHint(String text) {
         if (text == null) {
             return false;
@@ -189,6 +225,9 @@ public class AiOrchestratorService {
             || text.matches(".*\\d{4}-\\d{1,2}(-\\d{1,2})?.*");
     }
 
+    /**
+     * Normalizes assistant type to supported values.
+     */
     private String normalizeAssistantType(String assistantType) {
         if ("stock".equalsIgnoreCase(assistantType)) {
             return "stock";

@@ -14,6 +14,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import java.io.InputStream;
 import java.util.List;
 
+/**
+ * Test suite for AiQualityGateThresholdTest.
+ */
+
 class AiQualityGateThresholdTest {
 
     private static final double MIN_PASS_RATE = 0.5;
@@ -45,3 +49,6 @@ class AiQualityGateThresholdTest {
         return new AiQualityGateService(new AiProperties(), metricsService);
     }
 }
+
+
+

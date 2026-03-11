@@ -3,6 +3,9 @@ package com.mamoji.dto;
 import lombok.Data;
 import java.math.BigDecimal;
 
+/**
+ * Account transfer object for API/service boundaries.
+ */
 @Data
 public class AccountDTO {
     private Long id;

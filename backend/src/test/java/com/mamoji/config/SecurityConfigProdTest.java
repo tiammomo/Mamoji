@@ -34,6 +34,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "app.security.frame-options=deny",
     "app.security.cors.allowed-origins=https://app.example.com"
 })
+/**
+ * Test suite for SecurityConfigProdTest.
+ */
 class SecurityConfigProdTest {
 
     @Autowired
@@ -91,3 +94,4 @@ class SecurityConfigProdTest {
         }
     }
 }
+

@@ -14,6 +14,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Test suite for BudgetControllerTest.
+ */
+
 class BudgetControllerTest {
 
     @Test
@@ -105,3 +109,6 @@ class BudgetControllerTest {
         Mockito.verify(budgetService).getBudgets(7L);
     }
 }
+
+
+

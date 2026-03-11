@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Test suite for StructuredAnswerParserTest.
+ */
+
 class StructuredAnswerParserTest {
 
     @Test
@@ -45,3 +49,6 @@ class StructuredAnswerParserTest {
         Assertions.assertEquals("this month expense is stable", parsed.answer());
     }
 }
+
+
+

@@ -5,6 +5,10 @@ import com.mamoji.ai.prompt.PromptVariantService;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Test suite for PromptVariantServiceTest.
+ */
+
 class PromptVariantServiceTest {
 
     @Test
@@ -37,3 +41,6 @@ class PromptVariantServiceTest {
         return new AiProperties();
     }
 }
+
+
+

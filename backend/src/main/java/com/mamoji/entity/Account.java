@@ -5,6 +5,9 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * Account entity representing cash/bank/digital/investment/debt balances.
+ */
 @Data
 @Entity
 @Table(name = "account")
@@ -47,12 +50,18 @@ public class Account {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

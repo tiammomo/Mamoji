@@ -6,6 +6,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Built-in fallback retriever with static policy snippets.
+ */
 @Component
 @ConditionalOnMissingBean(KnowledgeRetriever.class)
 public class LocalKnowledgeRetriever implements KnowledgeRetriever {
@@ -36,6 +39,9 @@ public class LocalKnowledgeRetriever implements KnowledgeRetriever {
         )
     );
 
+    /**
+     * Returns top-k from built-in knowledge snippets.
+     */
     @Override
     public List<KnowledgeSnippet> retrieve(String assistantType, String question, int topK) {
         List<KnowledgeSnippet> base = "stock".equals(assistantType) ? STOCK_KNOWLEDGE : FINANCE_KNOWLEDGE;

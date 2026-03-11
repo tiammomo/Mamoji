@@ -5,6 +5,9 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * Category entity for income/expense classification.
+ */
 @Entity
 @Table(name = "categories")
 @Data
@@ -39,12 +42,18 @@ public class Category {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

@@ -21,6 +21,11 @@ import java.util.UUID;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+/**
+ * AI 客户端调用层。
+ *
+ * <p>封装上游模型调用、失败重试、主备模型切换与统一错误兜底。
+ */
 public class AiClientService {
 
     private static final String CHAT_PATH = "/v1/text/chatcompletion_v2";
@@ -34,10 +39,16 @@ public class AiClientService {
     private final WebClient.Builder webClientBuilder;
     private final AiMetricsService metricsService;
 
+    /**
+     * 默认模型调用入口。
+     */
     public String chat(String systemPrompt, String userPrompt) {
         return chat(systemPrompt, userPrompt, null, null);
     }
 
+    /**
+     * AI 同步调用入口（支持模型覆盖）。
+     */
     public String chat(String systemPrompt, String userPrompt, String modelOverride, String assistantType) {
         String traceId = shortTraceId();
         long start = System.currentTimeMillis();
@@ -58,8 +69,7 @@ public class AiClientService {
     }
 
     /**
-     * Current provider endpoint is non-streaming; this method provides a stable SSE contract
-     * by chunking the final reply on server side.
+     * 流式返回入口：当前上游为非流式接口，这里通过服务端分块模拟稳定 SSE 契约。
      */
     public Flux<String> streamChat(String systemPrompt, String userPrompt) {
         String traceId = shortTraceId();
@@ -71,6 +81,10 @@ public class AiClientService {
             });
     }
 
+    /**
+     * 主备模型调用编排：
+     * primary 失败时按配置回退到 fallback。
+     */
     private Mono<String> chatWithFallbackMono(String systemPrompt, String userPrompt, String traceId, String modelOverride) {
         String primaryModel = normalizeModel(modelOverride != null ? modelOverride : properties.getModel());
         String fallbackModel = normalizeOptionalModel(properties.getFallbackModel());
@@ -93,6 +107,9 @@ public class AiClientService {
         });
     }
 
+    /**
+     * 单模型调用（带超时与瞬时错误重试）。
+     */
     private Mono<String> chatMono(String systemPrompt, String userPrompt, String traceId, String model) {
         boolean anthropicMode = isAnthropicMode();
         WebClient client = webClientBuilder

@@ -45,6 +45,15 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/v1/transactions")
 @RequiredArgsConstructor
+/**
+ * 交易管理与交易风控入口。
+ *
+ * <p>主要职责：
+ * 1) 处理交易增删改查与退款流程；
+ * 2) 执行交易输入校验与权限校验；
+ * 3) 联动预算快照同步；
+ * 4) 输出结构化风险评估结果，支持前端展示与风控审计。
+ */
 public class TransactionController {
     private static final BigDecimal MAX_TRANSACTION_AMOUNT = new BigDecimal("10000000");
     private static final BigDecimal LARGE_EXPENSE_THRESHOLD = new BigDecimal("3000");
@@ -67,6 +76,11 @@ public class TransactionController {
     private final BudgetRepository budgetRepository;
     private final BudgetService budgetService;
 
+    /**
+     * 分页查询交易列表，支持类型与日期区间过滤。
+     *
+     * <p>风控保护：限制分页大小、校验类型枚举、限制查询时间跨度。
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getTransactions(
         @AuthenticationUser User user,
@@ -93,6 +107,11 @@ public class TransactionController {
         return ApiResponses.ok(data);
     }
 
+    /**
+     * 创建交易并返回交易快照及风险评估。
+     *
+     * <p>支出交易会尝试自动匹配生效预算，并在落库后触发预算快照刷新。
+     */
     @PostMapping
     public ResponseEntity<Map<String, Object>> createTransaction(
         @AuthenticationUser User user,
@@ -129,6 +148,11 @@ public class TransactionController {
         return ApiResponses.ok(data);
     }
 
+    /**
+     * 更新交易。
+     *
+     * <p>退款记录（type=3）不允许编辑，防止破坏审计链条。
+     */
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> updateTransaction(
         @AuthenticationUser User user,
@@ -185,6 +209,11 @@ public class TransactionController {
         return ApiResponses.ok(data);
     }
 
+    /**
+     * 删除交易。
+     *
+     * <p>对于退款交易或已产生退款历史的支出交易执行删除拦截。
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteTransaction(
         @AuthenticationUser User user,
@@ -197,6 +226,9 @@ public class TransactionController {
         return ApiResponses.ok(null);
     }
 
+    /**
+     * 查询可退款的支出交易列表。
+     */
     @GetMapping("/refundable")
     public ResponseEntity<Map<String, Object>> getRefundableTransactions(
         @AuthenticationUser User user,
@@ -215,6 +247,12 @@ public class TransactionController {
         return ApiResponses.ok(data);
     }
 
+    /**
+     * 执行退款：
+     * 1) 校验退款金额与可退额度；
+     * 2) 校验退款日期晚于或等于原交易日期；
+     * 3) 创建退款交易并刷新预算快照。
+     */
     @PostMapping("/{id}/refund")
     public ResponseEntity<Map<String, Object>> refundTransaction(
         @AuthenticationUser User user,
@@ -268,6 +306,9 @@ public class TransactionController {
         return ApiResponses.ok(data);
     }
 
+    /**
+     * 查询入口封装，按参数组合分派到不同 repository 查询。
+     */
     private Page<Transaction> queryTransactions(
         Long userId,
         PageRequest pageRequest,
@@ -300,6 +341,12 @@ public class TransactionController {
         return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();
     }
 
+    /**
+     * 日期区间校验：
+     * 1) start/end 必须成对出现；
+     * 2) start 不得晚于 end；
+     * 3) 限制最大跨度，避免超长区间慢查询。
+     */
     private void validateQueryDateRange(String startDate, String endDate) {
         if ((startDate == null || startDate.isBlank()) && (endDate == null || endDate.isBlank())) {
             return;
@@ -318,6 +365,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * 查询并校验交易归属，保证只能操作本人交易。
+     */
     private Transaction findOwnedTransaction(Long id, Long userId) {
         Transaction transaction = transactionRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException(TX_NOT_FOUND));
@@ -327,6 +377,11 @@ public class TransactionController {
         return transaction;
     }
 
+    /**
+     * 删除审计保护：
+     * 1) 退款交易不可删除；
+     * 2) 已发生退款链路的原支出不可删除。
+     */
     private void validateDeleteAllowed(Transaction transaction) {
         if (transaction.getType() != null && transaction.getType() == 3) {
             throw new BadRequestException("Refund transactions cannot be deleted.");
@@ -573,6 +628,11 @@ public class TransactionController {
             .ifPresent(budgetIds::add);
     }
 
+    /**
+     * 构建支出交易风险画像。
+     *
+     * <p>覆盖维度：单笔大额、收支失衡、高频支出、疑似重复、分类突增、预算风险。
+     */
     private Map<String, Object> buildTransactionRisk(Long userId, Transaction transaction) {
         Map<String, Object> risk = new HashMap<>();
         List<String> flags = new ArrayList<>();
@@ -719,6 +779,11 @@ public class TransactionController {
         return risk;
     }
 
+    /**
+     * 分类支出突增判断：
+     * 1) 有历史基线时要求“倍数+增量”双条件；
+     * 2) 无基线时按新分类大额阈值判断。
+     */
     private boolean isCategoryExpenseSpike(BigDecimal currentExpense, BigDecimal previousExpense) {
         if (currentExpense.compareTo(BigDecimal.ZERO) <= 0) {
             return false;
@@ -732,12 +797,18 @@ public class TransactionController {
             && delta.compareTo(CATEGORY_SPIKE_DELTA_THRESHOLD) >= 0;
     }
 
+    /**
+     * 风险标签去重写入，避免重复标签污染展示。
+     */
     private void addRiskFlag(List<String> flags, String flag) {
         if (!flags.contains(flag)) {
             flags.add(flag);
         }
     }
 
+    /**
+     * 分页参数防护，控制最大页大小。
+     */
     private void validatePaging(int page, int pageSize) {
         if (page <= 0) {
             throw new BadRequestException("page must be greater than 0.");

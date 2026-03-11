@@ -4,6 +4,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * Tunable connection/timeout settings for shared reactive WebClient.
+ */
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "app.web-client")

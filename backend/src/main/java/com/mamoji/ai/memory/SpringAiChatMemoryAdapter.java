@@ -15,6 +15,9 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Adapter that bridges custom conversation memory to Spring AI ChatMemory interface.
+ */
 @Component
 @RequiredArgsConstructor
 @ConditionalOnClass(ChatMemory.class)
@@ -23,6 +26,9 @@ public class SpringAiChatMemoryAdapter implements ChatMemory {
     private final ConversationMemoryService conversationMemoryService;
     private final AiProperties aiProperties;
 
+    /**
+     * Adds Spring AI messages into custom memory store.
+     */
     @Override
     public void add(String conversationId, List<Message> messages) {
         if (conversationId == null || conversationId.isBlank() || messages == null || messages.isEmpty()) {
@@ -36,6 +42,9 @@ public class SpringAiChatMemoryAdapter implements ChatMemory {
         }
     }
 
+    /**
+     * Reads recent turns and converts them back to Spring AI message objects.
+     */
     @Override
     public List<Message> get(String conversationId) {
         if (conversationId == null || conversationId.isBlank()) {
@@ -56,15 +65,24 @@ public class SpringAiChatMemoryAdapter implements ChatMemory {
         return messages;
     }
 
+    /**
+     * Clears one conversation memory.
+     */
     @Override
     public void clear(String conversationId) {
         conversationMemoryService.clear(conversationId);
     }
 
+    /**
+     * Creates advisor wrapper for Spring AI chat client chain.
+     */
     public MessageChatMemoryAdvisor toAdvisor() {
         return MessageChatMemoryAdvisor.builder(this).build();
     }
 
+    /**
+     * Converts Spring AI message type to internal role label.
+     */
     private String toRole(MessageType messageType) {
         if (messageType == null) {
             return "user";
@@ -77,6 +95,9 @@ public class SpringAiChatMemoryAdapter implements ChatMemory {
         };
     }
 
+    /**
+     * Converts internal turn to concrete Spring AI message implementation.
+     */
     private Message toMessage(ConversationTurn turn) {
         if (turn == null || turn.content() == null || turn.content().isBlank()) {
             return null;

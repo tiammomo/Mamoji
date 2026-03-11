@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
 
+/**
+ * User entity for authentication and authorization.
+ */
 @Entity
 @Table(name = "users")
 @Data
@@ -42,12 +45,18 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

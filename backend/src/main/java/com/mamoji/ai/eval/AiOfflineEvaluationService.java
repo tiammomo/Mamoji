@@ -10,12 +10,18 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Offline evaluator for AI quality rules.
+ */
 @Service
 @RequiredArgsConstructor
 public class AiOfflineEvaluationService {
 
     private final AiQualityGateService qualityGateService;
 
+    /**
+     * Evaluates cases and produces aggregate pass/warning report.
+     */
     public EvaluationReport evaluate(List<EvaluationCase> cases) {
         if (cases == null || cases.isEmpty()) {
             return new EvaluationReport(0, 0, 0, 0.0, Map.of());
@@ -51,16 +57,28 @@ public class AiOfflineEvaluationService {
         );
     }
 
+    /**
+     * Rounds double value to 4 decimal places.
+     */
     private double roundTo4(double value) {
         return Math.round(value * 10000.0) / 10000.0;
     }
 
+    /**
+     * Internal per-case evaluation result.
+     */
     private record CaseResult(String assistantType, List<String> warnings) {
     }
 
+    /**
+     * Input case for offline evaluation.
+     */
     public record EvaluationCase(String assistantType, String question, String answer) {
     }
 
+    /**
+     * Output report for offline quality evaluation.
+     */
     public record EvaluationReport(
         int totalCases,
         int failedCases,

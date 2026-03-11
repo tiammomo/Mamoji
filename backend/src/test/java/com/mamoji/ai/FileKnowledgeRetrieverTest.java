@@ -9,6 +9,10 @@ import org.springframework.core.io.DefaultResourceLoader;
 
 import java.util.List;
 
+/**
+ * Test suite for FileKnowledgeRetrieverTest.
+ */
+
 class FileKnowledgeRetrieverTest {
 
     @Test
@@ -46,3 +50,6 @@ class FileKnowledgeRetrieverTest {
         Assertions.assertTrue(snippets.stream().noneMatch(s -> "policy/finance-3".equals(s.source())));
     }
 }
+
+
+

@@ -18,6 +18,10 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Test suite for AiClientServiceTest.
+ */
+
 class AiClientServiceTest {
 
     private HttpServer server;
@@ -156,3 +160,6 @@ class AiClientServiceTest {
         exchange.close();
     }
 }
+
+
+

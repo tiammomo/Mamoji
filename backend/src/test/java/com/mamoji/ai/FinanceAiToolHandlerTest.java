@@ -9,6 +9,10 @@ import org.mockito.Mockito;
 
 import java.util.Map;
 
+/**
+ * Test suite for FinanceAiToolHandlerTest.
+ */
+
 class FinanceAiToolHandlerTest {
 
     @Test
@@ -23,3 +27,6 @@ class FinanceAiToolHandlerTest {
         Mockito.verify(financeTools).queryIncomeExpense(7L, null, null);
     }
 }
+
+
+

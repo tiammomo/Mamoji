@@ -5,6 +5,13 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Lightweight intent classifier for finance-domain questions.
+ *
+ * <p>It uses keyword scoring to route user requests to one of the supported
+ * intent families (budget/category/transaction/cashflow) and returns a
+ * confidence score plus optional transaction type hint.
+ */
 @Component
 public class FinanceIntentClassifier {
 
@@ -34,6 +41,9 @@ public class FinanceIntentClassifier {
         "本月", "本年", "今年", "上月", "上年", "近7天", "近30天", "同比", "环比", "month", "year"
     );
 
+    /**
+     * Classifies a user message into a finance intent.
+     */
     public FinanceIntent classify(String message) {
         String text = message == null ? "" : message.trim();
         if (text.isBlank()) {
@@ -68,6 +78,9 @@ public class FinanceIntentClassifier {
         return new FinanceIntent(winner.type, confidence, txType);
     }
 
+    /**
+     * Calculates score by counting matched keywords.
+     */
     private int score(String text, List<String> hints) {
         int score = 0;
         for (String hint : hints) {
@@ -78,6 +91,11 @@ public class FinanceIntentClassifier {
         return score;
     }
 
+    /**
+     * Resolves transaction polarity from text.
+     *
+     * @return {@code 1} for income, {@code 2} for expense, {@code null} for mixed/unknown.
+     */
     private Integer resolveTransactionType(String lower) {
         boolean hasIncome = containsAny(lower, INCOME_HINTS);
         boolean hasExpense = containsAny(lower, EXPENSE_HINTS);
@@ -90,6 +108,9 @@ public class FinanceIntentClassifier {
         return null;
     }
 
+    /**
+     * Selects highest-scored intent category.
+     */
     private Score chooseWinner(int budget, int category, int transaction, int cashflow) {
         FinanceIntentType type = FinanceIntentType.UNKNOWN;
         int max = 0;
@@ -116,6 +137,9 @@ public class FinanceIntentClassifier {
         return new Score(type, max);
     }
 
+    /**
+     * Converts score distribution to normalized confidence.
+     */
     private double confidence(int max, int total) {
         if (max <= 0 || total <= 0) {
             return 0.0D;
@@ -123,6 +147,9 @@ public class FinanceIntentClassifier {
         return Math.min(1.0D, Math.max(0.0D, (double) max / total));
     }
 
+    /**
+     * Returns true when any candidate keyword appears in text.
+     */
     private boolean containsAny(String text, List<String> candidates) {
         for (String candidate : candidates) {
             if (text.contains(candidate.toLowerCase(Locale.ROOT))) {
@@ -132,16 +159,32 @@ public class FinanceIntentClassifier {
         return false;
     }
 
+    /**
+     * Var-args overload for inline keyword checks.
+     */
     private boolean containsAny(String text, String... candidates) {
         return containsAny(text, List.of(candidates));
     }
 
+    /**
+     * Internal holder for winner selection.
+     */
     private record Score(FinanceIntentType type, int score) {
     }
 
+    /**
+     * Intent classification output.
+     *
+     * @param type detected intent type
+     * @param confidence score in range [0, 1]
+     * @param transactionType optional polarity hint (1 income / 2 expense)
+     */
     public record FinanceIntent(FinanceIntentType type, double confidence, Integer transactionType) {
     }
 
+    /**
+     * Supported finance intent categories.
+     */
     public enum FinanceIntentType {
         BUDGET,
         CATEGORY,

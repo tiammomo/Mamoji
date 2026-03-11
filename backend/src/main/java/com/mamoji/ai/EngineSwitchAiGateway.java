@@ -9,6 +9,9 @@ import reactor.core.publisher.Flux;
 
 import java.util.Locale;
 
+/**
+ * Gateway switch that delegates to configured engine implementation.
+ */
 @Slf4j
 @Service
 @Primary
@@ -19,16 +22,25 @@ public class EngineSwitchAiGateway implements AiGateway {
     private final LegacyAiGateway legacyAiGateway;
     private final ObjectProvider<SpringAiGateway> springAiGatewayProvider;
 
+    /**
+     * Delegates chat call to selected gateway.
+     */
     @Override
     public String chat(String systemPrompt, String userPrompt, String modelOverride, String assistantType) {
         return selectedGateway().chat(systemPrompt, userPrompt, modelOverride, assistantType);
     }
 
+    /**
+     * Delegates stream call to selected gateway.
+     */
     @Override
     public Flux<String> streamChat(String systemPrompt, String userPrompt, String modelOverride, String assistantType) {
         return selectedGateway().streamChat(systemPrompt, userPrompt, modelOverride, assistantType);
     }
 
+    /**
+     * Resolves active gateway implementation by {@code ai.engine}.
+     */
     private AiGateway selectedGateway() {
         String engine = normalizeEngine(aiProperties.getEngine());
         if ("legacy".equals(engine)) {
@@ -46,6 +58,9 @@ public class EngineSwitchAiGateway implements AiGateway {
         return legacyAiGateway;
     }
 
+    /**
+     * Normalizes engine string for safe comparison.
+     */
     private String normalizeEngine(String engine) {
         if (engine == null || engine.isBlank()) {
             return "legacy";

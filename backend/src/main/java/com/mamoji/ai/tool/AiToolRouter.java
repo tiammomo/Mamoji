@@ -7,6 +7,9 @@ import org.springframework.stereotype.Service;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Routes tool calls to concrete handlers with guard checks and execution tracing.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -16,6 +19,9 @@ public class AiToolRouter {
     private final AiToolGuardService toolGuardService;
     private final AiToolExecutionService executionService;
 
+    /**
+     * Routes one tool request and returns a standardized result envelope.
+     */
     public AiToolResult route(Long userId, String toolName, Map<String, Object> params) {
         String traceId = UUID.randomUUID().toString().substring(0, 8);
         long start = System.currentTimeMillis();
@@ -38,6 +44,9 @@ public class AiToolRouter {
             });
     }
 
+    /**
+     * Executes the chosen handler and records success/failure logs.
+     */
     private AiToolResult executeHandler(
         AiToolHandler handler,
         Long userId,

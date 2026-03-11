@@ -4,6 +4,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/**
+ * Budget transfer object including computed risk/usage fields.
+ */
 @Data
 public class BudgetDTO {
     private Long id;
