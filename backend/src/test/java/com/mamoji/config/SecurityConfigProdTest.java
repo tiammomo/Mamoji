@@ -79,6 +79,11 @@ class SecurityConfigProdTest {
     @RestController
     @RequestMapping("/api/test")
     public static class TestController {
+        /**
+         * Test endpoint used to verify authenticated access and frame headers.
+         *
+         * @return constant success payload
+         */
         @GetMapping("/ping")
         public ResponseEntity<String> ping() {
             return ResponseEntity.ok("ok");
@@ -88,6 +93,11 @@ class SecurityConfigProdTest {
     @RestController
     @RequestMapping("/actuator")
     public static class ActuatorController {
+        /**
+         * Test actuator endpoint used to verify production auth requirement.
+         *
+         * @return constant metrics payload
+         */
         @GetMapping("/prometheus")
         public ResponseEntity<String> prometheus() {
             return ResponseEntity.ok("metrics");

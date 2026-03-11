@@ -8,6 +8,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Externalized security configuration bound from {@code app.security.*}.
+ *
+ * <p>This bean centralizes toggles for development diagnostics, frame headers, and CORS policy.
+ */
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "app.security")
@@ -23,6 +28,11 @@ public class SecurityProperties {
 
     private final Cors cors = new Cors();
 
+    /**
+     * Normalizes frame options value for reliable comparison in configuration code paths.
+     *
+     * @return lowercase frame option, defaulting to {@code deny} when value is blank
+     */
     public String normalizedFrameOptions() {
         return frameOptions == null ? "deny" : frameOptions.trim().toLowerCase(Locale.ROOT);
     }

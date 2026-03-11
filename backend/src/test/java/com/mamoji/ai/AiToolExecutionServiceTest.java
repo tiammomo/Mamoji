@@ -27,11 +27,17 @@ class AiToolExecutionServiceTest {
         AiToolExecutionService service = new AiToolExecutionService(properties, Mockito.mock(com.mamoji.ai.metrics.AiMetricsService.class));
 
         AiToolHandler slow = new AiToolHandler() {
+            /**
+             * Returns fixed tool name for timeout scenario.
+             */
             @Override
             public String name() {
                 return "slowTool";
             }
 
+            /**
+             * Simulates a slow call so executor timeout path can be asserted.
+             */
             @Override
             public AiToolResult execute(Long userId, Map<String, Object> params) {
                 try {
@@ -56,11 +62,17 @@ class AiToolExecutionServiceTest {
 
         final int[] calls = {0};
         AiToolHandler handler = new AiToolHandler() {
+            /**
+             * Returns fixed cache-test tool name.
+             */
             @Override
             public String name() {
                 return "cacheTool";
             }
 
+            /**
+             * Increments call count to verify second invocation uses cached value.
+             */
             @Override
             public AiToolResult execute(Long userId, Map<String, Object> params) {
                 calls[0]++;
@@ -86,11 +98,17 @@ class AiToolExecutionServiceTest {
 
         final int[] calls = {0};
         AiToolHandler handler = new AiToolHandler() {
+            /**
+             * Returns fixed cache-ttl test tool name.
+             */
             @Override
             public String name() {
                 return "ttlTool";
             }
 
+            /**
+             * Increments call count to prove result refreshes after TTL expiration.
+             */
             @Override
             public AiToolResult execute(Long userId, Map<String, Object> params) {
                 calls[0]++;
@@ -116,11 +134,17 @@ class AiToolExecutionServiceTest {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         AiToolHandler blockingHandler = new AiToolHandler() {
+            /**
+             * Returns fixed tool name for concurrency-limit scenario.
+             */
             @Override
             public String name() {
                 return "blockingTool";
             }
 
+            /**
+             * Blocks until released to occupy tool concurrency slot.
+             */
             @Override
             public AiToolResult execute(Long userId, Map<String, Object> params) {
                 entered.countDown();

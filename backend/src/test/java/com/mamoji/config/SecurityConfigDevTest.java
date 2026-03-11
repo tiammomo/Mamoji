@@ -102,6 +102,11 @@ class SecurityConfigDevTest {
     @RestController
     @RequestMapping("/api/test")
     public static class TestController {
+        /**
+         * Test endpoint used to verify security headers and CORS behavior.
+         *
+         * @return constant success payload
+         */
         @GetMapping("/ping")
         public ResponseEntity<String> ping() {
             return ResponseEntity.ok("ok");
@@ -111,6 +116,11 @@ class SecurityConfigDevTest {
     @RestController
     @RequestMapping("/actuator")
     public static class ActuatorController {
+        /**
+         * Test actuator endpoint used to verify public access toggle.
+         *
+         * @return constant metrics payload
+         */
         @GetMapping("/prometheus")
         public ResponseEntity<String> prometheus() {
             return ResponseEntity.ok("metrics");
