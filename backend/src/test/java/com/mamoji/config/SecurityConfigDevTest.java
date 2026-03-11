@@ -40,6 +40,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "app.security.cors.allow-credentials=true",
     "app.security.cors.max-age-seconds=3600"
 })
+/**
+ * Test suite for SecurityConfigDevTest.
+ */
 class SecurityConfigDevTest {
 
     @Autowired
@@ -63,7 +66,7 @@ class SecurityConfigDevTest {
     @Test
     void shouldPermitH2ConsolePathWhenEnabled() throws Exception {
         mockMvc.perform(get("/h2-console/test"))
-            .andExpect(status().is5xxServerError());
+            .andExpect(status().isNotFound());
     }
 
     @Test
@@ -93,7 +96,7 @@ class SecurityConfigDevTest {
     @Test
     void shouldPermitPrometheusWhenPublicAccessEnabled() throws Exception {
         mockMvc.perform(get("/actuator/prometheus"))
-            .andExpect(status().is5xxServerError());
+            .andExpect(status().isNotFound());
     }
 
     @RestController
@@ -114,3 +117,4 @@ class SecurityConfigDevTest {
         }
     }
 }
+

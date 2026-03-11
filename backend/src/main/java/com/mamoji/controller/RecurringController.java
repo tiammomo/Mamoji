@@ -1,5 +1,7 @@
 package com.mamoji.controller;
 
+import com.mamoji.common.api.ApiResponses;
+import com.mamoji.common.exception.ResourceNotFoundException;
 import com.mamoji.entity.User;
 import com.mamoji.security.AuthenticationUser;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * In-memory recurring transaction management endpoints.
+ *
+ * <p>This controller provides a temporary lightweight implementation backed by
+ * process memory for CRUD/toggle/manual execute workflows.
+ */
 @RestController
 @RequestMapping("/api/v1/recurring")
 public class RecurringController {
@@ -30,6 +38,9 @@ public class RecurringController {
     private static final Map<Long, List<RecurringItem>> STORE = new ConcurrentHashMap<>();
     private static final AtomicLong ID_GENERATOR = new AtomicLong(1);
 
+    /**
+     * Returns paginated recurring definitions for current user.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
         @AuthenticationUser User user,
@@ -51,15 +62,20 @@ public class RecurringController {
         payload.put("page", safePage);
         payload.put("pageSize", safePageSize);
         payload.put("list", list);
-        return ResponseEntity.ok(success(payload));
+        return ApiResponses.ok(payload);
     }
 
+    /**
+     * Returns one recurring definition.
+     */
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@AuthenticationUser User user, @PathVariable Long id) {
-        RecurringItem item = findRequired(user.getId(), id);
-        return ResponseEntity.ok(success(toMap(item)));
+        return ApiResponses.ok(toMap(findRequired(user.getId(), id)));
     }
 
+    /**
+     * Creates a recurring definition.
+     */
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(@AuthenticationUser User user, @RequestBody Map<String, Object> body) {
         RecurringItem item = new RecurringItem(
@@ -81,10 +97,13 @@ public class RecurringController {
             0,
             asString(body.get("remark"), "")
         );
-        STORE.computeIfAbsent(user.getId(), k -> new ArrayList<>()).add(item);
-        return ResponseEntity.ok(success(toMap(item)));
+        STORE.computeIfAbsent(user.getId(), key -> new ArrayList<>()).add(item);
+        return ApiResponses.ok(toMap(item));
     }
 
+    /**
+     * Updates one recurring definition.
+     */
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> update(
         @AuthenticationUser User user,
@@ -112,16 +131,22 @@ public class RecurringController {
             asString(body.get("remark"), current.remark())
         );
         replace(user.getId(), updated);
-        return ResponseEntity.ok(success(toMap(updated)));
+        return ApiResponses.ok(toMap(updated));
     }
 
+    /**
+     * Deletes one recurring definition.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(@AuthenticationUser User user, @PathVariable Long id) {
         List<RecurringItem> list = STORE.getOrDefault(user.getId(), new ArrayList<>());
         list.removeIf(item -> item.id().equals(id));
-        return ResponseEntity.ok(success(null));
+        return ApiResponses.ok(null);
     }
 
+    /**
+     * Toggles active status of one recurring definition.
+     */
     @PostMapping("/{id}/toggle")
     public ResponseEntity<Map<String, Object>> toggle(@AuthenticationUser User user, @PathVariable Long id) {
         RecurringItem current = findRequired(user.getId(), id);
@@ -132,9 +157,12 @@ public class RecurringController {
             current.nextExecutionDate(), current.status() == 1 ? 0 : 1, current.executionCount(), current.remark()
         );
         replace(user.getId(), toggled);
-        return ResponseEntity.ok(success(toMap(toggled)));
+        return ApiResponses.ok(toMap(toggled));
     }
 
+    /**
+     * Executes one recurring definition manually and returns generated transaction payload.
+     */
     @PostMapping("/{id}/execute")
     public ResponseEntity<Map<String, Object>> execute(@AuthenticationUser User user, @PathVariable Long id) {
         RecurringItem current = findRequired(user.getId(), id);
@@ -147,15 +175,18 @@ public class RecurringController {
         );
         replace(user.getId(), executed);
 
-        Map<String, Object> tx = new HashMap<>();
-        tx.put("id", -executed.id());
-        tx.put("type", executed.type());
-        tx.put("amount", executed.amount());
-        tx.put("date", now.toString());
-        tx.put("remark", "Manual execute from recurring #" + executed.id());
-        return ResponseEntity.ok(success(tx));
+        Map<String, Object> transaction = new HashMap<>();
+        transaction.put("id", -executed.id());
+        transaction.put("type", executed.type());
+        transaction.put("amount", executed.amount());
+        transaction.put("date", now.toString());
+        transaction.put("remark", "Manual execute from recurring #" + executed.id());
+        return ApiResponses.ok(transaction);
     }
 
+    /**
+     * Computes next execution date according to recurrence policy.
+     */
     private LocalDate computeNextDate(RecurringItem item, LocalDate from) {
         return switch (item.recurrenceType()) {
             case "DAILY" -> from.plusDays(Math.max(1, item.intervalCount()));
@@ -165,32 +196,33 @@ public class RecurringController {
         };
     }
 
+    /**
+     * Finds a recurring item owned by user, otherwise throws not-found error.
+     */
     private RecurringItem findRequired(Long userId, Long id) {
         return STORE.getOrDefault(userId, List.of()).stream()
             .filter(item -> item.id().equals(id))
             .findFirst()
-            .orElseThrow(() -> new RuntimeException("定期记账不存在"));
+            .orElseThrow(() -> new ResourceNotFoundException("定期记账不存在。"));
     }
 
+    /**
+     * Replaces existing item with same id, or appends when absent.
+     */
     private void replace(Long userId, RecurringItem replacement) {
-        List<RecurringItem> list = STORE.computeIfAbsent(userId, k -> new ArrayList<>());
-        for (int i = 0; i < list.size(); i++) {
-            if (list.get(i).id().equals(replacement.id())) {
-                list.set(i, replacement);
+        List<RecurringItem> list = STORE.computeIfAbsent(userId, key -> new ArrayList<>());
+        for (int index = 0; index < list.size(); index++) {
+            if (list.get(index).id().equals(replacement.id())) {
+                list.set(index, replacement);
                 return;
             }
         }
         list.add(replacement);
     }
 
-    private Map<String, Object> success(Object data) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", data);
-        return result;
-    }
-
+    /**
+     * Converts recurring record to API payload map.
+     */
     private Map<String, Object> toMap(RecurringItem item) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", item.id());
@@ -212,6 +244,9 @@ public class RecurringController {
         return map;
     }
 
+    /**
+     * Parses non-empty string field with default fallback.
+     */
     private String asString(Object value, String defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -220,6 +255,9 @@ public class RecurringController {
         return text.isEmpty() ? defaultValue : text;
     }
 
+    /**
+     * Parses integer with default fallback.
+     */
     private int asInt(Object value, int defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -231,10 +269,16 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Parses nullable integer.
+     */
     private Integer asNullableInt(Object value) {
         return asNullableInt(value, null);
     }
 
+    /**
+     * Parses nullable integer with explicit default.
+     */
     private Integer asNullableInt(Object value, Integer defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -246,6 +290,9 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Parses decimal amount with default fallback.
+     */
     private BigDecimal asDecimal(Object value, BigDecimal defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -257,6 +304,9 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Parses ISO date with default fallback.
+     */
     private LocalDate asDate(Object value, LocalDate defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -268,10 +318,16 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Parses nullable date.
+     */
     private LocalDate asNullableDate(Object value) {
         return asNullableDate(value, null);
     }
 
+    /**
+     * Parses nullable date with explicit default.
+     */
     private LocalDate asNullableDate(Object value, LocalDate defaultValue) {
         if (value == null || String.valueOf(value).isBlank()) {
             return defaultValue;
@@ -283,6 +339,9 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Immutable recurring definition model used by in-memory store.
+     */
     private record RecurringItem(
         Long id,
         Long userId,

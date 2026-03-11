@@ -8,6 +8,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Bridge that injects tool-calling result into Spring AI prompt context.
+ */
 @Component
 @RequiredArgsConstructor
 public class SpringAiToolCallingBridge {
@@ -17,6 +20,9 @@ public class SpringAiToolCallingBridge {
     private final AiProperties aiProperties;
     private final AiToolRouter aiToolRouter;
 
+    /**
+     * Executes eligible tool call and returns prompt addon/actions/warnings.
+     */
     public ToolCallingContext invoke(String assistantType, String userPrompt) {
         AiProperties.ToolCallingOps ops = aiProperties.getToolCallingOps();
         if (!ops.isSpringEnabled()) {
@@ -48,12 +54,15 @@ public class SpringAiToolCallingBridge {
         );
     }
 
+    /**
+     * Infers stock tool operation from user message.
+     */
     private Map<String, Object> buildStockToolParams(String message) {
         if (message == null || message.isBlank()) {
             return Map.of("operation", "query_market_index");
         }
         String lower = message.toLowerCase();
-        if (containsAny(lower, "market", "index", "大盘", "指数")) {
+        if (containsAny(lower, "market", "index", "quote", "行情", "指数", "大盘")) {
             return Map.of("operation", "query_market_index");
         }
         if (containsAny(lower, "news", "资讯", "新闻")) {
@@ -63,7 +72,7 @@ public class SpringAiToolCallingBridge {
             }
             return Map.of("operation", "query_market_index");
         }
-        if (containsAny(lower, "search", "搜索", "查找")) {
+        if (containsAny(lower, "search", "查找", "搜索")) {
             return Map.of("operation", "search_stock", "keyword", message);
         }
 
@@ -78,6 +87,9 @@ public class SpringAiToolCallingBridge {
         return Map.of("operation", "query_market_index");
     }
 
+    /**
+     * Extracts six-digit stock code from text.
+     */
     private String extractStockCode(String text) {
         if (text == null) {
             return null;
@@ -86,6 +98,9 @@ public class SpringAiToolCallingBridge {
         return digits.matches("\\d{6}") ? digits : null;
     }
 
+    /**
+     * Checks whether text contains any keyword.
+     */
     private boolean containsAny(String text, String... keywords) {
         for (String keyword : keywords) {
             if (text.contains(keyword)) {
@@ -95,7 +110,13 @@ public class SpringAiToolCallingBridge {
         return false;
     }
 
+    /**
+     * Tool-calling context payload for prompt assembly.
+     */
     public record ToolCallingContext(String promptAddon, List<String> actions, List<String> warnings) {
+        /**
+         * Empty context factory.
+         */
         static ToolCallingContext empty() {
             return new ToolCallingContext("", List.of(), List.of());
         }

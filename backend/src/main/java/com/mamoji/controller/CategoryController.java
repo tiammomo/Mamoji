@@ -2,67 +2,64 @@ package com.mamoji.controller;
 
 import com.mamoji.common.PermissionConstants;
 import com.mamoji.common.RoleConstants;
+import com.mamoji.common.api.ApiResponses;
+import com.mamoji.common.exception.ResourceNotFoundException;
 import com.mamoji.entity.Category;
 import com.mamoji.entity.User;
 import com.mamoji.repository.CategoryRepository;
 import com.mamoji.security.AuthenticationUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Category management endpoints.
+ *
+ * <p>Returns categories grouped by income/expense and supports user-defined
+ * category CRUD with permission checks.
+ */
 @RestController
 @RequestMapping("/api/v1/categories")
 @RequiredArgsConstructor
 public class CategoryController {
 
+    private static final int FORBIDDEN_CODE = 1003;
+
     private final CategoryRepository categoryRepository;
 
-    // Helper to check if user has permission
-    private boolean hasCategoryPermission(User user) {
-        return RoleConstants.isAdmin(user.getRole()) ||
-               PermissionConstants.hasPermission(user.getPermissions(), PermissionConstants.PERM_MANAGE_CATEGORIES);
-    }
-
-    private ResponseEntity<Map<String, Object>> forbiddenResponse() {
-        Map<String, Object> error = new HashMap<>();
-        error.put("code", 1003);
-        error.put("message", "无分类管理权限");
-        error.put("data", null);
-        return ResponseEntity.status(403).body(error);
-    }
-
+    /**
+     * Returns all categories grouped by transaction type.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getCategories(@AuthenticationUser User user) {
         List<Category> allCategories = categoryRepository.findAll();
-
-        List<Category> incomeCategories = allCategories.stream()
-            .filter(c -> c.getType() == 1)
-            .toList();
-
-        List<Category> expenseCategories = allCategories.stream()
-            .filter(c -> c.getType() == 2)
-            .toList();
-
         Map<String, Object> data = new HashMap<>();
-        data.put("income", incomeCategories.stream().map(this::toMap).toList());
-        data.put("expense", expenseCategories.stream().map(this::toMap).toList());
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", data);
-
-        return ResponseEntity.ok(result);
+        data.put("income", allCategories.stream().filter(category -> category.getType() == 1).map(this::toMap).toList());
+        data.put("expense", allCategories.stream().filter(category -> category.getType() == 2).map(this::toMap).toList());
+        return ApiResponses.ok(data);
     }
 
+    /**
+     * Creates a custom category.
+     */
     @PostMapping
-    public ResponseEntity<Map<String, Object>> createCategory(@AuthenticationUser User user, @RequestBody Map<String, Object> request) {
+    public ResponseEntity<Map<String, Object>> createCategory(
+        @AuthenticationUser User user,
+        @RequestBody Map<String, Object> request
+    ) {
         if (!hasCategoryPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
         }
 
         Category category = Category.builder()
@@ -73,25 +70,24 @@ public class CategoryController {
             .isSystem(0)
             .build();
 
-        category = categoryRepository.save(category);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", toMap(category));
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(toMap(categoryRepository.save(category)));
     }
 
+    /**
+     * Updates mutable fields of one category.
+     */
     @PutMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> updateCategory(@AuthenticationUser User user, @PathVariable Long id, @RequestBody Map<String, Object> request) {
+    public ResponseEntity<Map<String, Object>> updateCategory(
+        @AuthenticationUser User user,
+        @PathVariable Long id,
+        @RequestBody Map<String, Object> request
+    ) {
         if (!hasCategoryPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
         }
 
         Category category = categoryRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("分类不存在"));
-
+            .orElseThrow(() -> new ResourceNotFoundException("分类不存在。"));
         if (request.get("name") != null) {
             category.setName(request.get("name").toString());
         }
@@ -101,45 +97,39 @@ public class CategoryController {
         if (request.get("color") != null) {
             category.setColor(request.get("color").toString());
         }
-
-        category = categoryRepository.save(category);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", toMap(category));
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(toMap(categoryRepository.save(category)));
     }
 
+    /**
+     * Deletes a non-system category.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteCategory(@AuthenticationUser User user, @PathVariable Long id) {
         if (!hasCategoryPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
         }
 
         Category category = categoryRepository.findById(id)
-            .orElseThrow(() -> new RuntimeException("分类不存在"));
-
-        // Check if it's a system category
+            .orElseThrow(() -> new ResourceNotFoundException("分类不存在。"));
         if (category.getIsSystem() != null && category.getIsSystem() == 1) {
-            Map<String, Object> error = new HashMap<>();
-            error.put("code", 1005);
-            error.put("message", "系统分类不能删除");
-            error.put("data", null);
-            return ResponseEntity.badRequest().body(error);
+            return ApiResponses.badRequest(1005, "系统分类不能删除。");
         }
 
         categoryRepository.delete(category);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", null);
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(null);
     }
 
+    /**
+     * Checks whether caller can manage categories.
+     */
+    private boolean hasCategoryPermission(User user) {
+        return RoleConstants.isAdmin(user.getRole())
+            || PermissionConstants.hasPermission(user.getPermissions(), PermissionConstants.PERM_MANAGE_CATEGORIES);
+    }
+
+    /**
+     * Converts category entity to API payload map.
+     */
     private Map<String, Object> toMap(Category category) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", category.getId());

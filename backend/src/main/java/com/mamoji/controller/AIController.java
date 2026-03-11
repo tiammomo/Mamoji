@@ -3,6 +3,7 @@ package com.mamoji.controller;
 import com.mamoji.ai.AiOrchestratorService;
 import com.mamoji.ai.AiProperties;
 import com.mamoji.ai.model.StructuredAiResponse;
+import com.mamoji.common.api.ApiResponses;
 import com.mamoji.dto.AIChatRequest;
 import com.mamoji.dto.AIChatResponse;
 import com.mamoji.entity.User;
@@ -23,6 +24,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * HTTP entry point for AI chat features.
+ *
+ * <p>This controller keeps endpoint compatibility for old and new clients:
+ * <ul>
+ *   <li>{@code /chat}: legacy response shape, only plain answer text.
+ *   <li>{@code /chat/v2}: structured response including metadata.
+ *   <li>{@code /chat/stream}: SSE streaming protocol for incremental rendering.
+ *   <li>{@code /chat/legacy}: deprecated endpoint kept during migration window.
+ * </ul>
+ */
 @RestController
 @RequestMapping("/api/v1/ai")
 @RequiredArgsConstructor
@@ -36,36 +48,35 @@ public class AIController {
     private final AiOrchestratorService aiOrchestratorService;
     private final AiProperties aiProperties;
 
+    /**
+     * Legacy-compatible chat endpoint that returns only the plain answer field.
+     */
     @PostMapping("/chat")
     public ResponseEntity<Map<String, Object>> chat(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        StructuredAiResponse response = aiOrchestratorService.chatStructured(
-            user.getId(),
-            request.getMessage(),
-            request.getAssistantType(),
-            request.getSessionId(),
-            request.getMode()
-        );
-        return ResponseEntity.ok(wrapSuccess(new AIChatResponse(response.answer())));
+        StructuredAiResponse response = requestStructuredResponse(request, user, request.getMode());
+        return ApiResponses.ok(new AIChatResponse(response.answer()));
     }
 
+    /**
+     * Preferred chat endpoint that exposes structured answer payload.
+     */
     @PostMapping("/chat/v2")
     public ResponseEntity<Map<String, Object>> chatV2(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        StructuredAiResponse response = aiOrchestratorService.chatStructured(
-            user.getId(),
-            request.getMessage(),
-            request.getAssistantType(),
-            request.getSessionId(),
-            request.getMode()
-        );
-        return ResponseEntity.ok(wrapSuccess(response));
+        return ApiResponses.ok(requestStructuredResponse(request, user, request.getMode()));
     }
 
+    /**
+     * Deprecated endpoint retained temporarily for older clients.
+     *
+     * <p>Response headers include migration hints so clients can switch to
+     * {@code /api/v1/ai/chat}.
+     */
     @PostMapping("/chat/legacy")
     @Deprecated(forRemoval = true, since = "2026-03-08")
     public ResponseEntity<Map<String, Object>> chatLegacy(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
         log.warn("Deprecated endpoint called userId={} endpoint=/api/v1/ai/chat/legacy", user.getId());
         AIChatResponse response = aiService.chat(user.getId(), request.getMessage(), request.getAssistantType());
-        Map<String, Object> payload = wrapSuccess(response);
+        Map<String, Object> payload = ApiResponses.body(0, "success", response);
         payload.put("deprecation", Map.of(
             "endpoint", "/api/v1/ai/chat/legacy",
             "successor", "/api/v1/ai/chat",
@@ -78,21 +89,16 @@ public class AIController {
             .body(payload);
     }
 
+    /**
+     * Streams chat result as SSE events.
+     *
+     * <p>Current implementation chunks an already generated full answer. This keeps
+     * frontend integration stable before provider-native token streaming is enabled.
+     */
     @PostMapping(path = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<Map<String, Object>>> chatStream(@RequestBody AIChatRequest request, @AuthenticationUser User user) {
-        String requestedMode = request.getMode();
-        if (!aiProperties.getStreamOps().isReactEnabled() && (requestedMode == null || requestedMode.isBlank())) {
-            requestedMode = "llm";
-        }
-
-        StructuredAiResponse response = aiOrchestratorService.chatStructured(
-            user.getId(),
-            request.getMessage(),
-            request.getAssistantType(),
-            request.getSessionId(),
-            requestedMode
-        );
-
+        String requestedMode = resolveRequestedMode(request.getMode());
+        StructuredAiResponse response = requestStructuredResponse(request, user, requestedMode);
         return streamFromAnswer(
             response.answer(),
             response.warnings() != null ? response.warnings() : List.of(),
@@ -104,6 +110,35 @@ public class AIController {
         );
     }
 
+    /**
+     * Centralized structured chat invocation used by all endpoint variants.
+     */
+    private StructuredAiResponse requestStructuredResponse(AIChatRequest request, User user, String mode) {
+        return aiOrchestratorService.chatStructured(
+            user.getId(),
+            request.getMessage(),
+            request.getAssistantType(),
+            request.getSessionId(),
+            mode
+        );
+    }
+
+    /**
+     * Resolves requested chat mode for stream requests.
+     *
+     * <p>When ReAct is globally disabled and caller did not explicitly request mode,
+     * force {@code llm} to avoid invoking unavailable agent pipelines.
+     */
+    private String resolveRequestedMode(String requestedMode) {
+        if (!aiProperties.getStreamOps().isReactEnabled() && (requestedMode == null || requestedMode.isBlank())) {
+            return "llm";
+        }
+        return requestedMode;
+    }
+
+    /**
+     * Converts full answer text into SSE chunk and done events.
+     */
     private Flux<ServerSentEvent<Map<String, Object>>> streamFromAnswer(
         String answer,
         List<String> warnings,
@@ -115,10 +150,10 @@ public class AIController {
     ) {
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("done", true);
-        doneData.put("warnings", warnings != null ? warnings : List.of());
-        doneData.put("sources", sources != null ? sources : List.of());
-        doneData.put("actions", actions != null ? actions : List.of());
-        doneData.put("usage", usage != null ? usage : Map.of());
+        doneData.put("warnings", warnings);
+        doneData.put("sources", sources);
+        doneData.put("actions", actions);
+        doneData.put("usage", usage);
         doneData.put("modeUsed", modeUsed);
         doneData.put("traceId", traceId);
 
@@ -133,6 +168,9 @@ public class AIController {
                 .build());
     }
 
+    /**
+     * Splits answer into fixed-size chunks to simulate streaming output.
+     */
     private Flux<String> chunkAnswer(String answer) {
         if (answer == null || answer.isEmpty()) {
             return Flux.just("");
@@ -146,13 +184,5 @@ public class AIController {
                 int end = Math.min(start + chunkSize, answer.length());
                 return answer.substring(start, end);
             });
-    }
-
-    private Map<String, Object> wrapSuccess(Object data) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", data);
-        return result;
     }
 }

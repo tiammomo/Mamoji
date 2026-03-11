@@ -2,124 +2,123 @@ package com.mamoji.controller;
 
 import com.mamoji.common.PermissionConstants;
 import com.mamoji.common.RoleConstants;
+import com.mamoji.common.api.ApiResponses;
 import com.mamoji.dto.BudgetDTO;
 import com.mamoji.entity.User;
 import com.mamoji.security.AuthenticationUser;
 import com.mamoji.service.BudgetService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import java.util.HashMap;
-import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
 import java.util.Map;
 
+/**
+ * Budget management endpoints.
+ *
+ * <p>Supports budget CRUD and active/range queries for current user.
+ */
 @RestController
 @RequestMapping("/api/v1/budgets")
 @RequiredArgsConstructor
 public class BudgetController {
+
+    private static final int FORBIDDEN_CODE = 1003;
+    private static final String BUDGET_PERMISSION_MESSAGE = "无预算管理权限。";
+
     private final BudgetService budgetService;
 
-    // Helper to check if user has permission
-    private boolean hasBudgetPermission(User user) {
-        return RoleConstants.isAdmin(user.getRole()) ||
-               PermissionConstants.hasPermission(user.getPermissions(), PermissionConstants.PERM_MANAGE_BUDGETS);
-    }
-
-    private ResponseEntity<Map<String, Object>> forbiddenResponse() {
-        Map<String, Object> error = new HashMap<>();
-        error.put("code", 1003);
-        error.put("message", "无预算管理权限");
-        error.put("data", null);
-        return ResponseEntity.status(403).body(error);
-    }
-
+    /**
+     * Lists budgets, optionally filtered by date range.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getBudgets(
-            @AuthenticationUser User user,
-            @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        List<BudgetDTO> budgets;
-        if (startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty()) {
-            budgets = budgetService.getBudgetsByDateRange(user.getId(),
-                java.time.LocalDate.parse(startDate), java.time.LocalDate.parse(endDate));
-        } else {
-            budgets = budgetService.getBudgets(user.getId());
-        }
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", budgets);
-
-        return ResponseEntity.ok(result);
+        @AuthenticationUser User user,
+        @RequestParam(required = false) String startDate,
+        @RequestParam(required = false) String endDate
+    ) {
+        return ApiResponses.ok(
+            hasDateRange(startDate, endDate)
+                ? budgetService.getBudgetsByDateRange(user.getId(), LocalDate.parse(startDate), LocalDate.parse(endDate))
+                : budgetService.getBudgets(user.getId())
+        );
     }
 
+    /**
+     * Lists budgets active for today's date.
+     */
     @GetMapping("/active")
     public ResponseEntity<Map<String, Object>> getActiveBudgets(@AuthenticationUser User user) {
-        List<BudgetDTO> budgets = budgetService.getActiveBudgets(user.getId());
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", budgets);
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(budgetService.getActiveBudgets(user.getId()));
     }
 
+    /**
+     * Returns one budget by id.
+     */
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> getBudget(@PathVariable Long id, @AuthenticationUser User user) {
-        BudgetDTO budget = budgetService.getBudget(id, user.getId());
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", budget);
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(budgetService.getBudget(id, user.getId()));
     }
 
+    /**
+     * Creates a budget after permission validation.
+     */
     @PostMapping
     public ResponseEntity<Map<String, Object>> createBudget(@RequestBody BudgetDTO dto, @AuthenticationUser User user) {
         if (!hasBudgetPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
         }
-        BudgetDTO budget = budgetService.createBudget(dto, user.getId());
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", budget);
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(budgetService.createBudget(dto, user.getId()));
     }
 
+    /**
+     * Updates a budget after permission validation.
+     */
     @PutMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> updateBudget(@PathVariable Long id, @RequestBody BudgetDTO dto, @AuthenticationUser User user) {
+    public ResponseEntity<Map<String, Object>> updateBudget(
+        @PathVariable Long id,
+        @RequestBody BudgetDTO dto,
+        @AuthenticationUser User user
+    ) {
         if (!hasBudgetPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
         }
-        BudgetDTO budget = budgetService.updateBudget(id, dto, user.getId());
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", budget);
-
-        return ResponseEntity.ok(result);
+        return ApiResponses.ok(budgetService.updateBudget(id, dto, user.getId()));
     }
 
+    /**
+     * Deletes a budget after permission validation.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteBudget(@PathVariable Long id, @AuthenticationUser User user) {
         if (!hasBudgetPermission(user)) {
-            return forbiddenResponse();
+            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
         }
         budgetService.deleteBudget(id, user.getId());
+        return ApiResponses.ok(null);
+    }
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 0);
-        result.put("message", "success");
-        result.put("data", null);
+    /**
+     * Checks whether caller can manage budgets.
+     */
+    private boolean hasBudgetPermission(User user) {
+        return RoleConstants.isAdmin(user.getRole())
+            || PermissionConstants.hasPermission(user.getPermissions(), PermissionConstants.PERM_MANAGE_BUDGETS);
+    }
 
-        return ResponseEntity.ok(result);
+    /**
+     * Checks whether both date parameters are present.
+     */
+    private boolean hasDateRange(String startDate, String endDate) {
+        return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();
     }
 }

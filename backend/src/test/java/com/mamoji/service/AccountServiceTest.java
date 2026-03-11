@@ -17,6 +17,9 @@ import java.util.Map;
 import java.util.Optional;
 
 @ExtendWith(MockitoExtension.class)
+/**
+ * Test suite for AccountServiceTest.
+ */
 class AccountServiceTest {
 
     @Mock
@@ -68,7 +71,7 @@ class AccountServiceTest {
             () -> accountService.updateAccount(10L, new AccountDTO(), 7L)
         );
 
-        Assertions.assertEquals("Unauthorized", exception.getMessage());
+        Assertions.assertEquals("You do not have permission to access this account.", exception.getMessage());
         Mockito.verify(accountRepository, Mockito.never()).save(Mockito.any(Account.class));
     }
 
@@ -102,3 +105,4 @@ class AccountServiceTest {
         Assertions.assertEquals(BigDecimal.ZERO, summary.get("netWorth"));
     }
 }
+

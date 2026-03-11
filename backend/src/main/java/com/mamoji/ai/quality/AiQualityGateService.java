@@ -8,6 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Rule-based quality checker for AI answers.
+ */
 @Service
 public class AiQualityGateService {
 
@@ -19,6 +22,9 @@ public class AiQualityGateService {
         this.aiMetricsService = aiMetricsService;
     }
 
+    /**
+     * Validates answer content and returns warning rule ids.
+     */
     public List<String> validate(String assistantType, String question, String answer) {
         String type = normalizeAssistantType(assistantType);
         AiProperties.QualityOps qualityOps = aiProperties.getQualityOps();
@@ -36,20 +42,22 @@ public class AiQualityGateService {
             type,
             "question_too_long"
         );
-
         if ("stock".equals(type) && qualityOps.isStockRiskRequired()) {
             applyRule(!containsRiskWarning(answer), warnings, type, "missing_risk_warning");
         }
         if ("finance".equals(type) && qualityOps.isFinanceActionableRequired()) {
             applyRule(!containsActionableHint(answer), warnings, type, "missing_actionable_advice");
         }
-        if (qualityOps.isRecencyStatementRequired() && !containsRecencyStatement(answer)) {
-            applyRule(true, warnings, type, "missing_recency_statement");
+        if (qualityOps.isRecencyStatementRequired()) {
+            applyRule(!containsRecencyStatement(answer), warnings, type, "missing_recency_statement");
         }
 
         return warnings;
     }
 
+    /**
+     * Adds warning when condition is met and records metric hit.
+     */
     private void applyRule(boolean condition, List<String> warnings, String assistantType, String rule) {
         if (!condition) {
             return;
@@ -58,29 +66,53 @@ public class AiQualityGateService {
         aiMetricsService.recordQualityRuleHit(assistantType, rule);
     }
 
+    /**
+     * Detects stock-risk disclaimer words.
+     */
     private boolean containsRiskWarning(String answer) {
         String text = normalize(answer);
-        return text.contains("风险") || text.contains("谨慎") || text.contains("不构成投资建议");
+        return text.contains("风险")
+            || text.contains("谨慎")
+            || text.contains("不构成投资建议")
+            || text.contains("投资有风险");
     }
 
+    /**
+     * Detects actionable-advice hints in finance responses.
+     */
     private boolean containsActionableHint(String answer) {
         String text = normalize(answer);
-        return text.contains("建议") || text.contains("可以") || text.contains("步骤");
+        return text.contains("建议")
+            || text.contains("可以")
+            || text.contains("步骤")
+            || text.contains("先")
+            || text.contains("然后")
+            || text.contains("本周")
+            || text.contains("本月");
     }
 
+    /**
+     * Detects recency statement hints.
+     */
     private boolean containsRecencyStatement(String answer) {
         String text = normalize(answer);
-        return text.contains("截至") || text.contains("数据") || text.contains("时间") || text.contains("as of");
+        return text.contains("截至")
+            || text.contains("数据时间")
+            || text.contains("更新时间")
+            || text.contains("as of");
     }
 
+    /**
+     * Lowercases text safely.
+     */
     private String normalize(String text) {
         return text == null ? "" : text.toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Normalizes assistant type to finance/stock.
+     */
     private String normalizeAssistantType(String assistantType) {
-        if ("stock".equalsIgnoreCase(assistantType)) {
-            return "stock";
-        }
-        return "finance";
+        return "stock".equalsIgnoreCase(assistantType) ? "stock" : "finance";
     }
 }

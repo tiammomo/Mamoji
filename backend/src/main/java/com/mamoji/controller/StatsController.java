@@ -4,14 +4,17 @@ import com.mamoji.entity.Category;
 import com.mamoji.entity.Transaction;
 import com.mamoji.entity.User;
 import com.mamoji.repository.AccountRepository;
+import com.mamoji.repository.BudgetRepository;
 import com.mamoji.repository.CategoryRepository;
 import com.mamoji.repository.TransactionRepository;
 import com.mamoji.security.AuthenticationUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.*;
@@ -20,12 +23,22 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/stats")
 @RequiredArgsConstructor
+/**
+ * 统计报表控制器。
+ *
+ * <p>负责将交易、账户、预算等数据聚合为前端报表所需结构，
+ * 覆盖总览、趋势、分类、年度、对比和洞察等多个视角。
+ */
 public class StatsController {
 
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
+    private final BudgetRepository budgetRepository;
 
+    /**
+     * 月度总览：输出收入、支出、结余等核心摘要。
+     */
     @GetMapping("/overview")
     public ResponseEntity<Map<String, Object>> getOverview(
             @AuthenticationUser User user,
@@ -69,6 +82,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 趋势图数据：按月聚合收入与支出。
+     */
     @GetMapping("/trend")
     public ResponseEntity<Map<String, Object>> getTrend(
             @AuthenticationUser User user,
@@ -128,6 +144,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 分类统计：按类型（收入/支出）统计分类金额与占比。
+     */
     @GetMapping("/categories")
     public ResponseEntity<Map<String, Object>> getCategoryStats(
             @AuthenticationUser User user,
@@ -186,6 +205,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 年度报表：输出全年总览、月度拆解和分类分布。
+     */
     @GetMapping("/annual")
     public ResponseEntity<Map<String, Object>> getAnnualReport(
             @AuthenticationUser User user,
@@ -234,6 +256,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 资产负债摘要：月度与年度收支、净资产、总资产、总负债。
+     */
     @GetMapping("/balance-sheet")
     public ResponseEntity<Map<String, Object>> getBalanceSheet(@AuthenticationUser User user) {
         YearMonth current = YearMonth.now();
@@ -273,6 +298,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 环比/同比对比报表。
+     */
     @GetMapping("/comparison")
     public ResponseEntity<Map<String, Object>> getComparison(
             @AuthenticationUser User user,
@@ -333,8 +361,224 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 高级洞察：最近/大额收支、异常分类、预算告警与摘要。
+     */
+    @GetMapping("/insights")
+    public ResponseEntity<Map<String, Object>> getInsights(
+        @AuthenticationUser User user,
+        @RequestParam(required = false) String month
+    ) {
+        YearMonth currentMonth = parseYearMonth(month);
+        YearMonth previousMonth = currentMonth.minusMonths(1);
+        LocalDate start = currentMonth.atDay(1);
+        LocalDate end = currentMonth.atEndOfMonth();
+        LocalDate previousStart = previousMonth.atDay(1);
+        LocalDate previousEnd = previousMonth.atEndOfMonth();
+
+        Map<Long, Category> categoryMap = categoryRepository.findAll().stream()
+            .collect(Collectors.toMap(Category::getId, item -> item));
+
+        List<Transaction> largestExpenses = transactionRepository.findTopByUserIdAndTypeAndDateBetweenOrderByAmountDesc(
+            user.getId(),
+            2,
+            start,
+            end,
+            PageRequest.of(0, 5)
+        );
+        List<Transaction> largestIncomes = transactionRepository.findTopByUserIdAndTypeAndDateBetweenOrderByAmountDesc(
+            user.getId(),
+            1,
+            start,
+            end,
+            PageRequest.of(0, 5)
+        );
+        List<Transaction> recentExpenses = transactionRepository.findTopByUserIdAndTypeAndDateBetweenOrderByDateDesc(
+            user.getId(),
+            2,
+            start,
+            end,
+            PageRequest.of(0, 5)
+        );
+        List<Transaction> recentIncomes = transactionRepository.findTopByUserIdAndTypeAndDateBetweenOrderByDateDesc(
+            user.getId(),
+            1,
+            start,
+            end,
+            PageRequest.of(0, 5)
+        );
+
+        List<Map<String, Object>> expenseAnomalies = buildExpenseAnomalies(
+            user.getId(),
+            start,
+            end,
+            previousStart,
+            previousEnd,
+            categoryMap
+        );
+        List<Map<String, Object>> budgetAlerts = buildBudgetAlerts(user.getId(), start, end, categoryMap);
+
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("largestExpenseAmount", largestExpenses.isEmpty() ? BigDecimal.ZERO : safeAmount(largestExpenses.get(0).getAmount()));
+        summary.put("largestIncomeAmount", largestIncomes.isEmpty() ? BigDecimal.ZERO : safeAmount(largestIncomes.get(0).getAmount()));
+        summary.put("anomalyCount", expenseAnomalies.size());
+        summary.put("budgetAlertCount", budgetAlerts.size());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("month", currentMonth.toString());
+        data.put("largestExpenses", largestExpenses.stream().map(item -> toTransactionItem(item, categoryMap)).toList());
+        data.put("largestIncomes", largestIncomes.stream().map(item -> toTransactionItem(item, categoryMap)).toList());
+        data.put("recentExpenses", recentExpenses.stream().map(item -> toTransactionItem(item, categoryMap)).toList());
+        data.put("recentIncomes", recentIncomes.stream().map(item -> toTransactionItem(item, categoryMap)).toList());
+        data.put("expenseAnomalies", expenseAnomalies);
+        data.put("budgetAlerts", budgetAlerts);
+        data.put("summary", summary);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", 0);
+        result.put("message", "success");
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
     private BigDecimal sumTypeByMonth(Long userId, int type, YearMonth month) {
         return safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(userId, type, month.atDay(1), month.atEndOfMonth()));
+    }
+
+    /**
+     * 识别支出异常分类：
+     * 以“金额提升 + 增长比例”双阈值过滤，输出 topN 异常项。
+     */
+    private List<Map<String, Object>> buildExpenseAnomalies(
+        Long userId,
+        LocalDate currentStart,
+        LocalDate currentEnd,
+        LocalDate previousStart,
+        LocalDate previousEnd,
+        Map<Long, Category> categoryMap
+    ) {
+        List<Object[]> currentRows = transactionRepository.sumByCategoryAndType(userId, 2, currentStart, currentEnd);
+        List<Object[]> previousRows = transactionRepository.sumByCategoryAndType(userId, 2, previousStart, previousEnd);
+
+        Map<Long, BigDecimal> previousByCategory = new HashMap<>();
+        for (Object[] row : previousRows) {
+            Long categoryId = (Long) row[0];
+            previousByCategory.put(categoryId, safeAmount((BigDecimal) row[1]));
+        }
+
+        List<Map<String, Object>> anomalies = new ArrayList<>();
+        for (Object[] row : currentRows) {
+            Long categoryId = (Long) row[0];
+            BigDecimal currentAmount = safeAmount((BigDecimal) row[1]);
+            BigDecimal previousAmount = safeAmount(previousByCategory.get(categoryId));
+            BigDecimal changeAmount = currentAmount.subtract(previousAmount);
+            double changePercent = pctChange(currentAmount, previousAmount);
+
+            if (currentAmount.compareTo(new BigDecimal("100")) < 0) {
+                continue;
+            }
+            if (changeAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            if (changePercent < 30.0D) {
+                continue;
+            }
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("categoryId", categoryId);
+            item.put("categoryName", resolveCategoryName(categoryId, categoryMap));
+            item.put("currentAmount", currentAmount);
+            item.put("previousAmount", previousAmount);
+            item.put("changeAmount", changeAmount);
+            item.put("changePercent", BigDecimal.valueOf(changePercent).setScale(1, RoundingMode.HALF_UP));
+            anomalies.add(item);
+        }
+
+        anomalies.sort((left, right) -> ((BigDecimal) right.get("changeAmount")).compareTo((BigDecimal) left.get("changeAmount")));
+        if (anomalies.size() > 5) {
+            return anomalies.subList(0, 5);
+        }
+        return anomalies;
+    }
+
+    /**
+     * 构建预算告警列表，识别 warning 与 over 两类状态。
+     */
+    private List<Map<String, Object>> buildBudgetAlerts(
+        Long userId,
+        LocalDate currentStart,
+        LocalDate currentEnd,
+        Map<Long, Category> categoryMap
+    ) {
+        List<Map<String, Object>> alerts = new ArrayList<>();
+
+        budgetRepository.findByUserIdAndStatus(userId, 1).forEach(budget -> {
+            LocalDate periodStart = maxDate(budget.getStartDate(), currentStart);
+            LocalDate periodEnd = minDate(budget.getEndDate(), currentEnd);
+            if (periodStart.isAfter(periodEnd)) {
+                return;
+            }
+
+            BigDecimal spent = budget.getCategoryId() == null
+                ? safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(userId, 2, periodStart, periodEnd))
+                : safeAmount(transactionRepository.sumByUserIdAndTypeAndCategoryIdAndDateBetween(
+                    userId,
+                    2,
+                    budget.getCategoryId(),
+                    periodStart,
+                    periodEnd
+                ));
+
+            BigDecimal amount = safeAmount(budget.getAmount());
+            BigDecimal usageRate = amount.compareTo(BigDecimal.ZERO) > 0
+                ? spent.multiply(BigDecimal.valueOf(100)).divide(amount, 1, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
+            int warningThreshold = budget.getWarningThreshold() == null ? 85 : budget.getWarningThreshold();
+
+            String status = "normal";
+            if (usageRate.compareTo(BigDecimal.valueOf(100)) >= 0) {
+                status = "over";
+            } else if (usageRate.compareTo(BigDecimal.valueOf(warningThreshold)) >= 0) {
+                status = "warning";
+            }
+
+            if ("normal".equals(status)) {
+                return;
+            }
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("budgetId", budget.getId());
+            item.put("budgetName", budget.getName());
+            item.put("amount", amount);
+            item.put("spent", spent);
+            item.put("usageRate", usageRate);
+            item.put("warningThreshold", warningThreshold);
+            item.put("status", status);
+            item.put("categoryId", budget.getCategoryId());
+            item.put("categoryName", resolveCategoryName(budget.getCategoryId(), categoryMap));
+            alerts.add(item);
+        });
+
+        alerts.sort((left, right) -> ((BigDecimal) right.get("usageRate")).compareTo((BigDecimal) left.get("usageRate")));
+        if (alerts.size() > 5) {
+            return alerts.subList(0, 5);
+        }
+        return alerts;
+    }
+
+    /**
+     * 交易行转换为展示对象，补齐类别名称等前端字段。
+     */
+    private Map<String, Object> toTransactionItem(Transaction transaction, Map<Long, Category> categoryMap) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", transaction.getId());
+        item.put("type", transaction.getType());
+        item.put("amount", safeAmount(transaction.getAmount()));
+        item.put("date", transaction.getDate());
+        item.put("remark", transaction.getRemark() == null ? "" : transaction.getRemark());
+        item.put("categoryId", transaction.getCategoryId());
+        item.put("categoryName", resolveCategoryName(transaction.getCategoryId(), categoryMap));
+        return item;
     }
 
     private List<Map<String, Object>> toCategoryItems(List<TransactionRepository.CategoryStatsProjection> projections) {
@@ -349,6 +593,36 @@ public class StatsController {
 
     private BigDecimal safeAmount(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private String resolveCategoryName(Long categoryId, Map<Long, Category> categoryMap) {
+        if (categoryId == null) {
+            return "未分类";
+        }
+        Category category = categoryMap.get(categoryId);
+        return category == null ? "未分类" : category.getName();
+    }
+
+    private LocalDate maxDate(LocalDate left, LocalDate right) {
+        return left.isAfter(right) ? left : right;
+    }
+
+    private LocalDate minDate(LocalDate left, LocalDate right) {
+        return left.isBefore(right) ? left : right;
+    }
+
+    /**
+     * 兼容 YYYY-MM 与 YYYY-MM-DD 两种月份输入格式。
+     */
+    private YearMonth parseYearMonth(String month) {
+        if (month == null || month.isBlank()) {
+            return YearMonth.now();
+        }
+        try {
+            return YearMonth.parse(month);
+        } catch (Exception ex) {
+            return YearMonth.from(LocalDate.parse(month));
+        }
     }
 
     private double pctChange(BigDecimal current, BigDecimal previous) {

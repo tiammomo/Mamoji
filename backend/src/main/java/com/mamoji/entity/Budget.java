@@ -1,11 +1,25 @@
 package com.mamoji.entity;
 
-import jakarta.persistence.*;
-import lombok.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * Budget entity for period-based spending control.
+ */
 @Data
 @Entity
 @Table(name = "budget")
@@ -13,6 +27,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Budget {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -33,7 +48,7 @@ public class Budget {
     private Integer warningThreshold = 80;
 
     @Column(nullable = false)
-    private Integer status = 1; // 0:已取消, 1:进行中, 2:已完成, 3:超支
+    private Integer status = 1; // 0: inactive, 1: active, 2: completed, 3: overrun
 
     @Column(name = "spent", precision = 19, scale = 2)
     private BigDecimal spent = BigDecimal.ZERO;
@@ -53,12 +68,18 @@ public class Budget {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Initializes creation/update timestamps.
+     */
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * Updates modification timestamp before persistence update.
+     */
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();

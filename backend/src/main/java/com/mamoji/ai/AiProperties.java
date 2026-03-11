@@ -13,9 +13,9 @@ import java.util.List;
 public class AiProperties {
 
     /**
-     * AI engine selector. Supported values: legacy (default), spring-ai.
+     * AI engine selector. Supported values: legacy, spring-ai (default).
      */
-    private String engine = "legacy";
+    private String engine = "spring-ai";
 
     /**
      * Provider base URL, e.g. https://api.minimaxi.com

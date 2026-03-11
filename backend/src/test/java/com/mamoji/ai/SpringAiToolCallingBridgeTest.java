@@ -8,6 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 
+/**
+ * Test suite for SpringAiToolCallingBridgeTest.
+ */
+
 class SpringAiToolCallingBridgeTest {
 
     @Test
@@ -34,10 +38,13 @@ class SpringAiToolCallingBridgeTest {
             .thenReturn(AiToolResult.ok("stock.query_stock_quote", "{\"price\":100}"));
         SpringAiToolCallingBridge bridge = new SpringAiToolCallingBridge(properties, router);
 
-        SpringAiToolCallingBridge.ToolCallingContext context = bridge.invoke("stock", "看看600519");
+        SpringAiToolCallingBridge.ToolCallingContext context = bridge.invoke("stock", "鐪嬬湅600519");
 
         Assertions.assertTrue(context.promptAddon().contains("Tool result(JSON):"));
         Assertions.assertEquals(1, context.actions().size());
         Assertions.assertTrue(context.warnings().isEmpty());
     }
 }
+
+
+
