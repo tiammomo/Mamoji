@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, MessageCircle, Send, TrendingUp, Wallet } from "lucide-react";
+import { Bot, Loader2, MessageCircle, Send, Sparkles, TrendingUp, Wallet } from "lucide-react";
 import { aiApi, getErrorMessage } from "@/lib/api";
 import type { AIChatMode, AIStreamDonePayload } from "@/lib/api";
 
@@ -36,6 +36,8 @@ const assistantConfig: Record<AssistantType, {
   name: string;
   description: string;
   icon: typeof Wallet;
+  accentClass: string;
+  softClass: string;
   welcomeMessage: string;
   quickQuestions: string[];
 }> = {
@@ -43,6 +45,8 @@ const assistantConfig: Record<AssistantType, {
     name: "财务助手",
     icon: Wallet,
     description: "分析你的收支和预算执行情况",
+    accentClass: "text-emerald-600 border-emerald-300 bg-emerald-50",
+    softClass: "from-emerald-50 via-white to-teal-50",
     welcomeMessage:
       "你好，我是财务助手。我可以帮你分析收支结构、预算执行进度，并给出理财建议。",
     quickQuestions: [
@@ -56,6 +60,8 @@ const assistantConfig: Record<AssistantType, {
     name: "股票助手",
     icon: TrendingUp,
     description: "提供市场观察和投资学习建议",
+    accentClass: "text-sky-600 border-sky-300 bg-sky-50",
+    softClass: "from-sky-50 via-white to-blue-50",
     welcomeMessage:
       "你好，我是股票助手。我可以帮你做基础市场观察与信息整理。投资有风险，请谨慎决策。",
     quickQuestions: [
@@ -145,68 +151,89 @@ function formatWarningLabel(warning: string): string {
   if (normalized === "internal_error") {
     return "系统处理异常，请稍后再试。";
   }
-  if (normalized.includes("tool call failed")) {
+  if (normalized.includes("tool call failed") || normalized.includes("tool_call_failed")) {
     return "工具调用失败，建议稍后重试。";
   }
   return warning;
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message, assistantType }: { message: ChatMessage; assistantType: AssistantType }) {
   const parsed = message.role === "assistant" ? parseAssistantContent(message.content) : null;
   const showStructured =
     message.role === "assistant" &&
     parsed !== null &&
     (parsed.metrics.length > 0 || parsed.bullets.length > 0 || parsed.details.length > 0);
+  const isUser = message.role === "user";
+  const assistantMeta = assistantConfig[assistantType];
+  const AssistantIcon = assistantMeta.icon;
 
   return (
-    <div className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+    <div className={`flex items-end gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+      {!isUser && (
+        <div
+          className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-2xl border text-xs font-semibold shadow-sm sm:flex ${assistantMeta.accentClass}`}
+        >
+          <AssistantIcon className="h-4 w-4" />
+        </div>
+      )}
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-          message.role === "user" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
+        className={`max-w-[80%] rounded-[22px] border px-4 py-3 shadow-sm ${
+          isUser
+            ? "border-indigo-500/40 bg-gradient-to-br from-indigo-600 to-indigo-700 text-white"
+            : "border-slate-200/80 bg-white/95 text-slate-900"
         }`}
       >
-        {message.role === "assistant" && message.modeUsed && (
-          <div className="mb-2 flex flex-wrap gap-2 text-[11px]">
-            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-indigo-700">
+        {!isUser && message.modeUsed && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 font-medium text-indigo-700">
               {message.modeUsed.toUpperCase()}
             </span>
+            {message.traceId && <span className="text-slate-400">Trace #{message.traceId}</span>}
           </div>
         )}
 
         {showStructured && parsed ? (
-          <div className="space-y-3">
-            <p className="whitespace-pre-wrap leading-7 font-medium">{parsed.summary}</p>
+          <div className="space-y-3.5">
+            <p className="whitespace-pre-wrap text-[15px] leading-7 font-semibold text-slate-900">{parsed.summary}</p>
             {parsed.metrics.length > 0 && (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {parsed.metrics.map((item, index) => (
-                  <div key={`${item.label}-${index}`} className="rounded-lg bg-white/80 px-3 py-2">
-                    <p className="text-xs text-gray-500">{item.label}</p>
-                    <p className="text-sm font-semibold">{item.value}</p>
+                  <div
+                    key={`${item.label}-${index}`}
+                    className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-slate-50 to-white px-3 py-2.5"
+                  >
+                    <p className="text-[11px] tracking-wide text-slate-500 uppercase">{item.label}</p>
+                    <p className="mt-0.5 text-sm font-semibold text-slate-900">{item.value}</p>
                   </div>
                 ))}
               </div>
             )}
             {parsed.bullets.length > 0 && (
-              <ul className="list-disc space-y-1 pl-5 text-sm">
+              <ul className="space-y-1.5 text-sm">
                 {parsed.bullets.map((item, index) => (
-                  <li key={`${item}-${index}`}>{item}</li>
+                  <li key={`${item}-${index}`} className="flex gap-2 text-slate-700">
+                    <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                    <span>{item}</span>
+                  </li>
                 ))}
               </ul>
             )}
             {parsed.details.length > 0 &&
               parsed.details.map((line, index) => (
-                <p key={`${line}-${index}`} className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                <p key={`${line}-${index}`} className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
                   {line}
                 </p>
               ))}
           </div>
         ) : (
-          <p className="whitespace-pre-wrap leading-7">{message.content}</p>
+          <p className={`whitespace-pre-wrap leading-7 ${isUser ? "text-white" : "text-slate-800"}`}>
+            {message.content}
+          </p>
         )}
 
-        {message.role === "assistant" && message.warnings && message.warnings.length > 0 && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            <p className="mb-1 font-medium">提示</p>
+        {!isUser && message.warnings && message.warnings.length > 0 && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+            <p className="mb-1 font-semibold">提示</p>
             <ul className="list-disc space-y-1 pl-4">
               {message.warnings.map((warning) => (
                 <li key={warning}>{formatWarningLabel(warning)}</li>
@@ -215,23 +242,28 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           </div>
         )}
 
-        {message.role === "assistant" && message.sources && message.sources.length > 0 && (
-          <div className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
-            <p className="mb-1 font-medium text-gray-700">来源</p>
-            <ul className="space-y-1">
+        {!isUser && message.sources && message.sources.length > 0 && (
+          <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs text-slate-600">
+            <summary className="cursor-pointer list-none font-medium text-slate-700">来源 ({message.sources.length})</summary>
+            <ul className="mt-2 space-y-1.5">
               {message.sources.map((source) => (
                 <li key={source} className="break-all">
                   {source}
                 </li>
               ))}
             </ul>
-          </div>
+          </details>
         )}
 
-        <p className={`text-xs mt-1 ${message.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
+        <p className={`mt-1 text-[11px] ${isUser ? "text-indigo-200" : "text-slate-400"}`}>
           {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
         </p>
       </div>
+      {isUser && (
+        <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-indigo-300/60 bg-indigo-50 text-xs font-semibold text-indigo-700 sm:flex">
+          我
+        </div>
+      )}
     </div>
   );
 }
@@ -253,8 +285,8 @@ export default function AIPage() {
   const currentConfig = useMemo(() => assistantConfig[assistantType], [assistantType]);
 
   const renderedHistory = useMemo(
-    () => messages.map((message) => <MessageBubble key={message.id} message={message} />),
-    [messages]
+    () => messages.map((message) => <MessageBubble key={message.id} message={message} assistantType={assistantType} />),
+    [messages, assistantType]
   );
 
   const updateStickToBottomFlag = (): void => {
@@ -452,114 +484,135 @@ export default function AIPage() {
   }
 
   return (
-    <div className="p-6 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-          <MessageCircle className="w-7 h-7 text-indigo-600" />
-          AI 助手
-        </h1>
-        <p className="text-gray-500 mt-1">{currentConfig.description}</p>
-      </div>
+    <div className="relative px-4 py-5 sm:px-6 lg:px-8">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_15%_0%,rgba(37,99,235,0.12),transparent_42%),radial-gradient(circle_at_85%_0%,rgba(16,185,129,0.10),transparent_38%)]" />
 
-      <div className="flex gap-3 mb-6">
-        {(Object.keys(assistantConfig) as AssistantType[]).map((type) => {
-          const config = assistantConfig[type];
-          const Icon = config.icon;
-          return (
+      <div className="relative space-y-4">
+        <section className={`rounded-3xl border border-slate-200/80 bg-gradient-to-r p-5 shadow-sm ${currentConfig.softClass}`}>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h1 className="flex items-center gap-3 text-2xl font-semibold text-slate-900">
+                <MessageCircle className="h-7 w-7 text-indigo-600" />
+                AI 助手
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">{currentConfig.description}</p>
+            </div>
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs text-slate-500">
+              <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+              实时流式回答
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(Object.keys(assistantConfig) as AssistantType[]).map((type) => {
+              const config = assistantConfig[type];
+              const Icon = config.icon;
+              const active = assistantType === type;
+              return (
+                <button
+                  key={type}
+                  onClick={() => handleAssistantChange(type)}
+                  className={`flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition-all ${
+                    active
+                      ? `${config.accentClass} shadow-sm`
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{config.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <div className="flex flex-wrap gap-2">
+          {modeOptions.map((option) => (
             <button
-              key={type}
-              onClick={() => handleAssistantChange(type)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
-                assistantType === type ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-100 border"
-              }`}
+              key={option.mode}
+              type="button"
+              onClick={() => setChatMode(option.mode)}
+              disabled={loading}
+              className={`rounded-xl border px-3 py-1.5 text-sm transition-all ${
+                chatMode === option.mode
+                  ? "border-indigo-300 bg-indigo-50 text-indigo-700 shadow-sm"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+              } disabled:opacity-60`}
+              title={option.description}
             >
-              <Icon className="w-5 h-5" />
-              <span className="font-medium">{config.name}</span>
+              <span className="font-medium">{option.label}</span>
             </button>
-          );
-        })}
-      </div>
+          ))}
+        </div>
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        {modeOptions.map((option) => (
-          <button
-            key={option.mode}
-            type="button"
-            onClick={() => setChatMode(option.mode)}
-            disabled={loading}
-            className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-              chatMode === option.mode
-                ? "bg-indigo-50 border-indigo-500 text-indigo-700"
-                : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"
-            } disabled:opacity-60`}
-            title={option.description}
+        <section className="flex h-[calc(100vh-16.5rem)] min-h-[560px] flex-col overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_28px_68px_-36px_rgba(15,23,42,0.45)]">
+          <div
+            ref={messageListRef}
+            onScroll={updateStickToBottomFlag}
+            className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6"
           >
-            {option.label}
-          </button>
-        ))}
-      </div>
+            <div className="space-y-4">
+              {renderedHistory}
+              {streamingMessage && <MessageBubble message={streamingMessage} assistantType={assistantType} />}
 
-      <div className="bg-white rounded-2xl shadow-sm border flex flex-col h-[calc(100vh-18rem)]">
-        <div
-          ref={messageListRef}
-          onScroll={updateStickToBottomFlag}
-          className="flex-1 overflow-y-auto p-6 space-y-4"
-        >
-          {renderedHistory}
-          {streamingMessage && <MessageBubble message={streamingMessage} />}
-
-          {loading && awaitingFirstChunk && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 rounded-2xl px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-                  <span className="text-gray-500">思考中...</span>
+              {loading && awaitingFirstChunk && (
+                <div className="flex justify-start">
+                  <div className="max-w-[80%] rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-slate-600 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                      <span className="text-sm">正在思考并组织答案...</span>
+                    </div>
+                  </div>
                 </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+
+          {messages.length <= 1 && !loading && !streamingMessage && (
+            <div className="border-t border-slate-100 px-4 py-4 sm:px-6">
+              <p className="mb-2 flex items-center gap-2 text-sm text-slate-500">
+                <Bot className="h-4 w-4" />
+                你可以这样问
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {currentConfig.quickQuestions.map((question) => (
+                  <button
+                    key={question}
+                    onClick={() => void handleSend(question)}
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700 transition-colors hover:border-slate-300 hover:bg-white"
+                  >
+                    {question}
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
-          <div ref={messagesEndRef} />
-        </div>
-
-        {messages.length <= 1 && !loading && !streamingMessage && (
-          <div className="px-6 pb-4">
-            <p className="text-sm text-gray-500 mb-2">可以这样问：</p>
-            <div className="flex flex-wrap gap-2">
-              {currentConfig.quickQuestions.map((question) => (
-                <button
-                  key={question}
-                  onClick={() => void handleSend(question)}
-                  className="text-sm px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200"
-                >
-                  {question}
-                </button>
-              ))}
+          <div className="border-t border-slate-100 bg-white/90 px-4 py-4 sm:px-6">
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`问 ${currentConfig.name}...`}
+                className="h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                disabled={loading}
+              />
+              <button
+                onClick={() => void handleSend()}
+                disabled={!input.trim() || loading}
+                className="inline-flex h-12 items-center gap-2 rounded-2xl bg-indigo-600 px-5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+                <span className="hidden sm:inline">发送</span>
+              </button>
             </div>
+            <p className="mt-2 text-xs text-slate-400">按 Enter 发送，Shift + Enter 换行</p>
           </div>
-        )}
-
-        <div className="border-t p-4">
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`问 ${currentConfig.name}...`}
-              className="flex-1 px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              disabled={loading}
-            />
-            <button
-              onClick={() => void handleSend()}
-              disabled={!input.trim() || loading}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-            >
-              <Send className="w-5 h-5" />
-              <span className="hidden sm:inline">发送</span>
-            </button>
-          </div>
-        </div>
+        </section>
       </div>
     </div>
   );
