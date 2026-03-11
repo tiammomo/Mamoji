@@ -3,6 +3,7 @@ package com.mamoji.service;
 import com.mamoji.dto.BudgetDTO;
 import com.mamoji.entity.Budget;
 import com.mamoji.repository.BudgetRepository;
+import com.mamoji.repository.TransactionRepository;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,9 @@ class BudgetServiceTest {
 
     @Mock
     private BudgetRepository budgetRepository;
+
+    @Mock
+    private TransactionRepository transactionRepository;
 
     @InjectMocks
     private BudgetService budgetService;
@@ -93,7 +97,7 @@ class BudgetServiceTest {
             () -> budgetService.updateBudget(9L, patch, 7L)
         );
 
-        Assertions.assertTrue(exception.getMessage().contains("0-100"));
+        Assertions.assertTrue(exception.getMessage().contains("0 and 100"));
         Mockito.verify(budgetRepository, Mockito.never()).save(Mockito.any(Budget.class));
     }
 

@@ -94,6 +94,34 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
         @Param("endDate") LocalDate endDate
     );
 
+    @Query("""
+        SELECT SUM(t.amount - COALESCE(t.refundedAmount, 0))
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = 2
+          AND t.date BETWEEN :startDate AND :endDate
+        """)
+    BigDecimal sumEffectiveExpenseByUserIdAndDateBetween(
+        @Param("userId") Long userId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+        SELECT SUM(t.amount - COALESCE(t.refundedAmount, 0))
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = 2
+          AND t.categoryId = :categoryId
+          AND t.date BETWEEN :startDate AND :endDate
+        """)
+    BigDecimal sumEffectiveExpenseByUserIdAndCategoryIdAndDateBetween(
+        @Param("userId") Long userId,
+        @Param("categoryId") Long categoryId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
     Page<Transaction> findByUserIdAndTypeOrderByDateDesc(Long userId, Integer type, Pageable pageable);
     
     Page<Transaction> findByUserIdAndTypeInOrderByDateDesc(Long userId, List<Integer> types, Pageable pageable);
@@ -107,6 +135,38 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
         List<Integer> types,
         LocalDate startDate,
         LocalDate endDate,
+        Pageable pageable
+    );
+
+    @Query("""
+        SELECT t
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = :type
+          AND t.date BETWEEN :startDate AND :endDate
+        ORDER BY t.amount DESC, t.date DESC
+        """)
+    List<Transaction> findTopByUserIdAndTypeAndDateBetweenOrderByAmountDesc(
+        @Param("userId") Long userId,
+        @Param("type") Integer type,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        Pageable pageable
+    );
+
+    @Query("""
+        SELECT t
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = :type
+          AND t.date BETWEEN :startDate AND :endDate
+        ORDER BY t.date DESC, t.amount DESC
+        """)
+    List<Transaction> findTopByUserIdAndTypeAndDateBetweenOrderByDateDesc(
+        @Param("userId") Long userId,
+        @Param("type") Integer type,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
         Pageable pageable
     );
 

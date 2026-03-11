@@ -1,5 +1,8 @@
 package com.mamoji.config;
 
+import com.mamoji.common.exception.BadRequestException;
+import com.mamoji.common.exception.ForbiddenOperationException;
+import com.mamoji.common.exception.ResourceNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -81,6 +84,30 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, message, request, ex);
     }
 
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<Map<String, Object>> handleBadRequestException(
+        BadRequestException ex,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), request, ex);
+    }
+
+    @ExceptionHandler(ForbiddenOperationException.class)
+    public ResponseEntity<Map<String, Object>> handleForbiddenOperationException(
+        ForbiddenOperationException ex,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage(), request, ex);
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleResourceNotFoundException(
+        ResourceNotFoundException ex,
+        HttpServletRequest request
+    ) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage(), request, ex);
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNoResourceFoundException(
         NoResourceFoundException ex,
@@ -150,6 +177,7 @@ public class GlobalExceptionHandler {
         body.put("traceId", traceId);
         body.put("code", status.value());
         body.put("message", message);
+        body.put("data", null);
 
         return ResponseEntity.status(status).body(body);
     }

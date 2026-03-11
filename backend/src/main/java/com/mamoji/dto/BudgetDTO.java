@@ -18,4 +18,8 @@ public class BudgetDTO {
     private Long ledgerId;
     private Long categoryId;
     private BigDecimal usageRate;
+    private BigDecimal remainingAmount;
+    private Boolean warningReached;
+    private String riskLevel;
+    private String riskMessage;
 }
