@@ -62,3 +62,10 @@ Thumbs.db
 # Screenshots (do not commit)
 *.png
 !.gitkeep
+
+# Local automation and smoke artifacts
+.codex-smoke/
+__pycache__/
+*.pyc
+tools/run-*-dev*.cmd
+tools/enable-utf8.ps1
