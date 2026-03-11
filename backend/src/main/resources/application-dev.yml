@@ -1,7 +1,19 @@
 spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:33306/${MYSQL_DATABASE:mamoji}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER:com.mysql.cj.jdbc.Driver}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USER:mamoji_mysql}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:mamoji_mysql_pass}}
+  jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.dialect.MySQLDialect}
   h2:
     console:
       enabled: ${SPRING_H2_CONSOLE_ENABLED:true}
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:36379}
+      password: ${SPRING_REDIS_PASSWORD:${REDIS_PASSWORD:mamoji_redis_pass}}
 
 app:
   security:
