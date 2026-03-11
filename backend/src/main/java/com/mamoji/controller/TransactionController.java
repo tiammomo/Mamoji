@@ -49,9 +49,16 @@ public class TransactionController {
     private static final BigDecimal MAX_TRANSACTION_AMOUNT = new BigDecimal("10000000");
     private static final BigDecimal LARGE_EXPENSE_THRESHOLD = new BigDecimal("3000");
     private static final BigDecimal CRITICAL_EXPENSE_THRESHOLD = new BigDecimal("10000");
+    private static final BigDecimal EXPENSE_INCOME_RATIO_WARNING = new BigDecimal("1.20");
+    private static final BigDecimal CATEGORY_SPIKE_RATIO = new BigDecimal("2.00");
+    private static final BigDecimal CATEGORY_SPIKE_DELTA_THRESHOLD = new BigDecimal("1000");
+    private static final BigDecimal NEW_CATEGORY_LARGE_EXPENSE_THRESHOLD = new BigDecimal("3000");
     private static final int MAX_REMARK_LENGTH = 200;
     private static final int MAX_BACKDATED_YEARS = 20;
     private static final int MAX_PAGE_SIZE = 200;
+    private static final int HIGH_FREQUENCY_EXPENSE_THRESHOLD = 12;
+    private static final int DUPLICATE_EXPENSE_COUNT_THRESHOLD = 1;
+    private static final int MAX_QUERY_RANGE_DAYS = 3660;
     private static final String TX_NOT_FOUND = "Transaction not found.";
     private static final String TX_FORBIDDEN = "You do not have permission to access this transaction.";
 
@@ -74,6 +81,7 @@ public class TransactionController {
         if (type != null && !isSupportedType(type, true)) {
             throw new BadRequestException("Unsupported transaction type: " + type);
         }
+        validateQueryDateRange(startDate, endDate);
         PageRequest pageRequest = PageRequest.of(page - 1, pageSize);
         Page<Transaction> transactionPage = queryTransactions(user.getId(), pageRequest, type, parseTypes(types), startDate, endDate);
 
@@ -128,6 +136,9 @@ public class TransactionController {
         @RequestBody Map<String, Object> request
     ) {
         Transaction transaction = findOwnedTransaction(id, user.getId());
+        if (transaction.getType() != null && transaction.getType() == 3 && !request.isEmpty()) {
+            throw new BadRequestException("Refund transactions are immutable.");
+        }
         Transaction before = snapshot(transaction);
 
         if (request.get("type") != null) {
@@ -180,6 +191,7 @@ public class TransactionController {
         @PathVariable Long id
     ) {
         Transaction existing = findOwnedTransaction(id, user.getId());
+        validateDeleteAllowed(existing);
         transactionRepository.delete(existing);
         refreshAffectedBudgets(user.getId(), existing, null);
         return ApiResponses.ok(null);
@@ -229,6 +241,9 @@ public class TransactionController {
 
         LocalDate refundDate = parseRequiredDate(request.get("date"), "date");
         validateTransactionDate(refundDate);
+        if (originalTransaction.getDate() != null && refundDate.isBefore(originalTransaction.getDate())) {
+            throw new BadRequestException("Refund date cannot be before original transaction date.");
+        }
 
         originalTransaction.setRefundedAmount(alreadyRefunded.add(refundAmount));
         transactionRepository.save(originalTransaction);
@@ -285,6 +300,24 @@ public class TransactionController {
         return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();
     }
 
+    private void validateQueryDateRange(String startDate, String endDate) {
+        if ((startDate == null || startDate.isBlank()) && (endDate == null || endDate.isBlank())) {
+            return;
+        }
+        if (startDate == null || startDate.isBlank() || endDate == null || endDate.isBlank()) {
+            throw new BadRequestException("startDate and endDate must be provided together.");
+        }
+        LocalDate start = parseRequiredDate(startDate, "startDate");
+        LocalDate end = parseRequiredDate(endDate, "endDate");
+        if (start.isAfter(end)) {
+            throw new BadRequestException("startDate cannot be after endDate.");
+        }
+        long rangeDays = end.toEpochDay() - start.toEpochDay();
+        if (rangeDays > MAX_QUERY_RANGE_DAYS) {
+            throw new BadRequestException("Date range is too large.");
+        }
+    }
+
     private Transaction findOwnedTransaction(Long id, Long userId) {
         Transaction transaction = transactionRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException(TX_NOT_FOUND));
@@ -292,6 +325,23 @@ public class TransactionController {
             throw new ForbiddenOperationException(TX_FORBIDDEN);
         }
         return transaction;
+    }
+
+    private void validateDeleteAllowed(Transaction transaction) {
+        if (transaction.getType() != null && transaction.getType() == 3) {
+            throw new BadRequestException("Refund transactions cannot be deleted.");
+        }
+        if (transaction.getType() != null && transaction.getType() == 2) {
+            BigDecimal refundedAmount = defaultAmount(transaction.getRefundedAmount());
+            if (refundedAmount.compareTo(BigDecimal.ZERO) > 0
+                || transactionRepository.existsByOriginalTransactionId(transaction.getId())) {
+                throw new BadRequestException("Expense transaction with refund history cannot be deleted.");
+            }
+        }
+    }
+
+    private BigDecimal defaultAmount(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private Map<String, Object> toRefundableMap(Transaction transaction) {
@@ -529,31 +579,104 @@ public class TransactionController {
         String level = "low";
 
         if (transaction != null && transaction.getType() != null && transaction.getType() == 2) {
-            BigDecimal amount = transaction.getAmount() == null ? BigDecimal.ZERO : transaction.getAmount();
+            BigDecimal amount = defaultAmount(transaction.getAmount());
             if (amount.compareTo(CRITICAL_EXPENSE_THRESHOLD) >= 0) {
-                flags.add("critical_expense");
+                addRiskFlag(flags, "critical_expense");
                 level = escalateRiskLevel(level, "critical");
             } else if (amount.compareTo(LARGE_EXPENSE_THRESHOLD) >= 0) {
-                flags.add("large_expense");
+                addRiskFlag(flags, "large_expense");
                 level = escalateRiskLevel(level, "high");
             }
 
             if (transaction.getDate() != null) {
                 YearMonth yearMonth = YearMonth.from(transaction.getDate());
-                BigDecimal monthExpense = transactionRepository.sumEffectiveExpenseByUserIdAndDateBetween(
+                BigDecimal monthExpense = defaultAmount(transactionRepository.sumEffectiveExpenseByUserIdAndDateBetween(
                     userId,
                     yearMonth.atDay(1),
                     yearMonth.atEndOfMonth()
-                );
-                risk.put("monthlyEffectiveExpense", monthExpense == null ? BigDecimal.ZERO : monthExpense);
+                ));
+                BigDecimal monthIncome = defaultAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(
+                    userId,
+                    1,
+                    yearMonth.atDay(1),
+                    yearMonth.atEndOfMonth()
+                ));
+                risk.put("monthlyEffectiveExpense", monthExpense);
+                risk.put("monthlyIncome", monthIncome);
+
+                if (monthIncome.compareTo(BigDecimal.ZERO) <= 0 && monthExpense.compareTo(BigDecimal.ZERO) > 0) {
+                    addRiskFlag(flags, "expense_without_income");
+                    level = escalateRiskLevel(level, "critical");
+                } else if (monthIncome.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal expenseIncomeRatio = monthExpense.divide(monthIncome, 2, RoundingMode.HALF_UP);
+                    risk.put("expenseIncomeRatio", expenseIncomeRatio);
+                    if (expenseIncomeRatio.compareTo(EXPENSE_INCOME_RATIO_WARNING) >= 0) {
+                        addRiskFlag(flags, "expense_income_ratio_high");
+                        level = escalateRiskLevel(level, "high");
+                    }
+                }
+
+                long dayExpenseCount = transactionRepository.countByUserIdAndTypeAndDate(userId, 2, transaction.getDate());
+                risk.put("dailyExpenseCount", dayExpenseCount);
+                if (dayExpenseCount >= HIGH_FREQUENCY_EXPENSE_THRESHOLD) {
+                    addRiskFlag(flags, "high_frequency_expense");
+                    level = escalateRiskLevel(level, "medium");
+                }
+
+                if (transaction.getCategoryId() != null) {
+                    long duplicateCount = transactionRepository.countDuplicateTransactions(
+                        userId,
+                        2,
+                        transaction.getCategoryId(),
+                        amount,
+                        transaction.getDate(),
+                        transaction.getId()
+                    );
+                    risk.put("sameDayDuplicateCount", duplicateCount);
+                    if (duplicateCount >= DUPLICATE_EXPENSE_COUNT_THRESHOLD) {
+                        addRiskFlag(flags, "possible_duplicate_expense");
+                        level = escalateRiskLevel(level, "medium");
+                    }
+
+                    BigDecimal currentCategoryExpense = defaultAmount(transactionRepository
+                        .sumByUserIdAndTypeAndCategoryIdAndDateBetween(
+                            userId,
+                            2,
+                            transaction.getCategoryId(),
+                            yearMonth.atDay(1),
+                            yearMonth.atEndOfMonth()
+                        ));
+                    YearMonth previousMonth = yearMonth.minusMonths(1);
+                    BigDecimal previousCategoryExpense = defaultAmount(transactionRepository
+                        .sumByUserIdAndTypeAndCategoryIdAndDateBetween(
+                            userId,
+                            2,
+                            transaction.getCategoryId(),
+                            previousMonth.atDay(1),
+                            previousMonth.atEndOfMonth()
+                        ));
+                    risk.put("currentCategoryExpense", currentCategoryExpense);
+                    risk.put("previousCategoryExpense", previousCategoryExpense);
+                    if (previousCategoryExpense.compareTo(BigDecimal.ZERO) > 0) {
+                        risk.put(
+                            "categoryExpenseRatio",
+                            currentCategoryExpense.divide(previousCategoryExpense, 2, RoundingMode.HALF_UP)
+                        );
+                    }
+
+                    if (isCategoryExpenseSpike(currentCategoryExpense, previousCategoryExpense)) {
+                        addRiskFlag(flags, "category_expense_spike");
+                        level = escalateRiskLevel(level, "high");
+                    }
+                }
             }
 
             if (transaction.getBudgetId() != null) {
                 Optional<Budget> budgetOptional = budgetRepository.findByIdAndUserId(transaction.getBudgetId(), userId);
                 if (budgetOptional.isPresent()) {
                     Budget budget = budgetOptional.get();
-                    BigDecimal amountLimit = budget.getAmount() == null ? BigDecimal.ZERO : budget.getAmount();
-                    BigDecimal spent = budget.getSpent() == null ? BigDecimal.ZERO : budget.getSpent();
+                    BigDecimal amountLimit = defaultAmount(budget.getAmount());
+                    BigDecimal spent = defaultAmount(budget.getSpent());
                     BigDecimal usageRate = amountLimit.compareTo(BigDecimal.ZERO) > 0
                         ? spent.multiply(BigDecimal.valueOf(100)).divide(amountLimit, 1, RoundingMode.HALF_UP)
                         : BigDecimal.ZERO;
@@ -564,15 +687,15 @@ public class TransactionController {
                     if ((budget.getStatus() != null && budget.getStatus() == BudgetStatus.OVERRUN)
                         || usageRate.compareTo(BigDecimal.valueOf(100)) >= 0) {
                         budgetRisk = "overrun";
-                        flags.add("budget_overrun");
+                        addRiskFlag(flags, "budget_overrun");
                         level = escalateRiskLevel(level, "critical");
                     } else if (usageRate.compareTo(BigDecimal.valueOf(warningThreshold)) >= 0) {
                         budgetRisk = "warning";
-                        flags.add("budget_warning");
+                        addRiskFlag(flags, "budget_warning");
                         level = escalateRiskLevel(level, "high");
                     } else if (usageRate.compareTo(BigDecimal.valueOf(Math.max(0, warningThreshold - 10))) >= 0) {
                         budgetRisk = "watch";
-                        flags.add("budget_watch");
+                        addRiskFlag(flags, "budget_watch");
                         level = escalateRiskLevel(level, "medium");
                     }
 
@@ -594,6 +717,25 @@ public class TransactionController {
         risk.put("flags", flags);
         risk.put("message", resolveRiskMessage(level));
         return risk;
+    }
+
+    private boolean isCategoryExpenseSpike(BigDecimal currentExpense, BigDecimal previousExpense) {
+        if (currentExpense.compareTo(BigDecimal.ZERO) <= 0) {
+            return false;
+        }
+        if (previousExpense.compareTo(BigDecimal.ZERO) <= 0) {
+            return currentExpense.compareTo(NEW_CATEGORY_LARGE_EXPENSE_THRESHOLD) >= 0;
+        }
+        BigDecimal expenseRatio = currentExpense.divide(previousExpense, 2, RoundingMode.HALF_UP);
+        BigDecimal delta = currentExpense.subtract(previousExpense);
+        return expenseRatio.compareTo(CATEGORY_SPIKE_RATIO) >= 0
+            && delta.compareTo(CATEGORY_SPIKE_DELTA_THRESHOLD) >= 0;
+    }
+
+    private void addRiskFlag(List<String> flags, String flag) {
+        if (!flags.contains(flag)) {
+            flags.add(flag);
+        }
     }
 
     private void validatePaging(int page, int pageSize) {

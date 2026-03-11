@@ -17,7 +17,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     long countByUserId(Long userId);
 
+    long countByUserIdAndTypeAndDate(Long userId, Integer type, LocalDate date);
+
     long countByUserIdAndTypeAndDateBetween(Long userId, Integer type, LocalDate startDate, LocalDate endDate);
+
+    boolean existsByOriginalTransactionId(Long originalTransactionId);
 
     @Query("SELECT SUM(t.amount) FROM Transaction t WHERE t.userId = :userId AND t.type = :type AND t.date BETWEEN :startDate AND :endDate")
     BigDecimal sumByUserIdAndTypeAndDateBetween(
@@ -120,6 +124,25 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
         @Param("categoryId") Long categoryId,
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+        SELECT COUNT(t)
+        FROM Transaction t
+        WHERE t.userId = :userId
+          AND t.type = :type
+          AND t.categoryId = :categoryId
+          AND t.amount = :amount
+          AND t.date = :date
+          AND (:excludeId IS NULL OR t.id <> :excludeId)
+        """)
+    long countDuplicateTransactions(
+        @Param("userId") Long userId,
+        @Param("type") Integer type,
+        @Param("categoryId") Long categoryId,
+        @Param("amount") BigDecimal amount,
+        @Param("date") LocalDate date,
+        @Param("excludeId") Long excludeId
     );
 
     Page<Transaction> findByUserIdAndTypeOrderByDateDesc(Long userId, Integer type, Pageable pageable);
