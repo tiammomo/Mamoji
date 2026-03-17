@@ -24,7 +24,7 @@ import java.util.Map;
 /**
  * Authentication and profile endpoints.
  *
- * <p>Handles register/login, current user profile, and password change.
+ * <p>Handles register/login, current user profile retrieval, profile update and password change.
  */
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -37,7 +37,7 @@ public class AuthController {
     private final JwtService jwtService;
 
     /**
-     * Registers a new local user and returns auth payload with JWT token.
+     * Registers a new user and returns token plus current-user payload.
      */
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, String> request) {
@@ -48,7 +48,7 @@ public class AuthController {
         log.info("Register request email={}", email);
 
         if (userRepository.existsByEmail(email)) {
-            return ApiResponses.badRequest(2002, "邮箱已被注册。");
+            return ApiResponses.badRequest(2002, "Email is already registered.");
         }
 
         User user = User.builder()
@@ -64,7 +64,7 @@ public class AuthController {
     }
 
     /**
-     * Authenticates user credentials and returns auth payload with JWT token.
+     * Authenticates user credentials and returns token plus current-user payload.
      */
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> request) {
@@ -75,14 +75,14 @@ public class AuthController {
 
         User user = userRepository.findByEmail(email).orElse(null);
         if (user == null || !passwordEncoder.matches(password, user.getPasswordHash())) {
-            return ApiResponses.badRequest(1002, "用户名或密码错误。");
+            return ApiResponses.badRequest(1002, "Invalid email or password.");
         }
 
         return ApiResponses.ok(buildAuthPayload(user, jwtService.generateToken(user.getId())));
     }
 
     /**
-     * Returns current authenticated user profile.
+     * Returns the current authenticated user profile.
      */
     @GetMapping("/me")
     public ResponseEntity<Map<String, Object>> getCurrentUser(@AuthenticationUser User user) {
@@ -117,7 +117,7 @@ public class AuthController {
     }
 
     /**
-     * Changes current user password after verifying old password.
+     * Changes the current user password after verifying the old password.
      */
     @PutMapping("/password")
     public ResponseEntity<Map<String, Object>> changePassword(
@@ -128,19 +128,19 @@ public class AuthController {
         String newPassword = request.get("newPassword");
 
         if (oldPassword == null || newPassword == null) {
-            return ApiResponses.badRequest(1005, "请提供旧密码和新密码。");
+            return ApiResponses.badRequest(1005, "Please provide old and new password.");
         }
         if (!passwordEncoder.matches(oldPassword, user.getPasswordHash())) {
-            return ApiResponses.badRequest(1006, "旧密码错误。");
+            return ApiResponses.badRequest(1006, "Old password is incorrect.");
         }
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         userRepository.save(user);
-        return ResponseEntity.ok(ApiResponses.body(0, "密码修改成功。", null));
+        return ResponseEntity.ok(ApiResponses.body(0, "Password updated successfully.", null));
     }
 
     /**
-     * Builds token + user payload shared by register/login endpoints.
+     * Builds the shared auth payload used by register and login responses.
      */
     private Map<String, Object> buildAuthPayload(User user, String token) {
         Map<String, Object> data = new HashMap<>();
@@ -150,7 +150,7 @@ public class AuthController {
     }
 
     /**
-     * Builds normalized user profile payload.
+     * Builds a normalized current-user payload for frontend consumption.
      */
     private Map<String, Object> buildCurrentUserPayload(User user) {
         Map<String, Object> data = new HashMap<>();

@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Lightweight intent classifier for finance-domain questions.
+ * Keyword-based intent classifier for finance-domain questions.
  *
  * <p>It uses keyword scoring to route user requests to one of the supported
  * intent families (budget/category/transaction/cashflow) and returns a
@@ -17,7 +17,7 @@ public class FinanceIntentClassifier {
 
     private static final List<String> BUDGET_HINTS = List.of(
         "budget", "limit", "quota", "remaining", "usage",
-        "预算", "超支", "额度", "余量", "剩余", "执行率", "预算率"
+        "预算", "超支", "额度", "余额", "剩余", "执行率", "预算率"
     );
     private static final List<String> CATEGORY_HINTS = List.of(
         "category", "ratio", "top", "structure", "breakdown",
@@ -32,7 +32,7 @@ public class FinanceIntentClassifier {
         "收入", "支出", "收支", "结余", "现金流", "节流", "省钱", "开销", "消费"
     );
     private static final List<String> INCOME_HINTS = List.of(
-        "income", "salary", "bonus", "收入", "进账", "回款", "到账"
+        "income", "salary", "bonus", "收入", "薪资", "奖金", "进账", "回款", "到账"
     );
     private static final List<String> EXPENSE_HINTS = List.of(
         "expense", "cost", "spend", "支出", "消费", "开销", "花费", "花了"

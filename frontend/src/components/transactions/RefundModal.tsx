@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { type Transaction } from "@/lib/api";
 
+/**
+ * Refund modal for creating a refund transaction from one expense record.
+ */
 interface RefundModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -12,10 +15,14 @@ interface RefundModalProps {
   loading?: boolean;
 }
 
+/**
+ * Guides user through refund amount/date input and submits validated payload.
+ */
 export function RefundModal({ isOpen, onClose, onSubmit, transaction, loading }: RefundModalProps) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
 
+  // Sync modal defaults whenever selected transaction changes.
   useEffect(() => {
     if (!transaction) {
       return;
@@ -24,6 +31,7 @@ export function RefundModal({ isOpen, onClose, onSubmit, transaction, loading }:
     setDate(new Date().toISOString().split("T")[0]);
   }, [transaction]);
 
+  // Submit only when amount is a valid positive number.
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!amount || parseFloat(amount) <= 0) {

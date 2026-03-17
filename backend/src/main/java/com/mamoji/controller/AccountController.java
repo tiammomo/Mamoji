@@ -26,7 +26,7 @@ import java.util.Map;
 /**
  * Account management endpoints.
  *
- * <p>Provides CRUD operations for user accounts and aggregated balance summary.
+ * <p>Provides account CRUD operations and aggregated balance summary for the current user.
  */
 @RestController
 @RequestMapping("/api/v1/accounts")
@@ -34,12 +34,12 @@ import java.util.Map;
 public class AccountController {
 
     private static final int FORBIDDEN_CODE = 1003;
-    private static final String ACCOUNT_PERMISSION_MESSAGE = "无账户管理权限。";
+    private static final String ACCOUNT_PERMISSION_MESSAGE = "No permission to manage accounts.";
 
     private final AccountService accountService;
 
     /**
-     * Lists all accounts owned by current user.
+     * Lists all active accounts owned by the current user.
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getAccounts(@AuthenticationUser User user) {
@@ -55,7 +55,7 @@ public class AccountController {
     }
 
     /**
-     * Creates an account after permission validation.
+     * Creates a new account after permission validation.
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> createAccount(@RequestBody AccountDTO dto, @AuthenticationUser User user) {
@@ -81,7 +81,7 @@ public class AccountController {
     }
 
     /**
-     * Deletes one account after permission validation.
+     * Soft deletes one account after permission validation.
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteAccount(@PathVariable Long id, @AuthenticationUser User user) {
@@ -112,7 +112,7 @@ public class AccountController {
     }
 
     /**
-     * Checks whether caller can manage accounts.
+     * Checks whether the caller can manage account resources.
      */
     private boolean hasAccountPermission(User user) {
         return RoleConstants.isAdmin(user.getRole())
@@ -120,7 +120,7 @@ public class AccountController {
     }
 
     /**
-     * Checks whether both date parameters are present.
+     * Returns true when both date parameters are present.
      */
     private boolean hasDateRange(String startDate, String endDate) {
         return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();

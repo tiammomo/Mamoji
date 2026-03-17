@@ -1,66 +1,29 @@
-# API 设计
+# API 文档
 
-## 1. 概述
+## 1. 文档范围
 
-- 基础路径：`/api/v1`
-- 认证方式：JWT Token
-- 数据格式：JSON
-- 协议：RESTful
-- 版本控制：URL Path (`/api/v1/`)
+本文档覆盖当前 `backend/src/main/java/com/mamoji/controller` 中公开的主要 REST API，重点面向前端联调、测试编写和接口维护。
 
-### 1.1 API 设计原则
+## 2. 通用约定
 
-| 原则 | 说明 | 实践 |
-|------|------|------|
-| 资源导向 | 使用名词而非动词 | `/transactions` 而非 `/getTransactions` |
-| 层次化 | 嵌套资源表示关系 | `/families/{id}/members` |
-| HTTP 动词 | 正确使用 REST 方法 | GET/POST/PUT/DELETE |
-| 幂等性 | 多次请求结果一致 | PUT 替换，POST 创建 |
-| 分页 | 列表资源分页返回 | `?page=1&page_size=20` |
+### 2.1 Base URL
 
-### 1.2 请求头规范
+- 本地开发：`http://localhost:38080/api/v1`
+- 文档中各模块路径均基于 `/api/v1`
+
+### 2.2 鉴权
+
+- 除注册、登录等开放接口外，其余接口默认需要 JWT。
+- 请求头格式：
 
 ```http
-Content-Type: application/json
-Accept: application/json
 Authorization: Bearer <token>
-X-Request-ID: uuid-for-tracing
-X-Timezone: Asia/Shanghai
 ```
 
----
+### 2.3 统一响应结构
 
-## 1.6 MVP API 清单
+成功响应：
 
-> MVP 阶段只需实现以下核心接口：
-
-| 模块 | 接口 | 方法 | 说明 |
-|------|------|------|------|
-| 认证 | /auth/register | POST | 用户注册 |
-| 认证 | /auth/login | POST | 用户登录 |
-| 认证 | /auth/me | GET | 获取当前用户 |
-| 交易 | /transactions | GET | 获取交易列表 |
-| 交易 | /transactions | POST | 创建交易 |
-| 交易 | /transactions/{id} | PUT | 更新交易 |
-| 交易 | /transactions/{id} | DELETE | 删除交易 |
-| 交易 | /transactions/transfer | POST | 创建转账 |
-| 交易 | /transactions/transfers | GET | 获取转账记录 |
-| 交易 | /transactions/{id}/refund | POST | 退款 |
-| 交易 | /transactions/refundable | GET | 获取可退款的支出 |
-| 统计 | /stats/overview | GET | 收支概览 |
-| 统计 | /stats/trend | GET | 收支趋势 |
-| AI | /ai/chat | POST | AI 助手对话 |
-| AI | /ai/chat/legacy | POST | AI 助手对话（传统模式）|
-| 导出 | /export/transactions/excel | GET | 导出 Excel |
-| 导出 | /export/transactions/csv | GET | 导出 CSV |
-
-> V1.0 版本增加：家庭、账户、分类管理接口
-
----
-
-## 2. 通用响应
-
-### 2.1 成功响应
 ```json
 {
   "code": 0,
@@ -69,1059 +32,298 @@ X-Timezone: Asia/Shanghai
 }
 ```
 
-### 2.2 错误响应
+错误响应：
+
 ```json
 {
-  "code": 1,
-  "message": "错误信息",
+  "code": 1001,
+  "message": "业务错误信息",
   "data": null
 }
 ```
 
-### 2.3 分页响应
+### 2.4 常见字段约定
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 主键 ID |
+| `type` | 收支类型，通常 `1=收入`、`2=支出` |
+| `status` | 状态字段，通常 `1=启用/有效`、`0=停用/无效` |
+| `startDate/endDate` | 日期区间，格式通常为 `YYYY-MM-DD` |
+| `month` | 月份参数，兼容 `YYYY-MM` 与 `YYYY-MM-DD` |
+
+### 2.5 分页约定
+
+部分接口使用以下查询参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `page` | `1` | 页码，从 1 开始 |
+| `pageSize` | `20` | 每页条数 |
+
+## 3. 认证模块
+
+Base: `/auth`
+
+| 方法 | 路径 | 说明 | 备注 |
+| --- | --- | --- | --- |
+| `POST` | `/register` | 注册新用户 | 开放接口 |
+| `POST` | `/login` | 用户登录 | 开放接口 |
+| `GET` | `/me` | 获取当前用户信息 | 需要登录 |
+| `PUT` | `/profile` | 更新昵称等资料 | 需要登录 |
+| `PUT` | `/password` | 修改登录密码 | 需要登录 |
+
+典型登录请求：
+
 ```json
 {
-  "code": 0,
-  "data": {
-    "list": [],
-    "pagination": {
-      "page": 1,
-      "page_size": 20,
-      "total": 100,
-      "total_pages": 5
-    }
-  }
-}
-```
-
----
-
-## 3. 认证接口
-
-### 3.1 用户注册
-```
-POST /auth/register
-```
-
-**请求体：**
-```json
-{
-  "email": "user@example.com",
-  "password": "123456",
-  "nickname": "张三"
-}
-```
-
-**响应：**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "token": "eyJhbGciOiJIUzI1NiIs...",
-    "user": {
-      "id": 1,
-      "email": "user@example.com",
-      "nickname": "张三"
-    }
-  }
-}
-```
-
-### 3.2 用户登录
-```
-POST /auth/login
-```
-
-**请求体：**
-```json
-{
-  "email": "user@example.com",
+  "email": "demo@example.com",
   "password": "123456"
 }
 ```
 
-### 3.3 获取当前用户信息
-```
-GET /auth/me
-```
+## 4. 账户模块
 
-**响应：**
-```json
-{
-  "code": 0,
-  "data": {
-    "id": 1,
-    "email": "user@example.com",
-    "nickname": "张三",
-    "family_id": 1,
-    "role": 1,
-    "avatar_url": "https://..."
-  }
-}
-```
+Base: `/accounts`
 
-### 3.4 更新用户信息
-```
-PUT /auth/me
-```
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取账户列表 | 无 |
+| `GET` | `/{id}` | 获取账户详情 | `id` |
+| `POST` | `` | 创建账户 | `name`、`type`、`balance` 等 |
+| `PUT` | `/{id}` | 更新账户 | `id` + 部分可变字段 |
+| `DELETE` | `/{id}` | 删除账户 | `id` |
+| `GET` | `/summary` | 获取账户汇总 | 可选 `startDate`、`endDate` |
 
-**请求体：**
-```json
-{
-  "nickname": "新昵称",
-  "avatar_url": "https://..."
-}
-```
+说明：
 
----
+- 写接口需要账户管理权限或管理员角色。
+- `/summary` 当前主要返回总资产、总负债、净资产。
 
-## 4. 家庭接口
+## 5. 分类模块
 
-### 4.1 创建家庭
-```
-POST /families
-```
+Base: `/categories`
 
-**请求体：**
-```json
-{
-  "name": "我的家庭"
-}
-```
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取分类列表 | 可按类型筛选 |
+| `POST` | `` | 创建分类 | `name`、`type`、`icon` |
+| `PUT` | `/{id}` | 更新分类 | `id` |
+| `DELETE` | `/{id}` | 删除分类 | `id` |
 
-**响应：**
-```json
-{
-  "code": 0,
-  "data": {
-    "id": 1,
-    "name": "我的家庭",
-    "invite_code": "ABC12345",
-    "created_at": "2024-01-01T00:00:00Z"
-  }
-}
-```
+说明：
 
-### 4.2 加入家庭
-```
-POST /families/join
-```
+- 系统分类不允许删除。
+- 写接口需要分类管理权限或管理员角色。
 
-**请求体：**
-```json
-{
-  "invite_code": "ABC12345"
-}
-```
+## 6. 预算模块
 
-### 4.3 获取家庭信息
-```
-GET /families/:id
-```
+Base: `/budgets`
 
-### 4.4 获取家庭成员列表
-```
-GET /families/:id/members
-```
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取预算列表 | 可带时间范围 |
+| `GET` | `/active` | 获取当前生效预算 | 无 |
+| `GET` | `/{id}` | 获取预算详情 | `id` |
+| `POST` | `` | 创建预算 | `name`、`amount`、`startDate`、`endDate`、`categoryId` |
+| `PUT` | `/{id}` | 更新预算 | `id` |
+| `DELETE` | `/{id}` | 删除预算 | `id` |
 
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "id": 1,
-      "nickname": "张三",
-      "email": "zhangsan@example.com",
-      "role": 1,
-      "avatar_url": "https://..."
-    },
-    {
-      "id": 2,
-      "nickname": "李四",
-      "email": "lisi@example.com",
-      "role": 2,
-      "avatar_url": "https://..."
-    }
-  ]
-}
-```
+说明：
 
-### 4.5 移除家庭成员（仅管理员）
-```
-DELETE /families/:id/members/:userId
-```
+- 后端会校验时间区间、预算重叠与预算归属。
+- 响应通常会包含 `spent`、`remaining`、`usageRate`、`warningThreshold` 等派生信息。
 
-### 4.6 退出家庭
-```
-POST /families/leave
-```
+## 7. 交易模块
 
----
+Base: `/transactions`
 
-## 5. 账户接口
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取交易列表 | 支持日期、分类、账户、账本等筛选 |
+| `POST` | `` | 创建交易 | `type`、`amount`、`date`、`accountId`、`categoryId` |
+| `PUT` | `/{id}` | 更新交易 | `id` |
+| `DELETE` | `/{id}` | 删除交易 | `id` |
+| `GET` | `/refundable` | 获取可退款交易 | 可配合前端退款弹窗 |
+| `POST` | `/{id}/refund` | 对指定交易发起退款 | `id` + 退款信息 |
 
-> 注意：账户列表显示当前余额，不支持日期筛选（无历史记录功能）
-> 搜索功能在前端实现
+说明：
 
-### 5.1 获取账户列表
-```
-GET /accounts
-```
+- 交易写路径会触发预算同步和风控规则。
+- 风控结果可能体现在返回结构、警告信息或后续统计中。
 
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "id": 1,
-      "name": "现金",
-      "type": 1,
-      "balance": 5000.00,
-      "color": "#27AE60",
-      "is_default": 1
-    }
-  ]
-}
-```
+典型创建交易请求：
 
-### 5.2 创建账户
-```
-POST /accounts
-```
-
-**请求体：**
-```json
-{
-  "name": "信用卡",
-  "type": 2,
-  "balance": 10000,
-  "color": "#E74C3C"
-}
-```
-
-### 5.3 更新账户
-```
-PUT /accounts/:id
-```
-
-### 5.4 删除账户
-```
-DELETE /accounts/:id
-```
-
----
-
-## 6. 分类接口
-
-### 6.1 获取分类列表
-```
-GET /categories
-```
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": {
-    "income": [
-      {
-        "id": 1,
-        "name": "工资",
-        "icon": "work",
-        "color": "#27AE60"
-      }
-    ],
-    "expense": [
-      {
-        "id": 2,
-        "name": "餐饮",
-        "icon": "restaurant",
-        "color": "#FF6B6B"
-      }
-    ]
-  }
-}
-```
-
-### 6.2 创建分类
-```
-POST /categories
-```
-
-**请求体：**
-```json
-{
-  "name": "房租",
-  "type": 2,
-  "icon": "home",
-  "color": "#8E44AD"
-}
-```
-
-### 6.3 更新分类
-```
-PUT /categories/:id
-```
-
-### 6.4 删除分类
-```
-DELETE /categories/:id
-```
-
----
-
-## 7. 预算接口
-
-### 7.1 获取预算列表
-```
-GET /budgets
-```
-
-**查询参数：**
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| startDate | string | 开始日期 YYYY-MM-DD |
-| endDate | string | 结束日期 YYYY-MM-DD |
-
-> 搜索功能在前端实现
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "id": 1,
-      "categoryId": 2,
-      "categoryName": "餐饮",
-      "amount": 2000.00,
-      "month": "2026-03",
-      "spent": 1500.00,
-      "remaining": 500.00
-    }
-  ]
-}
-```
-
-### 7.2 获取当前有效预算
-```
-GET /budgets/active
-```
-
-### 7.3 创建预算
-```
-POST /budgets
-```
-
-**请求体：**
-```json
-{
-  "categoryId": 2,
-  "amount": 2000,
-  "month": "2026-03"
-}
-```
-
-### 7.4 更新预算
-```
-PUT /budgets/:id
-```
-
-### 7.5 删除预算
-```
-DELETE /budgets/:id
-```
-
----
-
-## 8. 交易接口
-
-### 7.1 获取交易列表
-```
-GET /transactions
-```
-
-**查询参数：**
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| page | int | 页码，默认1 |
-| pageSize | int | 每页数量，默认20 |
-| type | int | 类型：1-收入 2-支出 3-退款 4-转账 |
-| startDate | string | 开始日期 YYYY-MM-DD |
-| endDate | string | 结束日期 YYYY-MM-DD |
-
-> 注意：搜索功能在前端实现，会对返回的交易记录进行关键词匹配（匹配分类名、账户名、备注、日期、成员昵称）
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": {
-    "list": [
-      {
-        "id": 1,
-        "type": 2,
-        "amount": 50.00,
-        "category": {
-          "id": 2,
-          "name": "餐饮",
-          "icon": "restaurant"
-        },
-        "account": {
-          "id": 1,
-          "name": "现金"
-        },
-        "user": {
-          "id": 1,
-          "nickname": "张三"
-        },
-        "date": "2024-01-15",
-        "remark": "午餐",
-        "created_at": "2024-01-15T12:00:00Z"
-      }
-    ],
-    "total": 100,
-    "page": 1,
-    "page_size": 20
-  }
-}
-```
-
-### 7.2 创建交易
-```
-POST /transactions
-```
-
-**请求体：**
 ```json
 {
   "type": 2,
-  "amount": 50.00,
-  "category_id": 2,
-  "account_id": 1,
-  "date": "2024-01-15",
+  "amount": 48.63,
+  "date": "2026-03-18",
+  "accountId": 1,
+  "categoryId": 12,
+  "ledgerId": 1,
   "remark": "午餐"
 }
 ```
 
-### 7.3 更新交易
-```
-PUT /transactions/:id
-```
+## 8. 账本模块
 
-### 7.4 删除交易
-```
-DELETE /transactions/:id
-```
+Base: `/ledgers`
 
-### 7.5 创建转账
-```
-POST /transactions/transfer
-```
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取账本列表 | 无 |
+| `GET` | `/{id}` | 获取账本详情 | `id` |
+| `POST` | `` | 创建账本 | `name`、`description`、`currency` |
+| `PUT` | `/{id}` | 更新账本 | `id` |
+| `DELETE` | `/{id}` | 删除账本 | `id` |
+| `GET` | `/{id}/members` | 获取账本成员 | `id` |
+| `POST` | `/{id}/members` | 添加账本成员 | `userId`、`role` |
+| `DELETE` | `/{id}/members/{memberId}` | 移除成员 | `id`、`memberId` |
+| `GET` | `/default` | 获取默认账本 ID | 无 |
 
-**请求体：**
+说明：
+
+- 账本 owner 拥有最高权限。
+- 添加/移除成员时会校验请求人角色。
+
+## 9. 周期记账模块
+
+Base: `/recurring`
+
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取周期记账列表 | 可带 `page`、`pageSize` |
+| `GET` | `/{id}` | 获取周期记账详情 | `id` |
+| `POST` | `` | 创建周期记账项 | `name`、`type`、`amount`、`recurrenceType` |
+| `PUT` | `/{id}` | 更新周期记账项 | `id` |
+| `DELETE` | `/{id}` | 删除周期记账项 | `id` |
+| `POST` | `/{id}/toggle` | 启用或停用 | `id` |
+| `POST` | `/{id}/execute` | 手动执行一次 | `id` |
+
+说明：
+
+- 当前实现为内存存储，适合联调与界面验证，不适合作为生产持久化方案。
+- `execute` 会返回一份“生成交易”的结构化结果。
+
+## 10. 报表统计模块
+
+Base: `/stats`
+
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `/overview` | 月度总览 | 可选 `month` |
+| `GET` | `/trend` | 趋势图数据 | `startDate`、`endDate` |
+| `GET` | `/categories` | 分类统计 | `type`，可选时间范围 |
+| `GET` | `/annual` | 年度报表 | `year` |
+| `GET` | `/balance-sheet` | 资产负债摘要 | 无 |
+| `GET` | `/comparison` | 环比/同比对比 | 可选 `month` |
+| `GET` | `/insights` | 高级洞察 | 可选 `month` |
+
+说明：
+
+- `/insights` 重点返回：
+  - 最近支出
+  - 最近收入
+  - 最近大额支出
+  - 最近大额收入
+  - 预算告警
+  - 异常分类
+- 首页和高级报表均可复用这些聚合结果。
+
+## 11. AI 助手模块
+
+Base: `/ai`
+
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `POST` | `/chat` | 兼容旧版的普通对话接口 | `message`、`assistantType`、`mode` |
+| `POST` | `/chat/v2` | 结构化对话接口 | `message`、`assistantType`、`mode`、`sessionId` |
+| `POST` | `/chat/legacy` | 旧版兼容接口 | 不建议新客户端继续使用 |
+| `POST` | `/chat/stream` | SSE 流式输出 | 与 `chat/v2` 类似，返回事件流 |
+
+请求字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `message` | 用户问题 |
+| `assistantType` | 助手类型，例如财务助手、股票助手 |
+| `mode` | `auto` / `agent` / `llm` |
+| `sessionId` | 会话 ID，用于多轮对话 |
+
+`chat/v2` 结构化响应通常包含：
+
+| 字段 | 说明 |
+| --- | --- |
+| `answer` | 主回答文本 |
+| `warnings` | 风险提示、兜底说明 |
+| `sources` | 数据来源或工具来源 |
+| `actions` | 建议操作 |
+| `usage` | 模型或工具调用元信息 |
+| `modeUsed` | 实际使用模式 |
+| `traceId` | 追踪 ID |
+
+流式接口说明：
+
+- 返回 `text/event-stream`。
+- 通常包含 `chunk` 事件和最终 `done` 事件。
+
+典型问答请求：
+
 ```json
 {
-  "amount": 1000.00,
-  "fromAccountId": 1,
-  "toAccountId": 2,
-  "date": "2024-01-15",
-  "remark": "转账备注"
+  "message": "我的预算执行率如何？",
+  "assistantType": "finance",
+  "mode": "agent",
+  "sessionId": "demo-session-001"
 }
 ```
 
-**响应：**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "fromTransaction": { ... },
-    "toTransaction": { ... }
-  }
-}
-```
+## 12. 备份模块
 
-### 7.6 获取转账记录
-```
-GET /transactions/transfers
-```
+Base: `/backup`
 
-**查询参数：**
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| page | int | 页码，默认1 |
-| pageSize | int | 每页数量，默认20 |
-| accountId | long | 账户ID筛选（可选） |
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `/status` | 获取备份数据量摘要 | 无 |
+| `GET` | `/export` | 导出 JSON 备份 | 无 |
+| `POST` | `/import` | 上传备份文件做格式校验 | multipart `file` |
 
-### 7.7 获取可退款的支出
-```
-GET /transactions/refundable
-```
+说明：
 
-### 7.8 退款
-```
-POST /transactions/:id/refund
-```
+- 当前导入接口主要做文件存在性和格式校验。
+- 真正的数据库导入仍处于占位阶段。
 
-**请求体：**
-```json
-{
-  "amount": 50.00,
-  "date": "2024-01-16"
-}
-```
+## 13. 管理员模块
 
----
+Base: `/admin/users`
 
-## 9. 统计接口
+| 方法 | 路径 | 说明 | 关键参数 |
+| --- | --- | --- | --- |
+| `GET` | `` | 获取用户列表 | 管理员权限 |
+| `POST` | `` | 创建用户 | `email`、`password`、`role`、`permissions` |
+| `PUT` | `/{id}` | 更新用户 | `id` |
+| `DELETE` | `/{id}` | 删除用户 | `id` |
 
-### 9.1 收支概览
-```
-GET /stats/overview
-```
+说明：
 
-**查询参数：**
-| 参数 | 说明 |
-|------|------|
-| month | 月份 YYYY-MM 或 YYYY-MM-DD，默认当月 |
+- 管理员不可删除自己。
+- 创建用户时会校验邮箱是否已注册。
 
-**响应：**
-```json
-{
-  "code": 0,
-  "data": {
-    "income": 15000.00,
-    "expense": 8000.00,
-    "balance": 7000.00,
-    "income_count": 5,
-    "expense_count": 20
-  }
-}
-```
-
-### 9.2 收支趋势
-```
-GET /stats/trend
-```
-
-**查询参数：**
-| 参数 | 说明 |
-|------|------|
-| startDate | 开始日期 YYYY-MM 或 YYYY-MM-DD |
-| endDate | 结束日期 YYYY-MM 或 YYYY-MM-DD |
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "month": "2024-01",
-      "income": 15000.00,
-      "expense": 8000.00
-    },
-    {
-      "month": "2024-02",
-      "income": 12000.00,
-      "expense": 9000.00
-    }
-  ]
-}
-```
-
-### 9.3 分类统计
-```
-GET /stats/categories
-```
-
-**查询参数：**
-| 参数 | 说明 |
-|------|------|
-| type | 类型：1-收入 2-支出 (必填) |
-| startDate | 开始日期 YYYY-MM-DD |
-| endDate | 结束日期 YYYY-MM-DD |
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "category_id": 2,
-      "category_name": "餐饮",
-      "category_icon": "restaurant",
-      "amount": 2000.00,
-      "percentage": 25.0
-    },
-    {
-      "category_id": 3,
-      "category_name": "交通",
-      "category_icon": "directions_car",
-      "amount": 800.00,
-      "percentage": 10.0
-    }
-  ]
-}
-```
-
-### 9.4 成员统计
-```
-GET /stats/members
-```
-
-**查询参数：**
-| 参数 | 说明 |
-|------|------|
-| month | 月份 YYYY-MM，默认当月 |
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "user_id": 1,
-      "user_nickname": "张三",
-      "income": 10000.00,
-      "expense": 5000.00
-    },
-    {
-      "user_id": 2,
-      "user_nickname": "李四",
-      "income": 5000.00,
-      "expense": 3000.00
-    }
-  ]
-}
-```
-
-### 9.5 账户余额
-```
-GET /stats/accounts
-```
-
-**响应：**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "account_id": 1,
-      "account_name": "现金",
-      "balance": 5000.00
-    },
-    {
-      "account_id": 2,
-      "account_name": "银行卡",
-      "balance": 20000.00
-    }
-  ]
-}
-```
-
----
-
-## 10. 数据导出接口
-
-### 10.1 导出 Excel
-```
-GET /export/transactions/excel
-```
-
-**查询参数：**
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| ledgerId | long | 否 | 账本ID |
-| startDate | datetime | 是 | 开始时间 ISO 8601 |
-| endDate | datetime | 是 | 结束时间 ISO 8601 |
-
-**响应：** 返回 Excel 文件下载
-
-### 10.2 导出 CSV
-```
-GET /export/transactions/csv
-```
-
-**查询参数：** 同 Excel
-
-**响应：** 返回 CSV 文件下载
-
----
-
-## 11. 通知配置
-
-### 11.1 邮件通知配置
-
-通过环境变量配置：
-
-| 环境变量 | 说明 | 默认值 |
-|----------|------|--------|
-| MAIL_ENABLED | 是否启用邮件 | false |
-| MAIL_HOST | SMTP 服务器地址 | smtp.example.com |
-| MAIL_PORT | SMTP 端口 | 587 |
-| MAIL_USERNAME | 用户名 | - |
-| MAIL_PASSWORD | 密码 | - |
-| MAIL_FROM | 发件人地址 | noreply@mamoji.com |
-
-### 11.2 定时任务
-
-| 任务 | Cron 表达式 | 说明 |
-|------|-------------|------|
-| 每日收支汇总 | 0 0 8 * * ? | 每日早上8点发送 |
-| 预算预警检查 | 0 0 * * * ? | 每小时检查 |
-
----
-
-## 12. 错误码 (原有)
+## 14. 常见错误码
 
 | 错误码 | 说明 |
-|--------|------|
-| 0 | 成功 |
-| 1 | 通用错误 |
-| 1001 | 参数错误 |
-| 1002 | 认证失败 |
-| 1003 | 权限不足 |
-| 2001 | 用户不存在 |
-| 2002 | 邮箱已被注册 |
-| 3001 | 家庭不存在 |
-| 3002 | 邀请码无效 |
-| 3003 | 已是家庭成员 |
-| 4001 | 账户不存在 |
-| 4002 | 分类不存在 |
-| 4003 | 交易不存在 |
-
----
-
-## 13. 安全性设计
-
-> 以下为生产环境建议功能，MVP 阶段可先跳过或简化实现。
-
-### 10.1 JWT Token 设计
-
-```java
-// Token 结构
-{
-  "header": {
-    "alg": "RS256",
-    "typ": "JWT"
-  },
-  "payload": {
-    "sub": "user_id",
-    "family_id": 1,
-    "role": 1,
-    "iat": 1704067200,
-    "exp": 1704153600
-  },
-  "signature": "..."
-}
-
-// Token 配置
-spring:
-  jwt:
-    secret: ${JWT_SECRET}
-    expiration: 86400          # 24 小时（秒）
-    refresh-expiration: 604800 # 7 天
-```
-
-### 10.2 认证过滤器
-
-```java
-@Component
-public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
-    @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain) {
-        String token = extractToken(request);
-
-        if (token != null && jwtService.validateToken(token)) {
-            UserDetails userDetails = jwtService.getUserDetails(token);
-            UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(
-                    userDetails, null, userDetails.getAuthorities());
-            SecurityContextHolder.getContext().setAuthentication(auth);
-        }
-
-        filterChain.doFilter(request, response);
-    }
-
-    private String extractToken(HttpServletRequest request) {
-        String bearerToken = request.getHeader("Authorization");
-        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7);
-        }
-        return null;
-    }
-}
-```
-
-### 10.3 权限控制
-
-```java
-// 基于角色的权限控制
-@RestController
-@RequestMapping("/api/v1/families")
-public class FamilyController {
-
-    @GetMapping("/{id}/members")
-    @PreAuthorize("@familyService.isMember(#familyId, authentication)")
-    public ResponseEntity<List<MemberDTO>> getMembers(@PathVariable Long familyId) {
-        // 仅家庭成员可访问
-    }
-
-    @DeleteMapping("/{id}/members/{userId}")
-    @PreAuthorize("@familyService.isAdmin(#familyId, authentication)")
-    public ResponseEntity<Void> removeMember(@PathVariable Long familyId,
-                                               @PathVariable Long userId) {
-        // 仅管理员可删除成员
-    }
-}
-```
-
----
-
-## 14. 限流设计
-
-### 11.1 接口限流
-
-```java
-@Configuration
-public class RateLimitConfig {
-
-    @Bean
-    public FilterRegistrationBean<RateLimitFilter> rateLimitFilter() {
-        FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new RateLimitFilter());
-        registration.addUrlPatterns("/api/*");
-        registration.setOrder(1);
-        return registration;
-    }
-}
-
-@Component
-public class RateLimitFilter implements Filter {
-
-    private final Map<String, RateLimiter> limiters = new ConcurrentHashMap<>();
-
-    @Override
-    public void doFilter(HttpServletRequest request, HttpServletResponse response,
-                         FilterChain chain) throws IOException, ServletException {
-        String clientId = getClientId(request);
-        RateLimiter limiter = limiters.computeIfAbsent(clientId,
-            k -> RateLimiter.create(100.0)); // 100 requests/second
-
-        if (limiter.tryAcquire()) {
-            chain.doFilter(request, response);
-        } else {
-            response.setStatus(429);
-            response.getWriter().write("{\"code\":429,\"message\":\"Too Many Requests\"}");
-        }
-    }
-}
-```
-
-### 11.2 限流策略
-
-| 接口类型 | 限流策略 | 限制 |
-|----------|----------|------|
-| 登录/注册 | IP 限流 | 5次/分钟 |
-| 交易创建 | 用户限流 | 30次/分钟 |
-| 查询接口 | 用户限流 | 100次/分钟 |
-| 统计接口 | 用户限流 | 10次/分钟 |
-
----
-
-## 15. API 版本控制
-
-### 12.1 版本策略
-
-```
-/api/v1/transactions    # 当前版本
-/api/v2/transactions    # v2 版本（平滑迁移）
-```
-
-### 12.2 版本迁移策略
-
-```java
-// 版本判断与兼容
-@RestController
-@RequestMapping("/api/v{version}/transactions")
-public class TransactionControllerV1 {
-    // v1 逻辑
-}
-
-@RestController
-@RequestMapping("/api/v{version}/transactions")
-public class TransactionControllerV2 {
-    // v2 逻辑，新增字段兼容处理
-}
-```
-
----
-
-## 16. 日志与监控
-
-### 13.1 请求日志
-
-```java
-@Slf4j
-@Component
-public class RequestLoggingFilter extends OncePerRequestFilter {
-
-    @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain) {
-        long startTime = System.currentTimeMillis();
-
-        try {
-            filterChain.doFilter(request, response);
-        } finally {
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("method={} uri={} status={} duration={}ms",
-                request.getMethod(),
-                request.getRequestURI(),
-                response.getStatus(),
-                duration);
-        }
-    }
-}
-```
-
-### 13.2 审计日志
-
-```java
-// 记录敏感操作
-@Audited
-public class TransactionService {
-
-    @Transactional
-    public Transaction createTransaction(CreateTransactionDTO dto) {
-        Transaction transaction = transactionRepository.save(dtoToEntity(dto));
-
-        // 审计日志
-        auditLogService.log(AuditType.TRANSACTION_CREATE,
-            dto.getUserId(),
-            dto.getFamilyId(),
-            "创建交易: " + dto.getAmount());
-
-        return transaction;
-    }
-}
-```
-
----
-
-## 17. 错误处理
-
-### 14.1 全局异常处理
-
-```java
-@RestControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
-        return ResponseEntity
-            .status(e.getHttpStatus())
-            .body(ApiResponse.error(e.getCode(), e.getMessage()));
-    }
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Void>> handleValidationException(
-            MethodArgumentNotValidException e) {
-        String message = e.getBindingResult().getFieldErrors().stream()
-            .map(FieldError::getDefaultMessage)
-            .collect(Collectors.joining(", "));
-        return ResponseEntity
-            .badRequest()
-            .body(ApiResponse.error(1001, message));
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleException(Exception e) {
-        log.error("系统异常", e);
-        return ResponseEntity
-            .status(HttpStatus.INTERNAL_SERVER_ERROR)
-            .body(ApiResponse.error(1, "系统错误，请稍后重试"));
-    }
-}
-```
-
-### 14.2 错误码扩展
-
-| 错误码 | 说明 | HTTP 状态码 |
-|--------|------|-------------|
-| 1001 | 参数错误 | 400 |
-| 1002 | 认证失败 | 401 |
-| 1003 | 权限不足 | 403 |
-| 1004 | 资源不存在 | 404 |
-| 1005 | 请求方法不支持 | 405 |
-
----
-
-## 18. AI 助手接口
-
-### 15.1 AI 对话
-
-```
-POST /api/v1/ai/chat
-```
-
-**请求头：**
-```http
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
-**请求参数：**
-```json
-{
-  "message": "我这个月支出情况怎么样？",
-  "assistantType": "finance"  // 或 "stock"
-}
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| message | string | 是 | 用户消息 |
-| assistantType | string | 否 | 助手类型：finance（财务助手）、stock（股票助手），默认 finance |
-
-**响应：**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "reply": "根据您本月的支出数据分析，..."
-  }
-}
-```
-
-### 15.2 助手类型
-
-| 类型 | 功能 |
-|------|------|
-| finance | 财务助手：收支分析、预算查询、分类统计、交易记录 |
-| stock | 股票助手：大盘指数、股票行情、股票搜索 |
-
-### 15.3 可用工具（ReAct 模式）
-
-**财务助手工具：**
-- `query_income_expense` - 查询收支概况
-- `query_budget` - 查询预算执行情况
-- `query_transactions` - 查询交易记录
-- `query_category_stats` - 查询分类支出统计
-
-**股票助手工具：**
-- `query_market_index` - 查询大盘指数
-- `query_stock_quote` - 查询股票行情
-- `search_stock` - 搜索股票
-- `get_stock_news` - 获取股票新闻
-| 429 | 请求过于频繁 | 429 |
-| 500 | 系统错误 | 500 |
+| --- | --- |
+| `0` | 成功 |
+| `1001` | 通用业务错误 |
+| `1003` | 权限不足 |
+| `1004` | 非法操作，例如删除自己 |
+| `2002` | 资源冲突，例如邮箱已注册 |
+| `4001` | 备份文件为空 |
+| `4002` | 备份文件格式不支持 |
+
+## 15. 联调建议
+
+1. 新页面优先使用 `chat/v2` 和结构化统计接口，减少前端拼装成本。
+2. 涉及预算和交易写入时，同步验证列表页、首页摘要和 AI 助手结果是否一致。
+3. 若接口字段有变更，请同时更新本文件、对应 Controller 注释和前端 `api.types.ts`。

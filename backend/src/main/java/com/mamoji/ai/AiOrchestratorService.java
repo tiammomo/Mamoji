@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Orchestrates chat mode routing between AGENT and LLM pipelines.
+ * Coordinates chat mode routing between AGENT and LLM pipelines.
  *
  * <p>The service centralizes mode normalization, AUTO strategy, metric emission,
  * and fallback behavior when agent execution is unavailable.

@@ -24,6 +24,8 @@ import java.util.Map;
 
 /**
  * Admin-only user management endpoints.
+ *
+ * <p>Supports listing, creating, updating and deleting user accounts from the admin console.
  */
 @RestController
 @RequestMapping("/api/v1/admin/users")
@@ -36,12 +38,12 @@ public class AdminUserController {
     private final PasswordEncoder passwordEncoder;
 
     /**
-     * Lists all users for admin console.
+     * Lists all users for the admin console.
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getUsers(@AuthenticationUser User currentUser) {
         if (!RoleConstants.isAdmin(currentUser.getRole())) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无权限访问。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "Access denied.");
         }
 
         List<Map<String, Object>> userList = userRepository.findAll()
@@ -52,7 +54,7 @@ public class AdminUserController {
     }
 
     /**
-     * Creates one user account with role/permission assignment.
+     * Creates one user account with role and permission assignment.
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> createUser(
@@ -60,12 +62,12 @@ public class AdminUserController {
         @RequestBody Map<String, String> request
     ) {
         if (!RoleConstants.isAdmin(currentUser.getRole())) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无权限访问。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "Access denied.");
         }
 
         String email = request.get("email");
         if (userRepository.existsByEmail(email)) {
-            return ApiResponses.badRequest(2002, "邮箱已被注册。");
+            return ApiResponses.badRequest(2002, "Email is already registered.");
         }
 
         Integer role = request.get("role") != null ? Integer.parseInt(request.get("role")) : RoleConstants.USER;
@@ -86,7 +88,7 @@ public class AdminUserController {
     }
 
     /**
-     * Updates user profile/role/permissions/password.
+     * Updates user profile, role, permissions or password.
      */
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(
@@ -95,11 +97,11 @@ public class AdminUserController {
         @RequestBody Map<String, Object> request
     ) {
         if (!RoleConstants.isAdmin(currentUser.getRole())) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无权限访问。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "Access denied.");
         }
 
         User user = userRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("用户不存在。"));
+            .orElseThrow(() -> new ResourceNotFoundException("User not found."));
 
         if (request.get("nickname") != null) {
             user.setNickname(request.get("nickname").toString());
@@ -118,25 +120,25 @@ public class AdminUserController {
     }
 
     /**
-     * Deletes one user account (except self-delete).
+     * Deletes one user account, except self-delete.
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(@AuthenticationUser User currentUser, @PathVariable Long id) {
         if (!RoleConstants.isAdmin(currentUser.getRole())) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无权限访问。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, "Access denied.");
         }
         if (currentUser.getId().equals(id)) {
-            return ApiResponses.badRequest(1004, "不能删除自己的账号。");
+            return ApiResponses.badRequest(1004, "You cannot delete your own account.");
         }
 
         User user = userRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("用户不存在。"));
+            .orElseThrow(() -> new ResourceNotFoundException("User not found."));
         userRepository.delete(user);
         return ApiResponses.ok(null);
     }
 
     /**
-     * Maps user entity to admin response payload.
+     * Maps user entity to the admin response payload.
      */
     private Map<String, Object> toUserMap(User user) {
         int role = user.getRole() != null ? user.getRole() : RoleConstants.USER;

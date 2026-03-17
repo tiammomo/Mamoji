@@ -1,5 +1,8 @@
 ﻿"use client";
 
+/**
+ * Stateless transaction filter bar used by transaction list page.
+ */
 interface TransactionFilterProps {
   searchKeyword: string;
   setSearchKeyword: (value: string) => void;
@@ -11,6 +14,9 @@ interface TransactionFilterProps {
   setShowDateFilter: (value: boolean) => void;
 }
 
+/**
+ * Provides keyword, type and date-range filtering controls.
+ */
 export function TransactionFilter({
   searchKeyword,
   setSearchKeyword,

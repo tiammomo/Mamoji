@@ -26,8 +26,7 @@ import java.util.Map;
 /**
  * Category management endpoints.
  *
- * <p>Returns categories grouped by income/expense and supports user-defined
- * category CRUD with permission checks.
+ * <p>Returns categories grouped by income/expense and supports custom category CRUD with permission checks.
  */
 @RestController
 @RequestMapping("/api/v1/categories")
@@ -35,6 +34,7 @@ import java.util.Map;
 public class CategoryController {
 
     private static final int FORBIDDEN_CODE = 1003;
+    private static final String CATEGORY_PERMISSION_MESSAGE = "No permission to manage categories.";
 
     private final CategoryRepository categoryRepository;
 
@@ -59,7 +59,7 @@ public class CategoryController {
         @RequestBody Map<String, Object> request
     ) {
         if (!hasCategoryPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, CATEGORY_PERMISSION_MESSAGE);
         }
 
         Category category = Category.builder()
@@ -83,11 +83,11 @@ public class CategoryController {
         @RequestBody Map<String, Object> request
     ) {
         if (!hasCategoryPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, CATEGORY_PERMISSION_MESSAGE);
         }
 
         Category category = categoryRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("分类不存在。"));
+            .orElseThrow(() -> new ResourceNotFoundException("Category not found."));
         if (request.get("name") != null) {
             category.setName(request.get("name").toString());
         }
@@ -106,13 +106,13 @@ public class CategoryController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteCategory(@AuthenticationUser User user, @PathVariable Long id) {
         if (!hasCategoryPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, "无分类管理权限。");
+            return ApiResponses.forbidden(FORBIDDEN_CODE, CATEGORY_PERMISSION_MESSAGE);
         }
 
         Category category = categoryRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("分类不存在。"));
+            .orElseThrow(() -> new ResourceNotFoundException("Category not found."));
         if (category.getIsSystem() != null && category.getIsSystem() == 1) {
-            return ApiResponses.badRequest(1005, "系统分类不能删除。");
+            return ApiResponses.badRequest(1005, "System categories cannot be deleted.");
         }
 
         categoryRepository.delete(category);
@@ -120,7 +120,7 @@ public class CategoryController {
     }
 
     /**
-     * Checks whether caller can manage categories.
+     * Checks whether the caller can manage categories.
      */
     private boolean hasCategoryPermission(User user) {
         return RoleConstants.isAdmin(user.getRole())
@@ -128,7 +128,7 @@ public class CategoryController {
     }
 
     /**
-     * Converts category entity to API payload map.
+     * Converts category entity to the API payload map.
      */
     private Map<String, Object> toMap(Category category) {
         Map<String, Object> map = new HashMap<>();

@@ -3,13 +3,20 @@
 import { ArrowDownCircle, ArrowUpCircle, Pencil, RefreshCcw } from "lucide-react";
 import { type Transaction } from "@/lib/api";
 
+/**
+ * One row in the transaction list, with edit/refund actions.
+ */
 interface TransactionItemProps {
   tx: Transaction;
   onEdit: (tx: Transaction) => void;
   onRefund?: (tx: Transaction) => void;
 }
 
+/**
+ * Renders transaction type icon, amount and quick actions.
+ */
 export function TransactionItem({ tx, onEdit, onRefund }: TransactionItemProps) {
+  // Maps transaction type to color tokens and amount prefix.
   function getTypeColor(type: number) {
     switch (type) {
       case 1:

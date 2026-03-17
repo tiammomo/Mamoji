@@ -17,24 +17,21 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Budget domain service.
+ *
+ * <p>Responsible for budget CRUD, spent snapshot recalculation, overlap validation,
+ * expense-to-budget matching, and derived risk fields exposed to the frontend.
+ */
 @Service
 @RequiredArgsConstructor
-/**
- * 预算服务层。
- *
- * <p>核心职责：
- * 1) 提供预算的增删改查；
- * 2) 维护预算 spent 与状态（active/completed/overrun）一致性；
- * 3) 提供交易到预算的匹配能力；
- * 4) 输出预算风险信息（usageRate、riskLevel、riskMessage）。
- */
 public class BudgetService {
 
     private final BudgetRepository budgetRepository;
     private final TransactionRepository transactionRepository;
 
     /**
-     * 查询用户当前激活预算并转换为 DTO。
+     * Returns all active budgets owned by the user.
      */
     public List<BudgetDTO> getBudgets(Long userId) {
         return budgetRepository.findByUserIdAndStatus(userId, BudgetStatus.ACTIVE)
@@ -44,7 +41,7 @@ public class BudgetService {
     }
 
     /**
-     * 按时间范围筛选预算，返回与区间有重叠的激活预算。
+     * Returns active budgets whose period overlaps the requested date range.
      */
     public List<BudgetDTO> getBudgetsByDateRange(Long userId, LocalDate startDate, LocalDate endDate) {
         return budgetRepository.findByUserIdAndStatus(userId, BudgetStatus.ACTIVE)
@@ -55,7 +52,7 @@ public class BudgetService {
     }
 
     /**
-     * 查询当前日期下生效的预算列表。
+     * Returns budgets that are effective on the current date.
      */
     public List<BudgetDTO> getActiveBudgets(Long userId) {
         return budgetRepository.findActiveBudgets(userId, LocalDate.now())
@@ -65,20 +62,16 @@ public class BudgetService {
     }
 
     /**
-     * 查询单个预算详情并校验归属权限。
+     * Loads one budget after ownership validation.
      */
     public BudgetDTO getBudget(Long id, Long userId) {
         return toDto(findOwnedBudget(id, userId));
     }
 
-    @Transactional
     /**
-     * 创建预算。
-     *
-     * <p>关键校验：
-     * 1) 名称、金额、预算周期、预警阈值合法；
-     * 2) 同分类同时间段预算不可重叠。
+     * Creates a new budget after validating name, amount, period, warning threshold and overlap rules.
      */
+    @Transactional
     public BudgetDTO createBudget(BudgetDTO dto, Long userId) {
         validateBudgetName(dto.getName());
         validateBudgetAmount(dto.getAmount());
@@ -102,10 +95,10 @@ public class BudgetService {
         return toDto(budgetRepository.save(budget));
     }
 
-    @Transactional
     /**
-     * 局部更新预算并重算 spent 与状态。
+     * Partially updates a budget and recalculates spent/status to keep snapshots consistent.
      */
+    @Transactional
     public BudgetDTO updateBudget(Long id, BudgetDTO dto, Long userId) {
         Budget budget = findOwnedBudget(id, userId);
 
@@ -153,20 +146,20 @@ public class BudgetService {
         return toDto(budgetRepository.save(budget));
     }
 
-    @Transactional
     /**
-     * 软删除预算（置为 INACTIVE）。
+     * Soft deletes a budget by marking it inactive.
      */
+    @Transactional
     public void deleteBudget(Long id, Long userId) {
         Budget budget = findOwnedBudget(id, userId);
         budget.setStatus(BudgetStatus.INACTIVE);
         budgetRepository.save(budget);
     }
 
-    @Transactional
     /**
-     * 增量更新预算 spent，适用于已明确增量金额的场景。
+     * Incrementally adjusts spent when the delta amount is already known.
      */
+    @Transactional
     public void updateBudgetSpent(Long budgetId, BigDecimal amount) {
         Budget budget = budgetRepository.findById(budgetId)
             .orElseThrow(() -> new ResourceNotFoundException("Budget not found."));
@@ -175,10 +168,10 @@ public class BudgetService {
         budgetRepository.save(budget);
     }
 
-    @Transactional
     /**
-     * 基于交易快照全量重算预算 spent，修正可能的累积误差。
+     * Rebuilds one budget snapshot from transaction facts to correct any accumulated drift.
      */
+    @Transactional
     public void syncBudgetSnapshot(Long budgetId, Long userId) {
         Budget budget = findOwnedBudget(budgetId, userId);
         budget.setSpent(calculateBudgetSpent(budget));
@@ -187,9 +180,9 @@ public class BudgetService {
     }
 
     /**
-     * 匹配支出交易可关联预算：
-     * 1) 优先匹配分类预算；
-     * 2) 再匹配不分分类的兜底预算。
+     * Matches an expense to an active budget.
+     *
+     * <p>Preference order: category budget first, then uncategorized fallback budget.
      */
     public Optional<Budget> matchActiveBudgetForExpense(Long userId, Long categoryId, LocalDate date) {
         if (categoryId != null) {
@@ -201,21 +194,33 @@ public class BudgetService {
         return budgetRepository.findActiveBudgetWithoutCategory(userId, date);
     }
 
+    /**
+     * Loads a budget and validates that it belongs to the current user.
+     */
     private Budget findOwnedBudget(Long id, Long userId) {
         return budgetRepository.findByIdAndUserId(id, userId)
             .orElseThrow(() -> new ResourceNotFoundException("Budget not found."));
     }
 
+    /**
+     * Returns true when budget period and requested period overlap.
+     */
     private boolean isOverlapping(Budget budget, LocalDate startDate, LocalDate endDate) {
         return !(budget.getEndDate().isBefore(startDate) || budget.getStartDate().isAfter(endDate));
     }
 
+    /**
+     * Ensures amount is present and non-negative.
+     */
     private void validateBudgetAmount(BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) < 0) {
             throw new BadRequestException("Budget amount cannot be negative.");
         }
     }
 
+    /**
+     * Ensures name is present and within length limit.
+     */
     private void validateBudgetName(String name) {
         if (name == null || name.trim().isEmpty()) {
             throw new BadRequestException("Budget name cannot be empty.");
@@ -225,6 +230,9 @@ public class BudgetService {
         }
     }
 
+    /**
+     * Ensures period boundaries are present and ordered.
+     */
     private void validateBudgetPeriod(LocalDate startDate, LocalDate endDate) {
         if (startDate == null || endDate == null) {
             throw new BadRequestException("Budget period is required.");
@@ -234,6 +242,9 @@ public class BudgetService {
         }
     }
 
+    /**
+     * Ensures warning threshold stays in 0-100 range.
+     */
     private void validateWarningThreshold(Integer warningThreshold) {
         if (warningThreshold < 0 || warningThreshold > 100) {
             throw new BadRequestException("Warning threshold must be between 0 and 100.");
@@ -241,7 +252,7 @@ public class BudgetService {
     }
 
     /**
-     * 校验预算时间段是否与现有激活预算冲突。
+     * Prevents multiple active budgets from covering the same category and period.
      */
     private void validateNoOverlap(Long userId, Long categoryId, LocalDate startDate, LocalDate endDate, Long excludeBudgetId) {
         long overlapCount = budgetRepository.countOverlappingActiveBudgets(
@@ -257,7 +268,9 @@ public class BudgetService {
     }
 
     /**
-     * 以“有效支出”（支出-已退款）计算预算 spent。
+     * Calculates effective expense for the budget window.
+     *
+     * <p>Effective expense means expense minus refunded amount, so budget usage is not overstated.
      */
     private BigDecimal calculateBudgetSpent(Budget budget) {
         if (budget.getCategoryId() == null) {
@@ -275,12 +288,15 @@ public class BudgetService {
         ));
     }
 
+    /**
+     * Converts nullable amount to zero.
+     */
     private BigDecimal defaultAmount(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
     }
 
     /**
-     * 按当前日期与执行进度更新预算状态。
+     * Derives budget status from current date and spent amount.
      */
     private void updateBudgetStatus(Budget budget) {
         LocalDate today = LocalDate.now();
@@ -301,7 +317,7 @@ public class BudgetService {
     }
 
     /**
-     * 转换为 BudgetDTO，并补充风险衍生字段。
+     * Maps entity to DTO and appends derived usage/risk fields for frontend display.
      */
     private BudgetDTO toDto(Budget budget) {
         BudgetDTO dto = new BudgetDTO();
@@ -338,6 +354,9 @@ public class BudgetService {
         return dto;
     }
 
+    /**
+     * Converts usage rate to risk level used by UI badges and AI summaries.
+     */
     private String resolveRiskLevel(BigDecimal usageRate, int warningThreshold) {
         if (usageRate.compareTo(BigDecimal.valueOf(100)) >= 0) {
             return "critical";
@@ -351,6 +370,9 @@ public class BudgetService {
         return "low";
     }
 
+    /**
+     * Human-readable message paired with risk level.
+     */
     private String resolveRiskMessage(String riskLevel) {
         return switch (riskLevel) {
             case "critical" -> "Budget exceeded. Immediate control is recommended.";

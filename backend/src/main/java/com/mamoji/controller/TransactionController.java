@@ -42,18 +42,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * Transaction management and transaction-risk controller.
+ *
+ * <p>This controller handles transaction CRUD, refund flow, input validation,
+ * ownership checks, budget snapshot refresh, and structured risk assessment
+ * returned to the frontend after write operations.
+ */
 @RestController
 @RequestMapping("/api/v1/transactions")
 @RequiredArgsConstructor
-/**
- * 交易管理与交易风控入口。
- *
- * <p>主要职责：
- * 1) 处理交易增删改查与退款流程；
- * 2) 执行交易输入校验与权限校验；
- * 3) 联动预算快照同步；
- * 4) 输出结构化风险评估结果，支持前端展示与风控审计。
- */
 public class TransactionController {
     private static final BigDecimal MAX_TRANSACTION_AMOUNT = new BigDecimal("10000000");
     private static final BigDecimal LARGE_EXPENSE_THRESHOLD = new BigDecimal("3000");
@@ -77,9 +75,9 @@ public class TransactionController {
     private final BudgetService budgetService;
 
     /**
-     * 分页查询交易列表，支持类型与日期区间过滤。
+     * Returns a paginated transaction list with optional type and date-range filters.
      *
-     * <p>风控保护：限制分页大小、校验类型枚举、限制查询时间跨度。
+     * <p>Guardrails include page-size limits, supported-type validation and query-range validation.
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> getTransactions(
@@ -108,9 +106,9 @@ public class TransactionController {
     }
 
     /**
-     * 创建交易并返回交易快照及风险评估。
+     * Creates one transaction and returns the saved snapshot plus risk assessment.
      *
-     * <p>支出交易会尝试自动匹配生效预算，并在落库后触发预算快照刷新。
+     * <p>Expense transactions try to bind to an active budget first, then refresh affected budget snapshots.
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> createTransaction(
@@ -149,9 +147,9 @@ public class TransactionController {
     }
 
     /**
-     * 更新交易。
+     * Updates one transaction.
      *
-     * <p>退款记录（type=3）不允许编辑，防止破坏审计链条。
+     * <p>Refund transactions are immutable so the refund audit chain cannot be broken by later edits.
      */
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> updateTransaction(
@@ -210,9 +208,9 @@ public class TransactionController {
     }
 
     /**
-     * 删除交易。
+     * Deletes one transaction after audit-safety checks.
      *
-     * <p>对于退款交易或已产生退款历史的支出交易执行删除拦截。
+     * <p>Refund records and expenses that already have refund history cannot be deleted.
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteTransaction(
@@ -227,7 +225,7 @@ public class TransactionController {
     }
 
     /**
-     * 查询可退款的支出交易列表。
+     * Returns paginated expense transactions that may still be refunded.
      */
     @GetMapping("/refundable")
     public ResponseEntity<Map<String, Object>> getRefundableTransactions(
@@ -248,10 +246,10 @@ public class TransactionController {
     }
 
     /**
-     * 执行退款：
-     * 1) 校验退款金额与可退额度；
-     * 2) 校验退款日期晚于或等于原交易日期；
-     * 3) 创建退款交易并刷新预算快照。
+     * Creates a refund transaction.
+     *
+     * <p>Validates refund amount, refundable remainder and refund date,
+     * then updates the original expense and refreshes related budget snapshots.
      */
     @PostMapping("/{id}/refund")
     public ResponseEntity<Map<String, Object>> refundTransaction(
@@ -307,7 +305,7 @@ public class TransactionController {
     }
 
     /**
-     * 查询入口封装，按参数组合分派到不同 repository 查询。
+     * Dispatches transaction list queries to the appropriate repository method by filter combination.
      */
     private Page<Transaction> queryTransactions(
         Long userId,
@@ -342,10 +340,9 @@ public class TransactionController {
     }
 
     /**
-     * 日期区间校验：
-     * 1) start/end 必须成对出现；
-     * 2) start 不得晚于 end；
-     * 3) 限制最大跨度，避免超长区间慢查询。
+     * Validates date-range filter rules.
+     *
+     * <p>Both ends must exist together, start cannot be after end, and the range is capped.
      */
     private void validateQueryDateRange(String startDate, String endDate) {
         if ((startDate == null || startDate.isBlank()) && (endDate == null || endDate.isBlank())) {
@@ -366,7 +363,7 @@ public class TransactionController {
     }
 
     /**
-     * 查询并校验交易归属，保证只能操作本人交易。
+     * Loads one transaction and validates that it belongs to the current user.
      */
     private Transaction findOwnedTransaction(Long id, Long userId) {
         Transaction transaction = transactionRepository.findById(id)
@@ -378,9 +375,9 @@ public class TransactionController {
     }
 
     /**
-     * 删除审计保护：
-     * 1) 退款交易不可删除；
-     * 2) 已发生退款链路的原支出不可删除。
+     * Enforces delete-time audit protection.
+     *
+     * <p>Refund rows are immutable, and any expense with refund history is also protected from deletion.
      */
     private void validateDeleteAllowed(Transaction transaction) {
         if (transaction.getType() != null && transaction.getType() == 3) {
@@ -395,10 +392,16 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Converts nullable amount to zero.
+     */
     private BigDecimal defaultAmount(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
     }
 
+    /**
+     * Adds refundable metadata used by the refund list page.
+     */
     private Map<String, Object> toRefundableMap(Transaction transaction) {
         Map<String, Object> map = toMap(transaction);
         BigDecimal refundedAmount = transaction.getRefundedAmount() != null ? transaction.getRefundedAmount() : BigDecimal.ZERO;
@@ -409,6 +412,9 @@ public class TransactionController {
         return map;
     }
 
+    /**
+     * Parses comma-separated transaction types and validates each item.
+     */
     private List<Integer> parseTypes(String types) {
         if (types == null || types.isBlank()) {
             return null;
@@ -429,6 +435,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Maps transaction entity to API response shape consumed by the frontend.
+     */
     private Map<String, Object> toMap(Transaction transaction) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", transaction.getId());
@@ -469,6 +478,9 @@ public class TransactionController {
         return map;
     }
 
+    /**
+     * Parses required transaction type and optionally allows refund type.
+     */
     private int parseRequiredType(Object rawValue, boolean allowRefundType) {
         if (rawValue == null) {
             throw new BadRequestException("type is required.");
@@ -487,6 +499,9 @@ public class TransactionController {
         return type;
     }
 
+    /**
+     * Checks whether type value is supported in the current context.
+     */
     private boolean isSupportedType(Integer type, boolean allowRefundType) {
         if (type == null) {
             return false;
@@ -496,6 +511,9 @@ public class TransactionController {
             : (type == 1 || type == 2);
     }
 
+    /**
+     * Parses and validates amount precision and upper bound.
+     */
     private BigDecimal parseRequiredAmount(Object rawValue) {
         if (rawValue == null) {
             throw new BadRequestException("amount is required.");
@@ -520,6 +538,9 @@ public class TransactionController {
         return amount.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Parses a required positive long value from request payload.
+     */
     private Long parseRequiredLong(Object rawValue, String fieldName) {
         if (rawValue == null) {
             throw new BadRequestException(fieldName + " is required.");
@@ -540,6 +561,9 @@ public class TransactionController {
         return value;
     }
 
+    /**
+     * Parses a required ISO local date.
+     */
     private LocalDate parseRequiredDate(Object rawValue, String fieldName) {
         if (rawValue == null) {
             throw new BadRequestException(fieldName + " is required.");
@@ -554,6 +578,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Rejects future dates and dates that are too far in the past.
+     */
     private void validateTransactionDate(LocalDate date) {
         if (date == null) {
             throw new BadRequestException("date is required.");
@@ -567,6 +594,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Enforces maximum remark length.
+     */
     private void validateRemarkLength(Object remarkValue) {
         if (remarkValue == null) {
             return;
@@ -577,6 +607,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Verifies category ownership and category type match transaction type.
+     */
     private void validateCategoryForType(Long categoryId, int type, User user) {
         Category category = categoryRepository.findById(categoryId)
             .orElseThrow(() -> new BadRequestException("categoryId is invalid."));
@@ -589,6 +622,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Creates a minimal transaction snapshot before mutation so budget refresh can compare old/new state.
+     */
     private Transaction snapshot(Transaction source) {
         if (source == null) {
             return null;
@@ -605,6 +641,9 @@ public class TransactionController {
             .build();
     }
 
+    /**
+     * Re-syncs all budgets that may have been affected by the write operation.
+     */
     private void refreshAffectedBudgets(Long userId, Transaction before, Transaction after) {
         Set<Long> budgetIds = new HashSet<>();
         collectBudgetIdsForSync(userId, before, budgetIds);
@@ -616,6 +655,9 @@ public class TransactionController {
         });
     }
 
+    /**
+     * Collects direct and inferred budget ids that need snapshot recalculation.
+     */
     private void collectBudgetIdsForSync(Long userId, Transaction transaction, Set<Long> budgetIds) {
         if (transaction == null || transaction.getType() == null || transaction.getType() != 2 || transaction.getDate() == null) {
             return;
@@ -629,9 +671,10 @@ public class TransactionController {
     }
 
     /**
-     * 构建支出交易风险画像。
+     * Builds a structured risk portrait for expense transactions.
      *
-     * <p>覆盖维度：单笔大额、收支失衡、高频支出、疑似重复、分类突增、预算风险。
+     * <p>Covered dimensions include large single expense, income-expense imbalance,
+     * high-frequency spending, suspected duplicates, category spikes and budget pressure.
      */
     private Map<String, Object> buildTransactionRisk(Long userId, Transaction transaction) {
         Map<String, Object> risk = new HashMap<>();
@@ -780,9 +823,10 @@ public class TransactionController {
     }
 
     /**
-     * 分类支出突增判断：
-     * 1) 有历史基线时要求“倍数+增量”双条件；
-     * 2) 无基线时按新分类大额阈值判断。
+     * Detects category-expense spikes.
+     *
+     * <p>With history, both ratio and delta must exceed threshold.
+     * Without history, the new-category amount threshold is used instead.
      */
     private boolean isCategoryExpenseSpike(BigDecimal currentExpense, BigDecimal previousExpense) {
         if (currentExpense.compareTo(BigDecimal.ZERO) <= 0) {
@@ -798,7 +842,7 @@ public class TransactionController {
     }
 
     /**
-     * 风险标签去重写入，避免重复标签污染展示。
+     * Adds one risk flag only once to avoid duplicate UI markers.
      */
     private void addRiskFlag(List<String> flags, String flag) {
         if (!flags.contains(flag)) {
@@ -807,7 +851,7 @@ public class TransactionController {
     }
 
     /**
-     * 分页参数防护，控制最大页大小。
+     * Validates pagination boundaries.
      */
     private void validatePaging(int page, int pageSize) {
         if (page <= 0) {
@@ -818,6 +862,9 @@ public class TransactionController {
         }
     }
 
+    /**
+     * Escalates risk level only when the candidate is more severe than the current one.
+     */
     private String escalateRiskLevel(String current, String candidate) {
         if (riskRank(candidate) > riskRank(current)) {
             return candidate;
@@ -825,6 +872,9 @@ public class TransactionController {
         return current;
     }
 
+    /**
+     * Maps risk levels to comparable ranks.
+     */
     private int riskRank(String level) {
         return switch (level) {
             case "critical" -> 4;
@@ -834,6 +884,9 @@ public class TransactionController {
         };
     }
 
+    /**
+     * Human-readable summary paired with computed risk level.
+     */
     private String resolveRiskMessage(String level) {
         return switch (level) {
             case "critical" -> "High risk detected: immediate review is recommended.";

@@ -1,163 +1,143 @@
-# Mamoji - 家庭记账工具
+# Mamoji
 
-一款面向家庭的 Web 端记账工具，支持多成员独立账号使用，提供基础记账功能和统计报表分析。
+Mamoji 是一个面向家庭记账、预算管理、收支分析和 AI 辅助问答的全栈项目。
 
-## 功能特性
+- 后端：Spring Boot 3.5 + Java 21
+- 前端：Next.js 16 + React 19
+- 默认本地端口：
+- 前端 `33000`
+- 后端 `38080`
+- MySQL `33306`
+- Redis `36379`
 
-- **用户认证** - 注册/登录，JWT 令牌认证
-- **记账功能** - 收入/支出记录，支持退款
-- **账户管理** - 现金、银行卡、信用卡、数字钱包、投资账户（显示当前余额）
-- **分类管理** - 系统预置分类，支持自定义
-- **预算管理** - 月度预算设置，支出预警
-- **统计报表** - 收支趋势、分类统计
-- **搜索功能** - 支持按关键词搜索交易、账户、预算
-- **日期筛选** - 支持自定义日期范围筛选（交易、报表、预算）
-- **用户管理** - 管理员可管理普通用户权限
-- **AI 助手** - 智能财务分析助手、股票行情查询（ReAct 模式）
+## 目录结构
 
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端 | Spring Boot 3.5.x + Java 21 |
-| 前端 | Next.js 16.x + React 18 |
-| UI | Tailwind CSS 3.4 |
-| 图表 | Recharts |
-| 数据库 | H2 (开发) / MySQL (生产) |
-| 认证 | JWT |
-| AI | MiniMax API (abab6.5s-chat) + ReAct Agent |
-
-## 项目结构
-
-```
+```text
 mamoji/
-├── backend/              # Spring Boot 后端
-│   ├── src/main/java/   # Java 源码
-│   └── pom.xml          # Maven 配置
-├── frontend/            # Next.js 前端
-│   ├── src/app/         # App Router 页面
-│   ├── src/components/  # React 组件
-│   └── package.json     # NPM 配置
-├── docs/                # 项目文档
-│   ├── PRD.md           # 产品需求
-│   ├── DB.md            # 数据库设计
-│   └── API.md           # API 文档
-├── tools/               # 工具脚本
-└── .claude/             # Claude Code 配置
+├─ backend/                    # Spring Boot 后端
+├─ frontend/                   # Next.js 前端
+├─ docs/                       # 项目文档
+├─ docker/                     # Docker 初始化资源
+├─ tools/                      # 备份、文档、测试等辅助脚本
+├─ docker-compose.yml
+├─ docker-compose.prod.yml
+└─ start.sh
 ```
 
 ## 快速开始
 
 ### 环境要求
 
-- Java 21+
-- Node.js 18+
-- Maven 3.8+
+- JDK 21
+- Maven 3.9+
+- Node.js 20+
+- npm
+- Docker Desktop
 
-### 1. 克隆项目
+### 启动基础依赖
 
 ```bash
-git clone https://github.com/tiammomo/mamoji.git
-cd mamoji
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml up -d mysql redis
 ```
 
-### 2. 启动后端
+启动后默认映射：
+
+- MySQL：`localhost:33306`
+- Redis：`localhost:36379`
+
+### 启动后端
 
 ```bash
 cd backend
-
-# 方式一：使用 Maven
 mvn spring-boot:run
-
-# 方式二：构建后运行
-mvn package
-java -jar target/mamoji-0.0.1-SNAPSHOT.jar
 ```
 
-后端启动后访问 http://localhost:38080
+默认开发配置已对齐为：
 
-### 3. 启动前端
+- MySQL：`jdbc:mysql://localhost:33306/mamoji`
+- Redis：`localhost:36379`
+
+常用地址：
+
+- API 根路径：[http://localhost:38080/api/v1](http://localhost:38080/api/v1)
+- 健康检查：[http://localhost:38080/actuator/health](http://localhost:38080/actuator/health)
+
+### 启动前端
 
 ```bash
+cp .env.front.example frontend/.env.local
 cd frontend
 npm install
 npm run dev
 ```
 
-前端启动后访问 http://localhost:33000
+前端地址：
 
-### 4. 测试账号
+- [http://localhost:33000](http://localhost:33000)
 
-| 邮箱 | 密码 |
-|------|------|
-| test@mamoji.com | 123456 |
+最小环境变量示例：
 
-## 环境配置
-
-### 前端配置
-
-编辑 `mamoji.config.json` 后运行：
-
-```bash
-node tools/sync-config.js
+```env
+NEXT_PUBLIC_API_BASE=http://localhost:38080/api/v1
 ```
 
-### 后端配置
-
-复制环境变量模板：
+## Docker 一体化启动
 
 ```bash
-cp .env.back.example backend/.env
+cp docker-compose.env.example .env
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml up -d --build
 ```
 
-常用配置项：
-- `SERVER_PORT` - 服务端口 (默认 38080)
-- `JWT_SECRET` - JWT 密钥 (生产环境必须修改)
-- `SPRING_DATASOURCE_URL` - 数据库连接
+默认服务地址：
 
-## API 文档
+- 前端：`http://localhost:33000`
+- 后端：`http://localhost:38080`
+- MySQL：`localhost:33306`
+- Redis：`localhost:36379`
 
-详见 [docs/API.md](docs/API.md)
+## 常用环境变量
 
-主要接口：
-- `/api/v1/auth/*` - 认证相关
-- `/api/v1/transactions` - 交易记录
-- `/api/v1/accounts` - 账户管理
-- `/api/v1/budgets` - 预算管理
-- `/api/v1/categories` - 分类管理
-- `/api/v1/stats` - 统计报表
-- `/api/v1/ai/chat` - AI 助手对话
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `MYSQL_PORT` | `33306` | 本地 MySQL 映射端口 |
+| `REDIS_PORT` | `36379` | 本地 Redis 映射端口 |
+| `BACKEND_PORT` | `38080` | 后端服务端口 |
+| `FRONTEND_PORT` | `33000` | 前端服务端口 |
+| `JWT_SECRET` | 示例值 | JWT 密钥，生产环境必须替换 |
+| `ANTHROPIC_AUTH_TOKEN` | 空 | AI 模型服务令牌 |
 
-## 开发指南
+## 默认测试账号
 
-### 添加测试数据
+开发环境会通过初始化逻辑注入测试数据，详见：
 
-通过 API 添加：
-```bash
-# 登录获取 token
-TOKEN=$(curl -s -X POST http://localhost:38080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@mamoji.com","password":"123456"}' | jq -r '.data.token')
+- [DataInitializer.java](/D:/projects/shuai/mamoji/backend/src/main/java/com/mamoji/config/DataInitializer.java)
 
-# 添加账户
-curl -X POST http://localhost:38080/api/v1/accounts \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"测试账户","type":"cash","balance":1000}'
+## 文档索引
 
-# 添加交易
-curl -X POST http://localhost:38080/api/v1/transactions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"type":1,"amount":5000,"categoryId":1,"accountId":1,"date":"2026-03-01","note":"工资"}'
+- [接口文档](/D:/projects/shuai/mamoji/docs/API.md)
+- [架构说明](/D:/projects/shuai/mamoji/docs/ARCHITECTURE.md)
+- [数据库说明](/D:/projects/shuai/mamoji/docs/DB.md)
+- [部署指南](/D:/projects/shuai/mamoji/docs/DEPLOY.md)
+- [产品说明](/D:/projects/shuai/mamoji/docs/PRD.md)
+- [风控规则](/D:/projects/shuai/mamoji/docs/RISK_CONTROL.md)
+- [AI 助手说明](/D:/projects/shuai/mamoji/docs/AI_ASSISTANT.md)
+- [注释规范](/D:/projects/shuai/mamoji/docs/COMMENTING.md)
+
+## 编码说明
+
+仓库中的文本文件统一使用 UTF-8。
+
+如果 Windows 终端出现乱码，请先切换编码：
+
+```powershell
+chcp 65001
 ```
 
-## 文档
+或执行仓库脚本：
 
-- [产品需求文档](docs/PRD.md)
-- [数据库设计](docs/DB.md)
-- [API 文档](docs/API.md)
-- [部署指南](docs/DEPLOY.md)
+```powershell
+. .\tools\enable-utf8.ps1
+```
 
 ## License
 

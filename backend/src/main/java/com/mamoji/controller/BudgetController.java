@@ -25,7 +25,7 @@ import java.util.Map;
 /**
  * Budget management endpoints.
  *
- * <p>Supports budget CRUD and active/range queries for current user.
+ * <p>Supports budget CRUD plus active/range queries for the current user.
  */
 @RestController
 @RequestMapping("/api/v1/budgets")
@@ -33,7 +33,7 @@ import java.util.Map;
 public class BudgetController {
 
     private static final int FORBIDDEN_CODE = 1003;
-    private static final String BUDGET_PERMISSION_MESSAGE = "无预算管理权限。";
+    private static final String BUDGET_PERMISSION_MESSAGE = "No permission to manage budgets.";
 
     private final BudgetService budgetService;
 
@@ -54,7 +54,7 @@ public class BudgetController {
     }
 
     /**
-     * Lists budgets active for today's date.
+     * Lists budgets active on the current date.
      */
     @GetMapping("/active")
     public ResponseEntity<Map<String, Object>> getActiveBudgets(@AuthenticationUser User user) {
@@ -108,7 +108,7 @@ public class BudgetController {
     }
 
     /**
-     * Checks whether caller can manage budgets.
+     * Checks whether the caller can manage budget resources.
      */
     private boolean hasBudgetPermission(User user) {
         return RoleConstants.isAdmin(user.getRole())
@@ -116,7 +116,7 @@ public class BudgetController {
     }
 
     /**
-     * Checks whether both date parameters are present.
+     * Returns true when both date parameters are present.
      */
     private boolean hasDateRange(String startDate, String endDate) {
         return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();

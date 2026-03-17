@@ -26,7 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Backup/export/import endpoints for user financial data.
+ * Backup export and import endpoints for user financial data.
  */
 @RestController
 @RequestMapping("/api/v1/backup")
@@ -56,7 +56,7 @@ public class BackupController {
     }
 
     /**
-     * Exports user data as JSON attachment.
+     * Exports user data as a JSON attachment.
      */
     @GetMapping("/export")
     public ResponseEntity<byte[]> export(@AuthenticationUser User user) throws Exception {
@@ -83,7 +83,7 @@ public class BackupController {
     }
 
     /**
-     * Validates backup file format and returns import placeholder response.
+     * Validates backup file format and returns an import placeholder response.
      */
     @PostMapping(path = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> importBackup(
@@ -91,22 +91,22 @@ public class BackupController {
         @RequestParam("file") MultipartFile file
     ) {
         if (file == null || file.isEmpty()) {
-            return ResponseEntity.ok(wrapError(4001, "文件为空"));
+            return ResponseEntity.ok(wrapError(4001, "File is empty."));
         }
         String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase();
         if (!(fileName.endsWith(".json") || fileName.endsWith(".zip"))) {
-            return ResponseEntity.ok(wrapError(4002, "仅支持 .json 或 .zip 文件"));
+            return ResponseEntity.ok(wrapError(4002, "Only .json or .zip files are supported."));
         }
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("importedCount", 0);
         payload.put("userId", user.getId());
-        payload.put("note", "当前版本仅做文件校验，导入写库功能待实现");
+        payload.put("note", "Current version only validates the file. Database import is not implemented yet.");
         return ResponseEntity.ok(wrapSuccess(payload));
     }
 
     /**
-     * Builds standard success envelope.
+     * Builds the standard success envelope.
      */
     private Map<String, Object> wrapSuccess(Object data) {
         Map<String, Object> result = new HashMap<>();
@@ -117,7 +117,7 @@ public class BackupController {
     }
 
     /**
-     * Builds standard error envelope.
+     * Builds the standard error envelope.
      */
     private Map<String, Object> wrapError(int code, String message) {
         Map<String, Object> result = new HashMap<>();

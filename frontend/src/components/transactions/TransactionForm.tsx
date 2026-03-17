@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { ArrowDownCircle, ArrowUpCircle, X } from "lucide-react";
 import { type Account, type Category, type Transaction } from "@/lib/api";
 
+/**
+ * Modal form props for creating or editing a transaction.
+ */
 interface TransactionFormProps {
   isOpen: boolean;
   onClose: () => void;
@@ -23,6 +26,9 @@ export interface TransactionFormData {
   remark: string;
 }
 
+/**
+ * Transaction editing dialog with type/category/account/date controls.
+ */
 export function TransactionForm({
   isOpen,
   onClose,
@@ -41,6 +47,7 @@ export function TransactionForm({
     remark: "",
   });
 
+  // Rehydrate form state from editing record, otherwise reset to defaults.
   useEffect(() => {
     if (editingTransaction) {
       setFormData({
@@ -64,6 +71,7 @@ export function TransactionForm({
     });
   }, [editingTransaction, isOpen, categories, accounts]);
 
+  // Prevent invalid submissions when required fields are missing.
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!formData.categoryId || !formData.amount || !formData.accountId) {

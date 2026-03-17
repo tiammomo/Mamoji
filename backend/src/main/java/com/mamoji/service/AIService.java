@@ -1,7 +1,7 @@
 package com.mamoji.service;
 
-import com.mamoji.ai.intent.FinanceIntentClassifier;
 import com.mamoji.ai.AiGateway;
+import com.mamoji.ai.intent.FinanceIntentClassifier;
 import com.mamoji.dto.AIChatResponse;
 import com.mamoji.entity.Budget;
 import com.mamoji.entity.Category;
@@ -27,14 +27,15 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Shared AI chat service for finance and stock assistants.
+ *
+ * <p>This class is responsible for: contextual data preparation, prompt assembly,
+ * gateway invocation, and robust fallback replies when model output is missing or malformed.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-/**
- * AI 对话服务（财务/股票双助手）。
- *
- * <p>该服务负责上下文构建、提示词组装、模型调用和回复规范化。
- */
 public class AIService {
 
     private static final String OUTPUT_STYLE = """
@@ -50,14 +51,15 @@ public class AIService {
     private static final String FINANCE_SYSTEM_PROMPT = """
         你是专业的家庭财务助手。
         目标：帮助用户理解收支结构、预算健康度，并给出可执行建议。
-        回答时优先使用用户数据；若数据不足，明确写“暂无数据”并说明下一步。
+        回答时优先使用用户真实数据；若数据不足，明确写“暂时缺少数据”并说明下一步。
         """ + OUTPUT_STYLE;
 
     private static final String STOCK_SYSTEM_PROMPT = """
         你是专业的股票信息助手。
-        目标：基于可得行情/新闻信息做风险可控的分析，避免绝对化表述。
+        目标：基于可得行情信息给出稳健分析，避免绝对化表述。
         每次回答都必须包含风险提示：“投资有风险，决策需谨慎”。
         """ + OUTPUT_STYLE;
+
     private static final Pattern STOCK_SNAPSHOT_PATTERN = Pattern.compile(
         "^([^:]+):\\s*current=([\\d.\\-]+)\\s+open=([\\d.\\-]+)\\s+close=([\\d.\\-]+)\\s+high=([\\d.\\-]+)\\s+low=([\\d.\\-]+)\\s+volume=([\\d.\\-]+).*$"
     );
@@ -70,9 +72,9 @@ public class AIService {
     private final FinanceIntentClassifier financeIntentClassifier;
 
     /**
-     * AI 问答主入口。
+     * Main chat entry.
      *
-     * <p>流程：识别助手类型 -> 构建上下文与提示词 -> 调用网关 -> 输出规范化。
+     * <p>Flow: assistant type normalization -> context/prompt build -> model call -> reply normalization.
      */
     public AIChatResponse chat(Long userId, String message, String assistantType) {
         String safeMessage = message == null ? "" : message.trim();
@@ -105,7 +107,7 @@ public class AIService {
     }
 
     /**
-     * 获取股票行情文本快照，作为股票问答上下文。
+     * Fetches stock snapshot text used as stock-answer context.
      */
     private String fetchStockData(String message) {
         StringBuilder stockData = new StringBuilder();
@@ -130,6 +132,9 @@ public class AIService {
         return stockData.toString();
     }
 
+    /**
+     * Extracts six-digit stock codes from user text and maps to exchange-prefixed symbols.
+     */
     private List<String> extractStockCodes(String message) {
         List<String> codes = new ArrayList<>();
         Matcher matcher = Pattern.compile("\\b(\\d{6})\\b").matcher(message);
@@ -144,6 +149,9 @@ public class AIService {
         return codes;
     }
 
+    /**
+     * Queries Sina quote endpoint and returns a compact snapshot line.
+     */
     private String fetchStockQuote(String stockCode) {
         String response = webClientBuilder
             .baseUrl("https://hq.sinajs.cn/list=" + stockCode)
@@ -171,7 +179,7 @@ public class AIService {
     }
 
     /**
-     * 构建财务问答上下文（当月收支、分类支出、最近交易、预算信息）。
+     * Builds finance context including month summary, category expense, recent transactions and active budgets.
      */
     private Map<String, Object> buildFinanceContext(Long userId) {
         Map<String, Object> context = new HashMap<>();
@@ -260,14 +268,18 @@ public class AIService {
         prompt.append("用户问题：").append(message).append("\n\n");
         prompt.append("=== 财务上下文数据 ===\n");
         prompt.append("统计周期：").append(context.get("period")).append("\n");
-        prompt.append(String.format("本期收入：%.2f%n", context.get("totalIncome")));
-        prompt.append(String.format("本期支出：%.2f%n", context.get("totalExpense")));
+        prompt.append("本期收入：").append(formatMoney(toDecimal(context.get("totalIncome")))).append("\n");
+        prompt.append("本期支出：").append(formatMoney(toDecimal(context.get("totalExpense")))).append("\n");
 
         List<Map<String, Object>> categoryExpenses = (List<Map<String, Object>>) context.get("categoryExpenses");
         if (categoryExpenses != null && !categoryExpenses.isEmpty()) {
             prompt.append("分类支出：\n");
             for (Map<String, Object> category : categoryExpenses) {
-                prompt.append(String.format("- %s：%.2f%n", category.get("categoryName"), category.get("amount")));
+                prompt.append("- ")
+                    .append(category.get("categoryName"))
+                    .append("：")
+                    .append(formatMoney(toDecimal(category.get("amount"))))
+                    .append("\n");
             }
         }
 
@@ -275,15 +287,13 @@ public class AIService {
         if (activeBudgets != null && !activeBudgets.isEmpty()) {
             prompt.append("进行中的预算：\n");
             for (Map<String, Object> budget : activeBudgets) {
-                prompt.append(
-                    String.format(
-                        "- %s：%.2f（%s ~ %s）%n",
-                        budget.get("categoryName"),
-                        budget.get("amount"),
-                        budget.get("startDate"),
-                        budget.get("endDate")
-                    )
-                );
+                prompt.append(String.format(
+                    "- %s：%s（%s ~ %s）%n",
+                    budget.get("categoryName"),
+                    formatMoney(toDecimal(budget.get("amount"))),
+                    budget.get("startDate"),
+                    budget.get("endDate")
+                ));
             }
         }
 
@@ -305,7 +315,7 @@ public class AIService {
         if (stockData != null && !stockData.isBlank()) {
             prompt.append("=== 市场数据 ===\n").append(stockData);
         } else {
-            prompt.append("暂无实时行情数据。\n");
+            prompt.append("暂时没有实时行情数据。\n");
         }
         prompt.append("\n请基于数据给出简明分析，并明确风险提示。");
         return prompt.toString();
@@ -338,7 +348,8 @@ public class AIService {
             || lower.startsWith("ai service returned empty")
             || lower.startsWith("ai service error:")
             || "sorry, ai service is temporarily unavailable. please try again later.".equals(lower)
-            || "抱歉，ai 服务暂时不可用，请稍后再试。".equals(lower);
+            || "抱歉，ai 服务暂时不可用，请稍后再试。".equals(lower)
+            || "抱歉，AI 服务暂时不可用，请稍后再试。".equals(text);
     }
 
     private boolean shouldUseFinanceTemplate(String text) {
@@ -353,9 +364,9 @@ public class AIService {
     private String buildFinanceFallbackAnswer(String question, Map<String, Object> context) {
         if (context == null || context.isEmpty()) {
             return """
-                先给你一个基于当前数据的基础建议。
+                先给你一个基于当前状态的稳健建议。
                 - 关键数据：暂时无法获取完整统计
-                - 建议：稍后重试，或先查看“统计报表”页确认收支趋势
+                - 建议：稍后重试，或先查看“统计报表”页面确认收支趋势
                 """;
         }
 
@@ -378,7 +389,9 @@ public class AIService {
         Map<String, Object> topExpenseCategory = categoryExpenses.stream()
             .max(Comparator.comparing(item -> toDecimal(item.get("amount"))))
             .orElse(null);
-        String topCategoryName = topExpenseCategory == null ? "暂无" : String.valueOf(topExpenseCategory.getOrDefault("categoryName", "未分类"));
+        String topCategoryName = topExpenseCategory == null
+            ? "暂无"
+            : String.valueOf(topExpenseCategory.getOrDefault("categoryName", "未分类"));
         BigDecimal topCategoryAmount = topExpenseCategory == null ? BigDecimal.ZERO : toDecimal(topExpenseCategory.get("amount"));
         int budgetCount = activeBudgets.size();
 
@@ -426,8 +439,12 @@ public class AIService {
             .append(formatMoney(totalExpense)).append(" / ")
             .append(formatMoney(balance)).append("\n");
         builder.append("- 预算快照：").append(budgetPreview).append("\n");
-        builder.append("- 风险点：最大支出分类为 ").append(topCategoryName).append("（").append(formatMoney(topCategoryAmount)).append("）\n");
-        builder.append("- 建议：先控 ").append(topCategoryName).append(" 这类可变支出，并按周复盘预算偏差。");
+        builder.append("- 风险点：最大支出分类为 ")
+            .append(topCategoryName)
+            .append("（")
+            .append(formatMoney(topCategoryAmount))
+            .append("）\n");
+        builder.append("- 建议：优先控制 ").append(topCategoryName).append(" 这类可变支出，并按周复盘预算偏差。");
         return builder.toString();
     }
 
@@ -441,6 +458,7 @@ public class AIService {
             .sorted((left, right) -> toDecimal(right.get("amount")).compareTo(toDecimal(left.get("amount"))))
             .limit(3)
             .toList();
+
         String topSummary = topCategories.isEmpty()
             ? "暂无分类支出数据"
             : topCategories.stream()
@@ -486,7 +504,7 @@ public class AIService {
         if (maxAmount.compareTo(BigDecimal.ZERO) > 0) {
             builder.append("- 观察重点：最近记录中最大金额约 ").append(formatMoney(maxAmount)).append("\n");
         }
-        builder.append("- 建议：先标记“高金额 + 高频出现”的类别，再决定是否下调该类预算。");
+        builder.append("- 建议：先标记“高金额 + 高频出现”的分类，再决定是否下调该类预算。");
         return builder.toString();
     }
 
@@ -511,7 +529,7 @@ public class AIService {
             .append(formatMoney(totalExpense)).append(" / ")
             .append(formatMoney(balance)).append("\n");
         builder.append("- 支出收入比：").append(ratio).append("%\n");
-        builder.append("- 建议：保持收入稳定同时优先优化 ").append(topCategoryName).append(" 这类可变支出。");
+        builder.append("- 建议：保持收入稳定，同时优先优化 ").append(topCategoryName).append(" 这类可变支出。");
         return builder.toString();
     }
 
@@ -532,7 +550,11 @@ public class AIService {
         builder.append("- 本期收入：").append(formatMoney(totalIncome)).append("\n");
         builder.append("- 本期支出：").append(formatMoney(totalExpense)).append("\n");
         builder.append("- 本期结余：").append(formatMoney(balance)).append("\n");
-        builder.append("- 最大支出分类：").append(topCategoryName).append("（").append(formatMoney(topCategoryAmount)).append("）\n");
+        builder.append("- 最大支出分类：")
+            .append(topCategoryName)
+            .append("（")
+            .append(formatMoney(topCategoryAmount))
+            .append("）\n");
         builder.append("- 进行中预算数：").append(budgetCount).append("\n");
         builder.append("- 建议：本周优先控制 ").append(topCategoryName).append(" 与可变消费，保持每周复盘。");
         return builder.toString();

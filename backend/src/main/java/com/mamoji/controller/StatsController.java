@@ -11,24 +11,30 @@ import com.mamoji.security.AuthenticationUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
-@RestController
-@RequestMapping("/api/v1/stats")
-@RequiredArgsConstructor
 /**
  * 统计报表控制器。
  *
  * <p>负责将交易、账户、预算等数据聚合为前端报表所需结构，
  * 覆盖总览、趋势、分类、年度、对比和洞察等多个视角。
  */
+@RestController
+@RequestMapping("/api/v1/stats")
+@RequiredArgsConstructor
 public class StatsController {
 
     private final TransactionRepository transactionRepository;
@@ -48,7 +54,7 @@ public class StatsController {
         if (month == null || month.isEmpty()) {
             yearMonth = YearMonth.now();
         } else {
-            // Handle both YYYY-MM and YYYY-MM-DD formats
+            // 兼容 YYYY-MM 与 YYYY-MM-DD 两种输入格式。
             try {
                 yearMonth = YearMonth.parse(month);
             } catch (Exception e) {
@@ -91,11 +97,11 @@ public class StatsController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
 
-        // Default to current month if not provided
+        // 未传时间范围时默认返回当前月。
         YearMonth start;
         YearMonth end;
         if (startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty()) {
-            // Handle both YYYY-MM and YYYY-MM-DD formats
+            // 兼容 YYYY-MM 与 YYYY-MM-DD 两种输入格式。
             try {
                 start = YearMonth.parse(startDate);
             } catch (Exception e) {
@@ -441,6 +447,9 @@ public class StatsController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 按月汇总指定收支类型金额。
+     */
     private BigDecimal sumTypeByMonth(Long userId, int type, YearMonth month) {
         return safeAmount(transactionRepository.sumByUserIdAndTypeAndDateBetween(userId, type, month.atDay(1), month.atEndOfMonth()));
     }
@@ -581,6 +590,9 @@ public class StatsController {
         return item;
     }
 
+    /**
+     * 将分类聚合投影转换为统一报表项结构。
+     */
     private List<Map<String, Object>> toCategoryItems(List<TransactionRepository.CategoryStatsProjection> projections) {
         return projections.stream().map(item -> {
             Map<String, Object> row = new HashMap<>();
@@ -591,10 +603,16 @@ public class StatsController {
         }).toList();
     }
 
+    /**
+     * 将可空金额归一化为零值，避免后续计算出现空指针。
+     */
     private BigDecimal safeAmount(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
     }
 
+    /**
+     * 解析分类名称；当分类缺失或已删除时统一回退到“未分类”。
+     */
     private String resolveCategoryName(Long categoryId, Map<Long, Category> categoryMap) {
         if (categoryId == null) {
             return "未分类";
@@ -603,10 +621,16 @@ public class StatsController {
         return category == null ? "未分类" : category.getName();
     }
 
+    /**
+     * 返回两个日期中较晚的一个。
+     */
     private LocalDate maxDate(LocalDate left, LocalDate right) {
         return left.isAfter(right) ? left : right;
     }
 
+    /**
+     * 返回两个日期中较早的一个。
+     */
     private LocalDate minDate(LocalDate left, LocalDate right) {
         return left.isBefore(right) ? left : right;
     }
@@ -625,6 +649,9 @@ public class StatsController {
         }
     }
 
+    /**
+     * 计算百分比变化率；上一期为零时返回 0 或 100 作为保守兜底。
+     */
     private double pctChange(BigDecimal current, BigDecimal previous) {
         if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
             return current.compareTo(BigDecimal.ZERO) == 0 ? 0D : 100D;
