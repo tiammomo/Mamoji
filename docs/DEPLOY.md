@@ -1,494 +1,187 @@
 # 部署指南
 
-## 1. MVP 开发环境
+本文档覆盖 Mamoji 在本地开发、Docker Compose 和生产环境的部署方式。
 
-> MVP 阶段推荐本地开发，无需复杂部署。
+## 1. 前置条件
 
-### 1.1 环境要求
+- Docker Desktop 4.x+
+- JDK 21
+- Maven 3.9+
+- Node.js 20+
 
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| Node.js | >= 20.x | 前端运行环境 |
-| npm / yarn | 最新版 | 包管理工具 |
-| JDK | 21 | 后端运行环境 |
-| Maven | 3.9+ | 后端构建工具 |
+## 2. 本地开发部署（推荐）
 
-> SQLite 作为开发数据库，无需额外安装
-
----
-
-## 2. 本地开发快速启动
-
-### 2.1 方式一：纯本地开发（推荐）
+### 2.1 启动基础依赖
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/tiammomo/mamoji.git
-cd mamoji
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml up -d mysql redis
+```
 
-# 2. 启动后端
+默认端口映射:
+
+- MySQL: `localhost:33306 -> 3306`
+- Redis: `localhost:36379 -> 6379`
+
+### 2.2 Windows 环境变量示例
+
+如本机默认 `java` 仍指向旧版本，建议在当前终端显式切换到 Java 21 与 Maven 3.9.9:
+
+```powershell
+$env:JAVA_HOME="C:\Users\lenovo\.jdks\corretto-21.0.10"
+$env:PATH="$env:JAVA_HOME\bin;D:\codes\apache-maven-3.9.9\bin;$env:PATH"
+java -version
+mvn -version
+```
+
+期望输出:
+
+- `Java version: 21.0.10`
+- `Maven home: D:\codes\apache-maven-3.9.9`
+
+### 2.3 启动后端
+
+```bash
 cd backend
-./mvnw spring-boot:run
-# 后端运行在 http://localhost:38080
+mvn spring-boot:run
+```
 
-# 3. 启动前端（新终端）
+开发配置默认连接:
+
+- `jdbc:mysql://localhost:33306/mamoji`
+- `redis://localhost:36379`
+
+### 2.4 启动前端
+
+```bash
+cp .env.front.example frontend/.env.local
 cd frontend
 npm install
 npm run dev
-# 前端运行在 http://localhost:33000
 ```
 
-### 2.2 方式二：Docker Compose
+访问地址:
+
+- 前端: `http://localhost:33000`
+- 后端: `http://localhost:38080`
+
+## 3. Docker Compose 一体部署
+
+### 3.1 准备环境变量
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/tiammomo/mamoji.git
-cd mamoji
-
-# 2. 复制环境变量配置
 cp docker-compose.env.example .env
-
-# 3. 启动所有服务
-docker-compose up -d
-
-# 4. 访问应用
-# 前端: http://localhost:33000
-# 后端: http://localhost:38080
-# API 文档: http://localhost:38080/swagger-ui.html
 ```
 
----
+至少检查以下变量:
 
-## 3. 前端开发
+- `MYSQL_ROOT_PASSWORD`
+- `DB_PASSWORD`
+- `REDIS_PASSWORD`
+- `JWT_SECRET`
+
+### 3.2 启动全量服务
 
 ```bash
-# 进入前端目录
-cd frontend
-
-# 安装依赖
-npm install
-
-# 启动开发服务器
-npm run dev
-# 访问 http://localhost:3000
-
-# 构建生产版本
-npm run build
-
-# 运行测试
-npm run test
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml up -d --build
 ```
 
----
-
-## 4. 后端开发
+### 3.3 运维命令
 
 ```bash
-# 进入后端目录
-cd backend
+# 查看状态
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml ps
 
-# 使用 IDE 导入 Maven 项目
-# 或命令行构建
+# 查看日志
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml logs -f
 
-# 运行开发模式
-./mvnw spring-boot:dev
-
-# 构建生产包
-./mvnw clean package -DskipTests
-
-# 运行打包后的应用
-java -jar target/mamoji-0.0.1-SNAPSHOT.jar
+# 停止服务
+docker compose -f docker-compose.yml -f docker-compose.network-mamoji.override.yml down
 ```
 
----
+## 4. 生产部署（docker-compose.prod.yml）
 
-## 5. MVP 环境配置
-
-### 5.1 开发环境变量
-
-前端 (.env.local):
+### 4.1 启动
 
 ```bash
-NEXT_PUBLIC_API_BASE=http://localhost:8080/api/v1
+cp docker-compose.env.example .env
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-后端 (application.yml 默认配置，使用 SQLite 无需额外配置):
+说明:
 
-```yaml
-spring:
-  datasource:
-    url: jdbc:sqlite:mamoji.db
-  jpa:
-    hibernate:
-      ddl-auto: update
-```
+- `docker-compose.prod.yml` 默认将端口绑定到 `127.0.0.1`，用于降低暴露面。
+- 建议由 Nginx/Caddy 在公网层反向代理并处理 HTTPS。
 
-> MVP 阶段：开箱即用，无需配置数据库
+### 4.2 必改配置
 
----
+- `JWT_SECRET`（必须强随机）
+- `MYSQL_ROOT_PASSWORD`
+- `DB_PASSWORD`
+- `REDIS_PASSWORD`
+- `ANTHROPIC_AUTH_TOKEN`（若启用 AI）
 
-## 6. 生产部署（V1.0+）
+## 5. 健康检查
 
-> 以下为生产环境部署，MVP 阶段可先跳过。
-
-### 6.1 Docker 部署
-
-#### 前端镜像构建
-
-```dockerfile
-# frontend/Dockerfile
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-
-FROM nginx:alpine
-COPY --from=builder /app/out /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-#### 后端镜像构建
-
-```dockerfile
-# backend/Dockerfile
-FROM eclipse-temurin:21-jdk-alpine AS builder
-
-WORKDIR /app
-COPY pom.xml .
-COPY src ./src
-RUN apk add --no-cache maven
-RUN mvn clean package -DskipTests
-
-FROM eclipse-temurin:21-jre-alpine
-WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
-```
-
-### 6.2 Docker Compose 生产配置
-
-```yaml
-# docker-compose.prod.yml
-version: '3.8'
-
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: mamoji-mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: mamoji
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - mysql_data:/var/lib/mysql
-    networks:
-      - mamoji-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: mamoji-redis
-    restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redis_data:/data
-    networks:
-      - mamoji-network
-
-  backend:
-    image: mamoji/backend:latest
-    container_name: mamoji-backend
-    restart: always
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/mamoji
-      - SPRING_DATASOURCE_USERNAME=${DB_USER}
-      - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
-      - SPRING_REDIS_HOST=redis
-      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
-      - JWT_SECRET=${JWT_SECRET}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - mamoji-network
-
-  frontend:
-    image: mamoji/frontend:latest
-    container_name: mamoji-frontend
-    restart: always
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    networks:
-      - mamoji-network
-
-volumes:
-  mysql_data:
-  redis_data:
-
-networks:
-  mamoji-network:
-    driver: bridge
-```
-
-### 6.3 部署命令
+### 5.1 后端
 
 ```bash
-# 1. 拉取最新代码
-git pull origin master
-
-# 2. 构建镜像
-docker-compose -f docker-compose.prod.yml build
-
-# 3. 启动服务
-docker-compose -f docker-compose.prod.yml up -d
-
-# 4. 查看日志
-docker-compose -f docker-compose.prod.yml logs -f
-
-# 5. 检查服务状态
-docker-compose -f docker-compose.prod.yml ps
+curl http://localhost:38080/actuator/health
 ```
 
----
-
-## 7. 数据库初始化
-
-### 7.1 初始化数据
+### 5.2 容器状态
 
 ```bash
-# MVP 阶段：JPA 自动建表，无需手动执行
-# 首次启动时自动创建表结构和默认数据
-
-# 手动执行 SQL（如需要）
-docker exec -i mamoji-mysql mysql -u${DB_USER} -p${DB_PASSWORD} mamoji < init-data.sql
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-### 7.2 数据库备份与恢复
+## 6. 备份与恢复
+
+建议使用仓库脚本:
+
+- [backup.bat](../tools/backup/backup.bat)
+- [backup.sh](../tools/backup/backup.sh)
+
+如需手动备份:
 
 ```bash
-# 使用备份脚本（推荐）
-cd tools/backup
-
-# 备份（Linux/macOS）
-./backup.sh
-
-# 备份（Windows）
-backup.bat
-
-# 恢复
-./restore.sh ./backups/mamoji_20240315_020000.sql.gz
-
-# 设置定时任务（每天凌晨 2 点）
-crontab -e
-# 添加以下行：
-# 0 2 * * * /path/to/mamoji/tools/backup/backup.sh >> /var/log/mamoji-backup.log 2>&1
+docker exec mamoji-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" mamoji > mamoji.sql
 ```
 
-### 7.3 自动备份配置
-
-#### Linux/macOS (Cron)
+如需手动恢复:
 
 ```bash
-# 编辑定时任务
-crontab -e
-
-# 添加以下行：
-# 每天凌晨 2 点备份
-0 2 * * * /opt/mamoji/tools/backup/backup.sh >> /var/log/mamoji-backup.log 2>&1
-
-# 每周日凌晨 3 点备份（保留更长时间）
-0 3 * * 0 /opt/mamoji/tools/backup/backup.sh -r 30 >> /var/log/mamoji-backup.log 2>&1
+cat mamoji.sql | docker exec -i mamoji-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" mamoji
 ```
 
-#### Windows (任务计划程序)
+## 7. 常见问题
 
-```cmd
-# 创建定时任务（每天凌晨 2 点）
-schtasks /create /tn "Mamoji Backup" /tr "C:\mamoji\tools\backup\backup.bat" /sc daily /st 02:00
-```
-docker exec mamoji-mysql mysqldump -u${DB_USER} -p${DB_PASSWORD} mamoji > backup_$(date +%Y%m%d).sql
+### 7.1 后端无法连接 MySQL
 
-# Docker 环境恢复
-docker exec -i mamoji-mysql mysql -u${DB_USER} -p${DB_PASSWORD} mamoji < backup_20240301.sql
-```
+1. 确认容器运行: `docker ps | grep mamoji-mysql`
+2. 确认端口映射为 `33306`
+3. 检查 `backend/src/main/resources/application-dev.yml` 中的数据源地址
 
----
+### 7.2 后端无法连接 Redis
 
-## 8. CI/CD 部署
+1. 确认容器运行: `docker ps | grep mamoji-redis`
+2. 确认端口映射为 `36379`
+3. 确认 `REDIS_PASSWORD` 与配置一致
 
-### 8.1 GitHub Actions 配置
+### 7.3 Maven 编译报 Java 语法错误
 
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy to Production
+如看到 `switch ->`、`text block`、`record` 等语法报错，优先检查 Maven 是否实际运行在 Java 21：
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and push backend
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: true
-          tags: mamoji/backend:${{ github.sha }}
-          cache-from: type=registry,ref=mamoji/backend:latest
-          cache-to: type=inline
-
-      - name: Build and push frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: true
-          tags: mamoji/frontend:${{ github.sha }}
-          cache-from: type=registry,ref=mamoji/frontend:latest
-          cache-to: type=inline
-
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            cd /opt/mamoji
-            docker-compose -f docker-compose.prod.yml pull
-            docker-compose -f docker-compose.prod.yml up -d
+```powershell
+java -version
+mvn -version
 ```
 
----
+如果 `mvn -version` 中显示的 Java 版本仍是 1.8 或 11，需先按上文切换 `JAVA_HOME` 后再编译。
 
-## 9. 运维监控
+### 7.4 前端请求命中相对路径 `/api/v1`
 
-### 9.1 健康检查
+请确认 `frontend/.env.local` 存在并包含:
 
-```bash
-# 检查容器健康状态
-docker ps
-
-# 检查应用健康端点
-curl http://localhost:8080/actuator/health
-
-# 检查前端
-curl -I http://localhost
+```env
+NEXT_PUBLIC_API_BASE=http://localhost:38080/api/v1
 ```
-
-### 9.2 日志管理
-
-```bash
-# 查看后端日志
-docker logs -f mamoji-backend
-
-# 查看最近 100 行日志
-docker logs --tail 100 mamoji-backend
-
-# 查看错误日志
-docker logs mamoji-backend 2>&1 | grep -i error
-```
-
-### 9.3 性能监控
-
-| 监控项 | 工具 | 访问地址 |
-|--------|------|----------|
-| 后端 Actuator | Spring Boot | /actuator/prometheus |
-| 前端性能 | Vercel Analytics | Vercel Dashboard |
-| 容器监控 | Docker Stats | 命令行 |
-
----
-
-## 10. 常见问题
-
-### 10.1 启动失败
-
-```bash
-# 1. 检查端口占用
-netstat -tulpn | grep 8080
-
-# 2. 检查 Docker 资源
-docker stats
-
-# 3. 查看详细日志
-docker-compose logs backend
-```
-
-### 10.2 数据库连接失败
-
-```bash
-# 1. 检查 MySQL 是否运行
-docker ps | grep mysql
-
-# 2. 检查网络连接
-docker exec -it backend sh
-ping mysql
-
-# 3. 检查数据库配置
-docker exec mamoji-mysql mysql -u${DB_USER} -p${DB_PASSWORD} -e "SHOW DATABASES;"
-```
-
-### 10.3 前端构建失败
-
-```bash
-# 1. 清理 node_modules
-rm -rf node_modules package-lock.json
-
-# 2. 重新安装
-npm install
-
-# 3. 检查 Node 版本
-node -v
-```
-
----
-
-## 11. 安全建议
-
-### 11.1 生产环境必须修改的配置
-
-| 配置项 | 说明 | 建议值 |
-|--------|------|--------|
-| JWT_SECRET | JWT 签名密钥 | 64 位随机字符串 |
-| DB_PASSWORD | 数据库密码 | 强密码 |
-| REDIS_PASSWORD | Redis 密码 | 强密码 |
-| NEXTAUTH_SECRET | NextAuth 密钥 | 32 位随机字符串 |
-| SSL 证书 | HTTPS | 使用 Let's Encrypt |
-
-### 11.2 安全检查清单
-
-- [ ] 修改默认密码
-- [ ] 启用 HTTPS
-- [ ] 配置防火墙规则
-- [ ] 开启日志审计
-- [ ] 定期备份数据
-- [ ] 更新依赖版本

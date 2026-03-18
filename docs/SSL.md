@@ -1,9 +1,10 @@
 # SSL/TLS 配置指南
 
-## 生成自签名证书（开发环境）
+## 1. 开发环境自签名证书
+
+使用 `keytool` 生成 `PKCS12` 证书:
 
 ```bash
-# 生成 PKCS12 格式证书
 keytool -genkeypair \
   -alias mamoji \
   -keyalg RSA \
@@ -13,52 +14,57 @@ keytool -genkeypair \
   -validity 365 \
   -storepass changeit \
   -keypass changeit \
-  -dname "CN=localhost, OU=Dev, O=Mamoji, L=City, ST=State, C=CN"
+  -dname "CN=localhost, OU=Dev, O=Mamoji, L=Shanghai, ST=Shanghai, C=CN"
+```
 
-# 导出为 PEM 格式（Nginx/代理使用）
+## 2. 导出 PEM（给 Nginx/Caddy 使用）
+
+```bash
 openssl pkcs12 -in mamoji.p12 -nokeys -out mamoji.crt
 openssl pkcs12 -in mamoji.p12 -nocerts -out mamoji.key
 ```
 
-## 配置环境变量
+## 3. Spring Boot 启用 HTTPS（可选）
 
-```bash
-# 启用 SSL
-SERVER_SSL_ENABLED=true
+`application-prod.yml` 示例:
 
-# 证书配置
-SERVER_SSL_KEYSTORE=classpath:mamoji.p12
-SERVER_SSL_KEYSTORE_PASSWORD=changeit
-SERVER_SSL_KEYSTORE_TYPE=PKCS12
-SERVER_SSL_KEY_ALIAS=mamoji
+```yaml
+server:
+  ssl:
+    enabled: true
+    key-store: classpath:mamoji.p12
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: mamoji
 ```
 
-## 使用 Nginx 反向代理（推荐）
+## 4. 反向代理 HTTPS（推荐）
+
+生产环境建议由 Nginx/Caddy 终止 TLS，后端只监听内网端口。
+
+### 4.1 Nginx 最小配置示例
 
 ```nginx
 server {
-    listen 443 ssl http2;
-    server_name mamoji.example.com;
+    listen 443 ssl;
+    server_name your-domain.com;
 
-    ssl_certificate /path/to/mamoji.crt;
-    ssl_certificate_key /path/to/mamoji.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_certificate     /etc/nginx/ssl/mamoji.crt;
+    ssl_certificate_key /etc/nginx/ssl/mamoji.key;
 
     location / {
-        proxy_pass http://backend:38080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_pass http://127.0.0.1:33000;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:38080;
     }
 }
 ```
 
-## Let's Encrypt 免费证书（生产环境）
+## 5. 安全建议
 
-```bash
-# 使用 certbot
-sudo certbot --nginx -d mamoji.example.com
-
-# 自动续期
-sudo certbot renew --dry-run
-```
+1. 生产环境优先使用受信 CA（如 Let's Encrypt）
+2. 禁止将私钥提交到仓库
+3. 通过环境变量注入证书密码
+4. 定期检查证书过期时间并提前续期
