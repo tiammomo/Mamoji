@@ -2,7 +2,6 @@ package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Account;
 import com.mamoji.service.AccountingService;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,7 +29,7 @@ public class AccountController {
     }
 
     @GetMapping("/summary")
-    public Map<String, BigDecimal> summary(@RequestHeader(value = "Authorization", required = false) String authorization) {
+    public Map<String, Object> summary(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return service.accountSummary(authorization);
     }
 

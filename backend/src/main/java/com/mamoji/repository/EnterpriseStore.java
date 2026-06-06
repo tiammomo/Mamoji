@@ -5,19 +5,23 @@ import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
+import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -32,6 +36,7 @@ public class EnterpriseStore {
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
     public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
+    public final Map<Long, ReceiptVoucher> receiptVouchers = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
@@ -47,8 +52,10 @@ public class EnterpriseStore {
         loadAll();
         ensureSeedData();
         ensureCompanyPolicyDefaults();
+        ensureTaxItemDefaults();
         ensureHouseholdSubject();
         ensureEntityTransferSeed();
+        ensureReceiptVoucherSeed();
         ensureAccessDefaults();
         attachDepartmentNames();
     }
@@ -150,13 +157,35 @@ public class EnterpriseStore {
                 taxable_amount TEXT NOT NULL,
                 tax_amount TEXT NOT NULL,
                 paid_amount TEXT NOT NULL,
+                deductible_amount TEXT NOT NULL DEFAULT '0',
+                tax_rate TEXT NOT NULL DEFAULT '0',
                 due_date TEXT NOT NULL,
                 status TEXT NOT NULL,
+                filing_status TEXT NOT NULL DEFAULT 'not_started',
+                payment_status TEXT NOT NULL DEFAULT 'unpaid',
+                frequency TEXT NOT NULL DEFAULT 'monthly',
+                declaration_date TEXT,
+                payment_date TEXT,
+                responsible_person TEXT,
+                risk_level TEXT NOT NULL DEFAULT 'medium',
+                policy_basis TEXT,
+                source_type TEXT NOT NULL DEFAULT 'manual',
                 note TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("tax_items", "deductible_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("tax_items", "tax_rate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("tax_items", "filing_status", "TEXT NOT NULL DEFAULT 'not_started'");
+        ensureColumn("tax_items", "payment_status", "TEXT NOT NULL DEFAULT 'unpaid'");
+        ensureColumn("tax_items", "frequency", "TEXT NOT NULL DEFAULT 'monthly'");
+        ensureColumn("tax_items", "declaration_date", "TEXT");
+        ensureColumn("tax_items", "payment_date", "TEXT");
+        ensureColumn("tax_items", "responsible_person", "TEXT");
+        ensureColumn("tax_items", "risk_level", "TEXT NOT NULL DEFAULT 'medium'");
+        ensureColumn("tax_items", "policy_basis", "TEXT");
+        ensureColumn("tax_items", "source_type", "TEXT NOT NULL DEFAULT 'manual'");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS entity_transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +202,50 @@ public class EnterpriseStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS receipt_vouchers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                transaction_id INTEGER,
+                voucher_no TEXT NOT NULL,
+                title TEXT NOT NULL,
+                voucher_type TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                counterparty TEXT NOT NULL,
+                amount TEXT NOT NULL,
+                tax_amount TEXT NOT NULL,
+                issue_date TEXT NOT NULL,
+                due_date TEXT,
+                status TEXT NOT NULL,
+                file_name TEXT,
+                file_size INTEGER NOT NULL,
+                file_type TEXT,
+                risk_level TEXT NOT NULL,
+                note TEXT,
+                operator_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        createIndexes();
+    }
+
+    private void createIndexes() {
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_companies_entity_type ON companies(entity_type)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_departments_company ON departments(company_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_company_status ON employees(company_id, status)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_user ON employees(user_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employment_events_company_date ON employment_events(company_id, effective_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_due_status ON tax_items(company_id, due_date, status)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_type_period ON tax_items(company_id, tax_type, period)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_risk ON tax_items(company_id, risk_level)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_entity_transfers_from_date ON entity_transfers(from_entity_id, transfer_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_entity_transfers_to_date ON entity_transfers(to_entity_id, transfer_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_issue ON receipt_vouchers(company_id, issue_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_status ON receipt_vouchers(company_id, status)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_transaction ON receipt_vouchers(transaction_id)");
     }
 
     private void loadAll() {
@@ -182,6 +255,7 @@ public class EnterpriseStore {
         entityTransfers.clear();
         employmentEvents.clear();
         taxItems.clear();
+        receiptVouchers.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM departments", rs -> departments.put(rs.getLong("id"), mapDepartment(rs)));
@@ -189,6 +263,7 @@ public class EnterpriseStore {
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
         forEachRow("SELECT * FROM tax_items", rs -> taxItems.put(rs.getLong("id"), mapTaxItem(rs)));
+        forEachRow("SELECT * FROM receipt_vouchers", rs -> receiptVouchers.put(rs.getLong("id"), mapReceiptVoucher(rs)));
     }
 
     private void ensureColumn(String tableName, String columnName, String definition) {
@@ -320,6 +395,45 @@ public class EnterpriseStore {
             "公司报销家庭代垫支出", "recorded", owner.id);
     }
 
+    private void ensureReceiptVoucherSeed() {
+        Optional<Company> company = companies.values().stream()
+            .filter(candidate -> "company".equals(candidate.entityType))
+            .min(Comparator.comparing(candidate -> candidate.id));
+        if (company.isEmpty()) {
+            return;
+        }
+        long companyId = company.get().id;
+        if (receiptVouchers.values().stream().anyMatch(voucher -> voucher.companyId == companyId)) {
+            return;
+        }
+        User owner = coreStore.users.values().stream()
+            .filter(user -> user.role == 1)
+            .min(Comparator.comparing(user -> user.id))
+            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
+            .orElse(null);
+        if (owner == null) {
+            return;
+        }
+        receiptVoucher(companyId, null, "INV-202606-001", "客户项目回款销项发票", "sales_invoice", "income",
+            "客户项目方", "2800", "0", "2026-06-05", "2026-07-15", "verified",
+            "invoice-202606-001.pdf", 184320, "application/pdf", "low", "已与项目回款匹配", owner.id);
+        receiptVoucher(companyId, null, "VAT-202606-012", "办公采购进项发票", "purchase_invoice", "expense",
+            "办公用品供应商", "899", "26.97", "2026-06-03", null, "linked",
+            "purchase-keyboard.jpg", 728436, "image/jpeg", "low", "可用于成本归档", owner.id);
+        receiptVoucher(companyId, null, "BANK-202606-003", "银行回单-房租付款", "bank_slip", "expense",
+            "联合办公空间", "3200", "0", "2026-06-05", null, "verified",
+            "rent-bank-slip.png", 566214, "image/png", "medium", "待关联租金周期事项", owner.id);
+        receiptVoucher(companyId, null, "REIM-202605-008", "家庭代垫报销凭证", "reimbursement", "expense",
+            "家庭资产主体", "2680", "0", "2026-05-20", null, "archived",
+            "reimbursement-advance.pdf", 245761, "application/pdf", "low", "与主体往来记录一致", owner.id);
+        receiptVoucher(companyId, null, "CTR-202606-002", "SaaS 年度订阅合同付款证明", "contract", "expense",
+            "SaaS 服务商", "7800", "0", "2026-06-01", "2026-06-30", "pending_review",
+            null, 0, null, "high", "金额较大，需补充合同附件和付款回单", owner.id);
+        receiptVoucher(companyId, null, "TAX-202607-001", "税费申报回执待补充", "tax_receipt", "expense",
+            "税务机关", "8458.08", "0", "2026-07-15", "2026-07-15", "pending_review",
+            null, 0, null, "medium", "待完成申报后上传回执", owner.id);
+    }
+
     private void ensureCompanyPolicyDefaults() {
         companies.values().forEach(company -> {
             boolean updated = false;
@@ -394,6 +508,80 @@ public class EnterpriseStore {
         });
     }
 
+    private void ensureTaxItemDefaults() {
+        taxItems.values().forEach(item -> {
+            boolean updated = hydrateTaxItemDefaults(item);
+            String riskLevel = riskLevelFor(item);
+            if (!riskLevel.equals(item.riskLevel)) {
+                item.riskLevel = riskLevel;
+                updated = true;
+            }
+            if (updated) {
+                item.updatedAt = InMemoryStore.now();
+                saveTaxItem(item);
+            }
+        });
+    }
+
+    private boolean hydrateTaxItemDefaults(TaxItem item) {
+        boolean updated = false;
+        if (item.taxableAmount == null) {
+            item.taxableAmount = BigDecimal.ZERO;
+            updated = true;
+        }
+        if (item.taxAmount == null) {
+            item.taxAmount = BigDecimal.ZERO;
+            updated = true;
+        }
+        if (item.paidAmount == null) {
+            item.paidAmount = BigDecimal.ZERO;
+            updated = true;
+        }
+        if (item.deductibleAmount == null) {
+            item.deductibleAmount = BigDecimal.ZERO;
+            updated = true;
+        }
+        if (item.taxRate == null || item.taxRate.compareTo(BigDecimal.ZERO) == 0 && item.taxableAmount.compareTo(BigDecimal.ZERO) > 0) {
+            item.taxRate = inferredTaxRate(item);
+            updated = true;
+        }
+        if (isBlank(item.status)) {
+            item.status = paymentStatusFor(item).equals("paid") ? "paid" : "pending";
+            updated = true;
+        }
+        if (isBlank(item.paymentStatus)) {
+            item.paymentStatus = paymentStatusFor(item);
+            updated = true;
+        }
+        if (isBlank(item.filingStatus)) {
+            item.filingStatus = filingStatusFor(item.status);
+            updated = true;
+        }
+        if (isBlank(item.frequency)) {
+            item.frequency = frequencyFor(item.period);
+            updated = true;
+        }
+        if (isBlank(item.responsiblePerson)) {
+            item.responsiblePerson = "财务负责人";
+            updated = true;
+        }
+        if (isBlank(item.riskLevel)) {
+            item.riskLevel = riskLevelFor(item);
+            updated = true;
+        }
+        if (isBlank(item.policyBasis)) {
+            item.policyBasis = Optional.ofNullable(companies.get(item.companyId))
+                .map(company -> company.policyProfileKey)
+                .orElse("CN-DEFAULT-DEMO-POLICY");
+            updated = true;
+        }
+        if (isBlank(item.sourceType)) {
+            item.sourceType = "manual";
+            updated = true;
+        }
+        return updated;
+    }
+
     public List<Company> sortedCompanies() {
         return companies.values().stream().sorted(Comparator.comparing(company -> company.id)).toList();
     }
@@ -406,10 +594,10 @@ public class EnterpriseStore {
     }
 
     public List<Employee> sortedEmployees(long companyId) {
-        attachDepartmentNames();
         return employees.values().stream()
             .filter(employee -> employee.companyId == companyId)
             .sorted(Comparator.comparing((Employee employee) -> employee.status.equals("departed")).thenComparing(employee -> employee.id))
+            .peek(this::attachDepartmentName)
             .toList();
     }
 
@@ -424,15 +612,28 @@ public class EnterpriseStore {
         return taxItems.values().stream()
             .filter(item -> item.companyId == companyId)
             .sorted(Comparator.comparing((TaxItem item) -> item.dueDate).thenComparing(item -> item.id))
+            .peek(item -> {
+                hydrateTaxItemDefaults(item);
+                item.paymentStatus = paymentStatusFor(item);
+                item.riskLevel = riskLevelFor(item);
+            })
             .toList();
     }
 
     public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
+        Set<Long> accessible = new HashSet<>(accessibleEntityIds);
         return entityTransfers.values().stream()
-            .filter(transfer -> accessibleEntityIds.contains(transfer.fromEntityId) || accessibleEntityIds.contains(transfer.toEntityId))
+            .filter(transfer -> accessible.contains(transfer.fromEntityId) || accessible.contains(transfer.toEntityId))
             .filter(transfer -> entityId == null || transfer.fromEntityId == entityId || transfer.toEntityId == entityId)
             .sorted(Comparator.comparing((EntityTransfer transfer) -> transfer.transferDate).reversed().thenComparing(transfer -> transfer.id))
             .peek(this::attachEntityTransferNames)
+            .toList();
+    }
+
+    public List<ReceiptVoucher> sortedReceiptVouchers(long companyId) {
+        return receiptVouchers.values().stream()
+            .filter(voucher -> voucher.companyId == companyId)
+            .sorted(Comparator.comparing((ReceiptVoucher voucher) -> voucher.issueDate).reversed().thenComparing(voucher -> voucher.id))
             .toList();
     }
 
@@ -644,14 +845,29 @@ public class EnterpriseStore {
         item.taxableAmount = money(taxableAmount);
         item.taxAmount = money(taxAmount);
         item.paidAmount = money(paidAmount);
+        item.deductibleAmount = BigDecimal.ZERO;
+        item.taxRate = inferredTaxRate(item);
         item.dueDate = dueDate;
         item.status = status;
+        item.filingStatus = filingStatusFor(status);
+        item.paymentStatus = paymentStatusFor(item);
+        item.frequency = frequencyFor(period);
+        item.declarationDate = null;
+        item.paymentDate = item.paymentStatus.equals("paid") ? dueDate : null;
+        item.responsiblePerson = "财务负责人";
+        item.riskLevel = riskLevelFor(item);
+        item.policyBasis = Optional.ofNullable(companies.get(companyId))
+            .map(company -> company.policyProfileKey)
+            .orElse("CN-DEFAULT-DEMO-POLICY");
+        item.sourceType = "demo_estimate";
         item.note = note;
         stamp(item);
         item.id = insert("""
             INSERT INTO tax_items (
-                company_id, name, period, tax_type, taxable_amount, tax_amount, paid_amount, due_date, status, note, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                company_id, name, period, tax_type, taxable_amount, tax_amount, paid_amount, deductible_amount, tax_rate,
+                due_date, status, filing_status, payment_status, frequency, declaration_date, payment_date,
+                responsible_person, risk_level, policy_basis, source_type, note, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindTaxItem(ps, item));
         taxItems.put(item.id, item);
         return item;
@@ -661,10 +877,19 @@ public class EnterpriseStore {
         taxItems.put(item.id, item);
         jdbc.update("""
             UPDATE tax_items SET company_id = ?, name = ?, period = ?, tax_type = ?, taxable_amount = ?, tax_amount = ?,
-                paid_amount = ?, due_date = ?, status = ?, note = ?, updated_at = ?
+                paid_amount = ?, deductible_amount = ?, tax_rate = ?, due_date = ?, status = ?, filing_status = ?,
+                payment_status = ?, frequency = ?, declaration_date = ?, payment_date = ?, responsible_person = ?,
+                risk_level = ?, policy_basis = ?, source_type = ?, note = ?, updated_at = ?
             WHERE id = ?
             """, item.companyId, item.name, item.period, item.taxType, moneyText(item.taxableAmount), moneyText(item.taxAmount),
-            moneyText(item.paidAmount), item.dueDate, item.status, item.note, item.updatedAt, item.id);
+            moneyText(item.paidAmount), moneyText(item.deductibleAmount), moneyText(item.taxRate), item.dueDate, item.status,
+            item.filingStatus, item.paymentStatus, item.frequency, item.declarationDate, item.paymentDate, item.responsiblePerson,
+            item.riskLevel, item.policyBasis, item.sourceType, item.note, item.updatedAt, item.id);
+    }
+
+    public void deleteTaxItem(long id) {
+        taxItems.remove(id);
+        jdbc.update("DELETE FROM tax_items WHERE id = ?", id);
     }
 
     public EntityTransfer entityTransfer(
@@ -711,11 +936,79 @@ public class EnterpriseStore {
         attachEntityTransferNames(transfer);
     }
 
+    public ReceiptVoucher receiptVoucher(
+        long companyId,
+        Long transactionId,
+        String voucherNo,
+        String title,
+        String voucherType,
+        String direction,
+        String counterparty,
+        String amount,
+        String taxAmount,
+        String issueDate,
+        String dueDate,
+        String status,
+        String fileName,
+        long fileSize,
+        String fileType,
+        String riskLevel,
+        String note,
+        long operatorUserId
+    ) {
+        ReceiptVoucher voucher = new ReceiptVoucher();
+        voucher.companyId = companyId;
+        voucher.transactionId = transactionId;
+        voucher.voucherNo = voucherNo;
+        voucher.title = title;
+        voucher.voucherType = voucherType;
+        voucher.direction = direction;
+        voucher.counterparty = counterparty;
+        voucher.amount = money(amount);
+        voucher.taxAmount = money(taxAmount);
+        voucher.issueDate = issueDate == null || issueDate.isBlank() ? LocalDate.now().toString() : issueDate;
+        voucher.dueDate = dueDate == null || dueDate.isBlank() ? null : dueDate;
+        voucher.status = status == null || status.isBlank() ? "pending_review" : status;
+        voucher.fileName = fileName;
+        voucher.fileSize = fileSize;
+        voucher.fileType = fileType;
+        voucher.riskLevel = riskLevel == null || riskLevel.isBlank() ? "low" : riskLevel;
+        voucher.note = note;
+        voucher.operatorUserId = operatorUserId;
+        stamp(voucher);
+        voucher.id = insert("""
+            INSERT INTO receipt_vouchers (
+                company_id, transaction_id, voucher_no, title, voucher_type, direction, counterparty,
+                amount, tax_amount, issue_date, due_date, status, file_name, file_size, file_type,
+                risk_level, note, operator_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindReceiptVoucher(ps, voucher));
+        receiptVouchers.put(voucher.id, voucher);
+        return voucher;
+    }
+
+    public void saveReceiptVoucher(ReceiptVoucher voucher) {
+        receiptVouchers.put(voucher.id, voucher);
+        jdbc.update("""
+            UPDATE receipt_vouchers SET company_id = ?, transaction_id = ?, voucher_no = ?, title = ?, voucher_type = ?,
+                direction = ?, counterparty = ?, amount = ?, tax_amount = ?, issue_date = ?, due_date = ?, status = ?,
+                file_name = ?, file_size = ?, file_type = ?, risk_level = ?, note = ?, operator_user_id = ?, updated_at = ?
+            WHERE id = ?
+            """, voucher.companyId, voucher.transactionId, voucher.voucherNo, voucher.title, voucher.voucherType,
+            voucher.direction, voucher.counterparty, moneyText(voucher.amount), moneyText(voucher.taxAmount),
+            voucher.issueDate, voucher.dueDate, voucher.status, voucher.fileName, voucher.fileSize, voucher.fileType,
+            voucher.riskLevel, voucher.note, voucher.operatorUserId, voucher.updatedAt, voucher.id);
+    }
+
     public void attachDepartmentNames() {
-        employees.values().forEach(employee -> employee.departmentName = Optional.ofNullable(employee.departmentId)
+        employees.values().forEach(this::attachDepartmentName);
+    }
+
+    private void attachDepartmentName(Employee employee) {
+        employee.departmentName = Optional.ofNullable(employee.departmentId)
             .map(departments::get)
             .map(department -> department.name)
-            .orElse(null));
+            .orElse(null);
     }
 
     private void attachEntityTransferNames(EntityTransfer transfer) {
@@ -756,6 +1049,79 @@ public class EnterpriseStore {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private BigDecimal inferredTaxRate(TaxItem item) {
+        BigDecimal taxableAmount = money(item.taxableAmount);
+        if (taxableAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return money(item.taxAmount)
+            .multiply(new BigDecimal("100"))
+            .divide(taxableAmount, 2, RoundingMode.HALF_UP);
+    }
+
+    private String paymentStatusFor(TaxItem item) {
+        BigDecimal taxAmount = money(item.taxAmount);
+        BigDecimal paidAmount = money(item.paidAmount);
+        if (taxAmount.compareTo(BigDecimal.ZERO) <= 0 || paidAmount.compareTo(taxAmount) >= 0) {
+            return "paid";
+        }
+        if (paidAmount.compareTo(BigDecimal.ZERO) > 0) {
+            return "partial";
+        }
+        return "unpaid";
+    }
+
+    private String filingStatusFor(String status) {
+        return switch (status == null ? "" : status) {
+            case "paid" -> "accepted";
+            case "pending" -> "submitted";
+            case "overdue" -> "overdue";
+            case "estimated" -> "prepared";
+            default -> "not_started";
+        };
+    }
+
+    private String frequencyFor(String period) {
+        if (period == null) {
+            return "monthly";
+        }
+        String normalized = period.toUpperCase();
+        if (normalized.contains("Q")) {
+            return "quarterly";
+        }
+        if (normalized.matches("\\d{4}")) {
+            return "annual";
+        }
+        return "monthly";
+    }
+
+    private String riskLevelFor(TaxItem item) {
+        BigDecimal unpaid = money(item.taxAmount).subtract(money(item.paidAmount));
+        if (unpaid.compareTo(BigDecimal.ZERO) <= 0 || "paid".equals(item.status)) {
+            return "low";
+        }
+        LocalDate dueDate = parseDate(item.dueDate).orElse(LocalDate.now());
+        LocalDate today = LocalDate.now();
+        if (dueDate.isBefore(today) || "overdue".equals(item.status)) {
+            return "high";
+        }
+        if (!dueDate.isAfter(today.plusDays(7)) || unpaid.compareTo(new BigDecimal("50000")) >= 0) {
+            return "medium";
+        }
+        if ("manual".equals(item.sourceType) || "not_started".equals(item.filingStatus)) {
+            return "medium";
+        }
+        return "low";
+    }
+
+    private Optional<LocalDate> parseDate(String value) {
+        try {
+            return value == null || value.isBlank() ? Optional.empty() : Optional.of(LocalDate.parse(value));
+        } catch (RuntimeException ignored) {
+            return Optional.empty();
+        }
     }
 
     private Department mapDepartment(ResultSet rs) throws SQLException {
@@ -822,11 +1188,23 @@ public class EnterpriseStore {
         item.taxableAmount = money(rs.getString("taxable_amount"));
         item.taxAmount = money(rs.getString("tax_amount"));
         item.paidAmount = money(rs.getString("paid_amount"));
+        item.deductibleAmount = money(rs.getString("deductible_amount"));
+        item.taxRate = money(rs.getString("tax_rate"));
         item.dueDate = rs.getString("due_date");
         item.status = rs.getString("status");
+        item.filingStatus = rs.getString("filing_status");
+        item.paymentStatus = rs.getString("payment_status");
+        item.frequency = rs.getString("frequency");
+        item.declarationDate = rs.getString("declaration_date");
+        item.paymentDate = rs.getString("payment_date");
+        item.responsiblePerson = rs.getString("responsible_person");
+        item.riskLevel = rs.getString("risk_level");
+        item.policyBasis = rs.getString("policy_basis");
+        item.sourceType = rs.getString("source_type");
         item.note = rs.getString("note");
         item.createdAt = rs.getString("created_at");
         item.updatedAt = rs.getString("updated_at");
+        hydrateTaxItemDefaults(item);
         return item;
     }
 
@@ -846,6 +1224,32 @@ public class EnterpriseStore {
         transfer.updatedAt = rs.getString("updated_at");
         attachEntityTransferNames(transfer);
         return transfer;
+    }
+
+    private ReceiptVoucher mapReceiptVoucher(ResultSet rs) throws SQLException {
+        ReceiptVoucher voucher = new ReceiptVoucher();
+        voucher.id = rs.getLong("id");
+        voucher.companyId = rs.getLong("company_id");
+        voucher.transactionId = nullableLong(rs, "transaction_id");
+        voucher.voucherNo = rs.getString("voucher_no");
+        voucher.title = rs.getString("title");
+        voucher.voucherType = rs.getString("voucher_type");
+        voucher.direction = rs.getString("direction");
+        voucher.counterparty = rs.getString("counterparty");
+        voucher.amount = money(rs.getString("amount"));
+        voucher.taxAmount = money(rs.getString("tax_amount"));
+        voucher.issueDate = rs.getString("issue_date");
+        voucher.dueDate = rs.getString("due_date");
+        voucher.status = rs.getString("status");
+        voucher.fileName = rs.getString("file_name");
+        voucher.fileSize = rs.getLong("file_size");
+        voucher.fileType = rs.getString("file_type");
+        voucher.riskLevel = rs.getString("risk_level");
+        voucher.note = rs.getString("note");
+        voucher.operatorUserId = rs.getLong("operator_user_id");
+        voucher.createdAt = rs.getString("created_at");
+        voucher.updatedAt = rs.getString("updated_at");
+        return voucher;
     }
 
     private void bindDepartment(PreparedStatement ps, Department department) throws SQLException {
@@ -891,11 +1295,22 @@ public class EnterpriseStore {
         ps.setString(5, moneyText(item.taxableAmount));
         ps.setString(6, moneyText(item.taxAmount));
         ps.setString(7, moneyText(item.paidAmount));
-        ps.setString(8, item.dueDate);
-        ps.setString(9, item.status);
-        ps.setString(10, item.note);
-        ps.setString(11, item.createdAt);
-        ps.setString(12, item.updatedAt);
+        ps.setString(8, moneyText(item.deductibleAmount));
+        ps.setString(9, moneyText(item.taxRate));
+        ps.setString(10, item.dueDate);
+        ps.setString(11, item.status);
+        ps.setString(12, item.filingStatus);
+        ps.setString(13, item.paymentStatus);
+        ps.setString(14, item.frequency);
+        ps.setString(15, item.declarationDate);
+        ps.setString(16, item.paymentDate);
+        ps.setString(17, item.responsiblePerson);
+        ps.setString(18, item.riskLevel);
+        ps.setString(19, item.policyBasis);
+        ps.setString(20, item.sourceType);
+        ps.setString(21, item.note);
+        ps.setString(22, item.createdAt);
+        ps.setString(23, item.updatedAt);
     }
 
     private void bindEntityTransfer(PreparedStatement ps, EntityTransfer transfer) throws SQLException {
@@ -910,6 +1325,29 @@ public class EnterpriseStore {
         ps.setLong(9, transfer.operatorUserId);
         ps.setString(10, transfer.createdAt);
         ps.setString(11, transfer.updatedAt);
+    }
+
+    private void bindReceiptVoucher(PreparedStatement ps, ReceiptVoucher voucher) throws SQLException {
+        ps.setLong(1, voucher.companyId);
+        setLongOrNull(ps, 2, voucher.transactionId);
+        ps.setString(3, voucher.voucherNo);
+        ps.setString(4, voucher.title);
+        ps.setString(5, voucher.voucherType);
+        ps.setString(6, voucher.direction);
+        ps.setString(7, voucher.counterparty);
+        ps.setString(8, moneyText(voucher.amount));
+        ps.setString(9, moneyText(voucher.taxAmount));
+        ps.setString(10, voucher.issueDate);
+        ps.setString(11, voucher.dueDate);
+        ps.setString(12, voucher.status);
+        ps.setString(13, voucher.fileName);
+        ps.setLong(14, voucher.fileSize);
+        ps.setString(15, voucher.fileType);
+        ps.setString(16, voucher.riskLevel);
+        ps.setString(17, voucher.note);
+        ps.setLong(18, voucher.operatorUserId);
+        ps.setString(19, voucher.createdAt);
+        ps.setString(20, voucher.updatedAt);
     }
 
     private long insert(String sql, SqlBinder binder) {

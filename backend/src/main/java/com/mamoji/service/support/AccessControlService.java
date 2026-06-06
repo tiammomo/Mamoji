@@ -8,9 +8,11 @@ import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -52,6 +54,20 @@ public class AccessControlService {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "People management permission required");
     }
 
+    public User requireFinanceManager(String authorization) {
+        User user = requireUser(authorization);
+        Optional<Employee> employee = enterpriseStore.employees.values().stream()
+            .filter(candidate -> Objects.equals(candidate.userId, user.id))
+            .findFirst();
+        boolean financeRole = employee
+            .map(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("finance_admin"))
+            .orElse(false);
+        if (user.role == Roles.ADMIN || financeRole || (user.permissions & Permissions.ACCOUNT) != 0) {
+            return user;
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Finance management permission required");
+    }
+
     public Company resolveCompany(User user, Long companyId) {
         if (companyId == null || companyId == 0) {
             return defaultCompany(user);
@@ -67,9 +83,13 @@ public class AccessControlService {
         if (user.role == Roles.ADMIN) {
             return enterpriseStore.sortedCompanies();
         }
+        Set<Long> employeeCompanyIds = new HashSet<>();
+        enterpriseStore.employees.values().stream()
+            .filter(employee -> Objects.equals(employee.userId, user.id))
+            .map(employee -> employee.companyId)
+            .forEach(employeeCompanyIds::add);
         return enterpriseStore.sortedCompanies().stream()
-            .filter(company -> company.ownerId == user.id || enterpriseStore.employees.values().stream()
-                .anyMatch(employee -> employee.companyId == company.id && Objects.equals(employee.userId, user.id)))
+            .filter(company -> company.ownerId == user.id || employeeCompanyIds.contains(company.id))
             .toList();
     }
 

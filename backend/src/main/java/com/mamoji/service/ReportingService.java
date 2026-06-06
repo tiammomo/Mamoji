@@ -10,6 +10,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,9 @@ import static com.mamoji.common.PayloadReader.intParam;
 
 @Service
 public class ReportingService {
+    private static final Comparator<TransactionRecord> TRANSACTION_ORDER =
+        Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
+
     private final InMemoryStore store;
     private final AccessControlService accessControl;
 
@@ -31,8 +36,9 @@ public class ReportingService {
     public Map<String, BigDecimal> overview(String authorization) {
         long userId = accessControl.requireUser(authorization).id;
         YearMonth current = YearMonth.now();
-        BigDecimal income = sumTransactions(userId, tx -> tx.type == 1 && sameMonth(tx.date, current));
-        BigDecimal expense = sumTransactions(userId, tx -> tx.type == 2 && sameMonth(tx.date, current));
+        List<TransactionRecord> txs = userTransactions(userId);
+        BigDecimal income = sumTransactions(txs, tx -> tx.type == 1 && sameMonth(tx.date, current));
+        BigDecimal expense = sumTransactions(txs, tx -> tx.type == 2 && sameMonth(tx.date, current));
         store.attachBudgetData();
         double usage = store.budgets.values().stream()
             .filter(budget -> budget.userId == userId && budget.status != 0)
@@ -49,6 +55,7 @@ public class ReportingService {
 
     public List<Map<String, Object>> trend(String authorization, Map<String, String> params) {
         long userId = accessControl.requireUser(authorization).id;
+        List<TransactionRecord> txs = userTransactions(userId);
         String period = params.getOrDefault("period", "month");
         int count = intParam(params, "limit", switch (period) {
             case "quarter" -> 4;
@@ -58,11 +65,11 @@ public class ReportingService {
         List<Map<String, Object>> points = new ArrayList<>();
         for (int i = Math.max(1, count) - 1; i >= 0; i--) {
             if ("quarter".equals(period)) {
-                points.add(trendPoint(userId, YearMonth.now().minusMonths(i * 3L), "quarter"));
+                points.add(trendPoint(txs, YearMonth.now().minusMonths(i * 3L), "quarter"));
             } else if ("year".equals(period)) {
-                points.add(trendPoint(userId, YearMonth.now().minusYears(i), "year"));
+                points.add(trendPoint(txs, YearMonth.now().minusYears(i), "year"));
             } else {
-                points.add(trendPoint(userId, YearMonth.now().minusMonths(i), "month"));
+                points.add(trendPoint(txs, YearMonth.now().minusMonths(i), "month"));
             }
         }
         return points;
@@ -96,13 +103,14 @@ public class ReportingService {
 
     public Map<String, Object> yearly(String authorization, int year) {
         long userId = accessControl.requireUser(authorization).id;
+        List<TransactionRecord> txs = userTransactions(userId);
         List<Map<String, Object>> months = new ArrayList<>();
         BigDecimal totalIncome = BigDecimal.ZERO;
         BigDecimal totalExpense = BigDecimal.ZERO;
         for (int month = 1; month <= 12; month++) {
             YearMonth current = YearMonth.of(year, month);
-            BigDecimal income = sumTransactions(userId, tx -> tx.type == 1 && sameMonth(tx.date, current));
-            BigDecimal expense = sumTransactions(userId, tx -> tx.type == 2 && sameMonth(tx.date, current));
+            BigDecimal income = sumTransactions(txs, tx -> tx.type == 1 && sameMonth(tx.date, current));
+            BigDecimal expense = sumTransactions(txs, tx -> tx.type == 2 && sameMonth(tx.date, current));
             totalIncome = totalIncome.add(income);
             totalExpense = totalExpense.add(expense);
             Map<String, Object> row = new LinkedHashMap<>();
@@ -125,8 +133,9 @@ public class ReportingService {
         long userId = accessControl.requireUser(authorization).id;
         Map<String, BigDecimal> summary = accountSummary(userId);
         Map<String, Object> result = new LinkedHashMap<>(summary);
-        List<Map<String, Object>> accounts = store.sortedAccounts().stream()
+        List<Map<String, Object>> accounts = store.accounts.values().stream()
             .filter(account -> account.userId == userId)
+            .sorted(Comparator.comparing(account -> account.id))
             .map(account -> {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("type", account.type);
@@ -140,20 +149,22 @@ public class ReportingService {
 
     public Map<String, Object> comparison(String authorization, Map<String, String> params) {
         long userId = accessControl.requireUser(authorization).id;
+        List<TransactionRecord> txs = userTransactions(userId);
         YearMonth current = YearMonth.now();
         YearMonth previous = current.minusMonths(1);
         YearMonth previousYear = current.minusYears(1);
-        BigDecimal currentExpense = sumTransactions(userId, tx -> tx.type == 2 && sameMonth(tx.date, current));
+        BigDecimal currentExpense = sumTransactions(txs, tx -> tx.type == 2 && sameMonth(tx.date, current));
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("mom", compare(currentExpense, sumTransactions(userId, tx -> tx.type == 2 && sameMonth(tx.date, previous))));
-        result.put("yoy", compare(currentExpense, sumTransactions(userId, tx -> tx.type == 2 && sameMonth(tx.date, previousYear))));
+        result.put("mom", compare(currentExpense, sumTransactions(txs, tx -> tx.type == 2 && sameMonth(tx.date, previous))));
+        result.put("yoy", compare(currentExpense, sumTransactions(txs, tx -> tx.type == 2 && sameMonth(tx.date, previousYear))));
         return result;
     }
 
     public Map<String, Object> insights(String authorization) {
         long userId = accessControl.requireUser(authorization).id;
-        List<Map<String, Object>> large = store.sortedTransactions().stream()
-            .filter(tx -> tx.userId == userId && tx.amount.compareTo(new BigDecimal("500")) >= 0)
+        List<TransactionRecord> txs = userTransactions(userId);
+        List<Map<String, Object>> large = txs.stream()
+            .filter(tx -> tx.amount.compareTo(new BigDecimal("500")) >= 0)
             .limit(5)
             .map(tx -> {
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -164,7 +175,7 @@ public class ReportingService {
                 return row;
             })
             .toList();
-        List<Map<String, Object>> spikes = List.of(Map.of("category", "Shopping", "current", 899, "previous", 320, "change", 579));
+        List<Map<String, Object>> spikes = categorySpikes(txs);
         store.attachBudgetData();
         List<Map<String, Object>> alerts = store.budgets.values().stream()
             .filter(budget -> budget.userId == userId)
@@ -175,7 +186,9 @@ public class ReportingService {
     }
 
     private Map<String, BigDecimal> accountSummary(long userId) {
-        List<Account> accounts = store.sortedAccounts().stream().filter(account -> account.userId == userId).toList();
+        List<Account> accounts = store.accounts.values().stream()
+            .filter(account -> account.userId == userId)
+            .toList();
         BigDecimal liabilities = accounts.stream()
             .filter(account -> account.includeInNetWorth)
             .filter(account -> account.type.equals("debt") || account.type.equals("credit"))
@@ -189,23 +202,29 @@ public class ReportingService {
         return Map.of("totalAssets", assets, "totalLiabilities", liabilities, "netWorth", assets.subtract(liabilities));
     }
 
-    private BigDecimal sumTransactions(long userId, Predicate<TransactionRecord> predicate) {
+    private List<TransactionRecord> userTransactions(long userId) {
         return store.transactions.values().stream()
             .filter(tx -> tx.userId == userId)
             .peek(store::attachTransactionRelations)
+            .sorted(TRANSACTION_ORDER)
+            .toList();
+    }
+
+    private BigDecimal sumTransactions(List<TransactionRecord> transactions, Predicate<TransactionRecord> predicate) {
+        return transactions.stream()
             .filter(predicate)
             .map(tx -> tx.amount)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private Map<String, Object> trendPoint(long userId, YearMonth anchor, String period) {
+    private Map<String, Object> trendPoint(List<TransactionRecord> transactions, YearMonth anchor, String period) {
         Predicate<TransactionRecord> range = switch (period) {
             case "quarter" -> tx -> sameQuarter(tx.date, anchor);
             case "year" -> tx -> sameYear(tx.date, anchor.getYear());
             default -> tx -> sameMonth(tx.date, anchor);
         };
-        BigDecimal income = sumTransactions(userId, tx -> tx.type == 1 && range.test(tx));
-        BigDecimal expense = sumTransactions(userId, tx -> tx.type == 2 && range.test(tx));
+        BigDecimal income = sumTransactions(transactions, tx -> tx.type == 1 && range.test(tx));
+        BigDecimal expense = sumTransactions(transactions, tx -> tx.type == 2 && range.test(tx));
         Map<String, Object> point = new LinkedHashMap<>();
         point.put("month", trendLabel(anchor, period));
         point.put("period", period);
@@ -214,6 +233,45 @@ public class ReportingService {
         point.put("balance", income.subtract(expense));
         point.put("hasData", income.compareTo(BigDecimal.ZERO) != 0 || expense.compareTo(BigDecimal.ZERO) != 0);
         return point;
+    }
+
+    private List<Map<String, Object>> categorySpikes(List<TransactionRecord> transactions) {
+        YearMonth current = YearMonth.now();
+        YearMonth previous = current.minusMonths(1);
+        Map<Long, BigDecimal> currentByCategory = new HashMap<>();
+        Map<Long, BigDecimal> previousByCategory = new HashMap<>();
+        transactions.stream()
+            .filter(tx -> tx.type == 2)
+            .forEach(tx -> {
+                if (sameMonth(tx.date, current)) {
+                    currentByCategory.merge(tx.categoryId, tx.amount, BigDecimal::add);
+                } else if (sameMonth(tx.date, previous)) {
+                    previousByCategory.merge(tx.categoryId, tx.amount, BigDecimal::add);
+                }
+            });
+        List<Map<String, Object>> rows = new ArrayList<>();
+        currentByCategory.forEach((categoryId, currentAmount) -> {
+            BigDecimal previousAmount = previousByCategory.getOrDefault(categoryId, BigDecimal.ZERO);
+            BigDecimal change = currentAmount.subtract(previousAmount);
+            if (change.compareTo(BigDecimal.ZERO) <= 0) {
+                return;
+            }
+            Category category = store.categories.get(categoryId);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("categoryId", categoryId);
+            row.put("category", category == null ? "Unknown" : category.name);
+            row.put("current", currentAmount);
+            row.put("previous", previousAmount);
+            row.put("change", change);
+            row.put("changePercent", previousAmount.compareTo(BigDecimal.ZERO) == 0
+                ? BigDecimal.ZERO
+                : change.multiply(BigDecimal.valueOf(100)).divide(previousAmount, 2, RoundingMode.HALF_UP));
+            rows.add(row);
+        });
+        return rows.stream()
+            .sorted(Comparator.comparing(row -> (BigDecimal) row.get("change"), Comparator.reverseOrder()))
+            .limit(5)
+            .toList();
     }
 
     private Map<String, Object> compare(BigDecimal current, BigDecimal previous) {

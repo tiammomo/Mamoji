@@ -15,6 +15,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AccountingService {
+    private static final Comparator<TransactionRecord> TRANSACTION_ORDER =
+        Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
+
     private final InMemoryStore store;
     private final AccessControlService accessControl;
 
@@ -39,13 +43,18 @@ public class AccountingService {
 
     public List<Account> listAccounts(String authorization) {
         User user = requireUser(authorization);
-        return store.sortedAccounts().stream().filter(account -> account.userId == user.id).toList();
+        return store.accounts.values().stream()
+            .filter(account -> account.userId == user.id)
+            .peek(this::attachAccountMetrics)
+            .sorted(Comparator.comparing(account -> account.id))
+            .toList();
     }
 
     public Account getAccount(String authorization, long id) {
         User user = requireUser(authorization);
         Account account = require(store.accounts.get(id), "Account not found");
         assertOwner(account.userId, user.id);
+        attachAccountMetrics(account);
         return account;
     }
 
@@ -61,7 +70,9 @@ public class AccountingService {
             String.valueOf(number(body.get("balance"), BigDecimal.ZERO))
         );
         account.includeInNetWorth = bool(body.get("includeInNetWorth"), true);
+        applyAccountFields(account, body);
         store.saveAccount(account);
+        attachAccountMetrics(account);
         return account;
     }
 
@@ -85,8 +96,10 @@ public class AccountingService {
         if (body.containsKey("includeInNetWorth")) {
             account.includeInNetWorth = bool(body.get("includeInNetWorth"), account.includeInNetWorth);
         }
+        applyAccountFields(account, body);
         touch(account);
         store.saveAccount(account);
+        attachAccountMetrics(account);
         return account;
     }
 
@@ -99,7 +112,7 @@ public class AccountingService {
         store.deleteAccount(id);
     }
 
-    public Map<String, BigDecimal> accountSummary(String authorization) {
+    public Map<String, Object> accountSummary(String authorization) {
         List<Account> accounts = listAccounts(authorization);
         BigDecimal liabilities = accounts.stream()
             .filter(account -> account.includeInNetWorth)
@@ -111,14 +124,46 @@ public class AccountingService {
             .filter(account -> !account.type.equals("debt") && !account.type.equals("credit"))
             .map(account -> account.balance.max(BigDecimal.ZERO))
             .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return Map.of("totalAssets", assets, "totalLiabilities", liabilities, "netWorth", assets.subtract(liabilities));
+        BigDecimal availableBalance = accounts.stream()
+            .filter(account -> !account.type.equals("debt"))
+            .map(account -> account.availableBalance)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal frozenAmount = accounts.stream().map(account -> account.frozenAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal creditLimit = accounts.stream()
+            .filter(account -> account.type.equals("credit"))
+            .map(account -> account.creditLimit)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal currentMonthIncome = accounts.stream().map(account -> account.monthlyIncome).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal currentMonthExpense = accounts.stream().map(account -> account.monthlyExpense).reduce(BigDecimal.ZERO, BigDecimal::add);
+        long activeAccountCount = accounts.stream().filter(account -> account.status == 1).count();
+        long pendingReconciliationCount = accounts.stream()
+            .filter(account -> !"reconciled".equals(account.reconciliationStatus))
+            .count();
+        long highRiskCount = accounts.stream()
+            .filter(account -> account.riskLevel.equals("high") || account.riskLevel.equals("critical"))
+            .count();
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("totalAssets", assets);
+        summary.put("totalLiabilities", liabilities);
+        summary.put("netWorth", assets.subtract(liabilities));
+        summary.put("availableBalance", availableBalance);
+        summary.put("frozenAmount", frozenAmount);
+        summary.put("creditLimit", creditLimit);
+        summary.put("currentMonthIncome", currentMonthIncome);
+        summary.put("currentMonthExpense", currentMonthExpense);
+        summary.put("accountCount", accounts.size());
+        summary.put("activeAccountCount", activeAccountCount);
+        summary.put("pendingReconciliationCount", pendingReconciliationCount);
+        summary.put("highRiskCount", highRiskCount);
+        return summary;
     }
 
     public List<Category> listCategories(String authorization, String type) {
         User user = requireUser(authorization);
-        return store.sortedCategories().stream()
+        return store.categories.values().stream()
             .filter(category -> category.userId == user.id)
             .filter(category -> type == null || type.isBlank() || category.type.equals(type))
+            .sorted(Comparator.comparing(category -> category.id))
             .toList();
     }
 
@@ -171,9 +216,10 @@ public class AccountingService {
     public PagedResponse<Budget> listBudgets(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
         store.attachBudgetData();
-        List<Budget> budgets = store.sortedBudgets().stream()
+        List<Budget> budgets = store.budgets.values().stream()
             .filter(budget -> budget.userId == user.id)
             .filter(filterBudget(params))
+            .sorted(Comparator.comparing(budget -> budget.id))
             .toList();
         return PagedResponse.of(budgets, PageRequest.from(params));
     }
@@ -202,7 +248,7 @@ public class AccountingService {
             textOr(body.get("endDate"), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString()),
             intValue(body.get("warningThreshold"), 85)
         );
-        store.attachBudgetData();
+        store.refreshBudgetData();
         return budget;
     }
 
@@ -230,7 +276,8 @@ public class AccountingService {
             budget.status = intValue(body.get("status"), budget.status);
         }
         touch(budget);
-        store.attachBudgetData();
+        store.saveBudget(budget);
+        store.refreshBudgetData();
         return budget;
     }
 
@@ -241,10 +288,11 @@ public class AccountingService {
 
     public PagedResponse<TransactionRecord> listTransactions(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
-        List<TransactionRecord> txs = store.sortedTransactions().stream()
+        List<TransactionRecord> txs = store.transactions.values().stream()
             .filter(tx -> tx.userId == user.id)
             .peek(store::attachTransactionRelations)
             .filter(filterTransaction(params))
+            .sorted(TRANSACTION_ORDER)
             .toList();
         return PagedResponse.of(txs, PageRequest.from(params));
     }
@@ -272,7 +320,7 @@ public class AccountingService {
         tx.budgetId = matchingBudgetId(tx).orElse(null);
         store.saveTransaction(tx);
         applyToAccount(tx, 1);
-        store.attachBudgetData();
+        store.refreshBudgetData();
         return Map.of("transaction", tx, "risk", riskFor(tx));
     }
 
@@ -302,7 +350,7 @@ public class AccountingService {
         touch(tx);
         store.saveTransaction(tx);
         applyToAccount(tx, 1);
-        store.attachBudgetData();
+        store.refreshBudgetData();
         return tx;
     }
 
@@ -311,15 +359,16 @@ public class AccountingService {
         TransactionRecord tx = requireTransaction(user, id);
         applyToAccount(tx, -1);
         store.deleteTransaction(id);
-        store.attachBudgetData();
+        store.refreshBudgetData();
     }
 
     public List<TransactionRecord> refundableTransactions(String authorization) {
         User user = requireUser(authorization);
-        return store.sortedTransactions().stream()
+        return store.transactions.values().stream()
             .filter(tx -> tx.userId == user.id)
             .filter(tx -> tx.type == 2 && tx.isRefundable)
             .peek(store::attachTransactionRelations)
+            .sorted(TRANSACTION_ORDER)
             .toList();
     }
 
@@ -352,8 +401,149 @@ public class AccountingService {
         store.saveTransaction(refund);
         store.saveTransaction(original);
         applyToAccount(refund, 1);
-        store.attachBudgetData();
+        store.refreshBudgetData();
         return Map.of("transaction", refund, "risk", riskFor(refund));
+    }
+
+    private void applyAccountFields(Account account, Map<String, Object> body) {
+        if (body.containsKey("accountNo")) {
+            account.accountNo = nullableText(body.get("accountNo"));
+        }
+        if (body.containsKey("openingBank")) {
+            account.openingBank = nullableText(body.get("openingBank"));
+        }
+        if (body.containsKey("currency")) {
+            account.currency = textOr(body.get("currency"), "CNY");
+        } else if (account.currency == null || account.currency.isBlank()) {
+            account.currency = "CNY";
+        }
+        if (body.containsKey("availableBalance")) {
+            account.availableBalance = number(body.get("availableBalance"), account.availableBalance);
+        } else if (account.availableBalance == null) {
+            account.availableBalance = account.balance.subtract(nullToZero(account.frozenAmount));
+        }
+        if (body.containsKey("creditLimit")) {
+            account.creditLimit = number(body.get("creditLimit"), account.creditLimit);
+        } else if (account.creditLimit == null) {
+            account.creditLimit = BigDecimal.ZERO;
+        }
+        if (body.containsKey("frozenAmount")) {
+            account.frozenAmount = number(body.get("frozenAmount"), account.frozenAmount);
+        } else if (account.frozenAmount == null) {
+            account.frozenAmount = BigDecimal.ZERO;
+        }
+        if (body.containsKey("openedAt")) {
+            account.openedAt = nullableText(body.get("openedAt"));
+        }
+        if (body.containsKey("lastReconciledAt")) {
+            account.lastReconciledAt = nullableText(body.get("lastReconciledAt"));
+        }
+        if (body.containsKey("ownerName")) {
+            account.ownerName = nullableText(body.get("ownerName"));
+        } else if (account.ownerName == null || account.ownerName.isBlank()) {
+            account.ownerName = "财务负责人";
+        }
+        if (body.containsKey("purpose")) {
+            account.purpose = nullableText(body.get("purpose"));
+        } else if (account.purpose == null || account.purpose.isBlank()) {
+            account.purpose = accountPurpose(account.type);
+        }
+        if (body.containsKey("reconciliationStatus")) {
+            account.reconciliationStatus = normalizeReconciliationStatus(text(body.get("reconciliationStatus")));
+        } else if (account.reconciliationStatus == null || account.reconciliationStatus.isBlank()) {
+            account.reconciliationStatus = "pending";
+        }
+        if (body.containsKey("status")) {
+            account.status = intValue(body.get("status"), account.status);
+        }
+        account.riskLevel = accountRisk(account);
+    }
+
+    private void attachAccountMetrics(Account account) {
+        YearMonth current = YearMonth.now();
+        BigDecimal monthlyIncome = BigDecimal.ZERO;
+        BigDecimal monthlyExpense = BigDecimal.ZERO;
+        long transactionCount = 0;
+        String lastTransactionDate = null;
+        for (TransactionRecord tx : store.transactions.values()) {
+            if (tx.accountId != account.id || tx.userId != account.userId) {
+                continue;
+            }
+            transactionCount++;
+            if (lastTransactionDate == null || tx.date.compareTo(lastTransactionDate) > 0) {
+                lastTransactionDate = tx.date;
+            }
+            if (sameMonth(tx.date, current)) {
+                if (tx.type == 1 || tx.type == 3) {
+                    monthlyIncome = monthlyIncome.add(tx.amount);
+                } else if (tx.type == 2) {
+                    monthlyExpense = monthlyExpense.add(tx.amount);
+                }
+            }
+        }
+        account.monthlyIncome = monthlyIncome;
+        account.monthlyExpense = monthlyExpense;
+        account.currentMonthNetFlow = monthlyIncome.subtract(monthlyExpense);
+        account.transactionCount = transactionCount;
+        account.lastTransactionDate = lastTransactionDate;
+        if (account.availableBalance == null) {
+            account.availableBalance = account.balance.subtract(nullToZero(account.frozenAmount));
+        }
+        if (account.creditLimit == null) {
+            account.creditLimit = BigDecimal.ZERO;
+        }
+        if (account.frozenAmount == null) {
+            account.frozenAmount = BigDecimal.ZERO;
+        }
+        account.riskLevel = accountRisk(account);
+    }
+
+    private String accountRisk(Account account) {
+        if (account.status == 0) {
+            return "medium";
+        }
+        if ("credit".equals(account.type)
+            && account.creditLimit.compareTo(BigDecimal.ZERO) > 0
+            && account.balance.abs().compareTo(account.creditLimit.multiply(new BigDecimal("0.9"))) >= 0) {
+            return "high";
+        }
+        if (account.availableBalance.compareTo(BigDecimal.ZERO) < 0 || "exception".equals(account.reconciliationStatus)) {
+            return "high";
+        }
+        if (isReconciliationStale(account) || account.frozenAmount.compareTo(BigDecimal.ZERO) > 0 || "pending".equals(account.reconciliationStatus)) {
+            return "medium";
+        }
+        return "low";
+    }
+
+    private boolean isReconciliationStale(Account account) {
+        if (account.lastReconciledAt == null || account.lastReconciledAt.isBlank()) {
+            return true;
+        }
+        try {
+            return LocalDate.parse(account.lastReconciledAt).isBefore(LocalDate.now().minusDays(15));
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private String normalizeReconciliationStatus(String value) {
+        return switch (value) {
+            case "reconciled", "pending", "exception" -> value;
+            default -> "pending";
+        };
+    }
+
+    private String accountPurpose(String type) {
+        return switch (type) {
+            case "cash" -> "零星备用金和小额报销";
+            case "bank" -> "客户回款、供应商付款和税费缴纳";
+            case "credit" -> "短期周转和线上订阅付款";
+            case "digital" -> "线上支付和平台收款";
+            case "investment" -> "闲置资金理财和收益管理";
+            case "debt" -> "借款、垫资和负债管理";
+            default -> "企业资金账户";
+        };
     }
 
     private User requireUser(String authorization) {
@@ -405,18 +595,42 @@ public class AccountingService {
 
     private Map<String, Object> riskFor(TransactionRecord tx) {
         YearMonth month = YearMonth.from(LocalDate.parse(tx.date));
-        BigDecimal income = sumTransactions(tx.userId, item -> item.type == 1 && sameMonth(item.date, month));
-        BigDecimal expense = sumTransactions(tx.userId, item -> item.type == 2 && sameMonth(item.date, month));
-        long dailyExpenseCount = store.transactions.values().stream()
-            .filter(item -> item.userId == tx.userId && item.type == 2 && item.date.equals(tx.date))
-            .count();
-        long duplicateCount = store.transactions.values().stream()
-            .filter(item -> item.userId == tx.userId && item.id != tx.id)
-            .filter(item -> item.type == tx.type && item.categoryId == tx.categoryId && item.accountId == tx.accountId)
-            .filter(item -> item.amount.compareTo(tx.amount) == 0 && item.date.equals(tx.date))
-            .count();
-        BigDecimal categoryCurrent = sumTransactions(tx.userId, item -> item.categoryId == tx.categoryId && item.type == 2 && sameMonth(item.date, month));
-        BigDecimal categoryLast = sumTransactions(tx.userId, item -> item.categoryId == tx.categoryId && item.type == 2 && sameMonth(item.date, month.minusMonths(1)));
+        YearMonth previousMonth = month.minusMonths(1);
+        BigDecimal income = BigDecimal.ZERO;
+        BigDecimal expense = BigDecimal.ZERO;
+        BigDecimal categoryCurrent = BigDecimal.ZERO;
+        BigDecimal categoryLast = BigDecimal.ZERO;
+        long dailyExpenseCount = 0;
+        long duplicateCount = 0;
+        for (TransactionRecord item : store.transactions.values()) {
+            if (item.userId != tx.userId) {
+                continue;
+            }
+            store.attachTransactionRelations(item);
+            boolean currentMonth = sameMonth(item.date, month);
+            if (currentMonth && item.type == 1) {
+                income = income.add(item.amount);
+            }
+            if (currentMonth && item.type == 2) {
+                expense = expense.add(item.amount);
+            }
+            if (item.type == 2 && item.date.equals(tx.date)) {
+                dailyExpenseCount++;
+            }
+            if (item.id != tx.id
+                && item.type == tx.type
+                && item.categoryId == tx.categoryId
+                && item.accountId == tx.accountId
+                && item.amount.compareTo(tx.amount) == 0
+                && item.date.equals(tx.date)) {
+                duplicateCount++;
+            }
+            if (item.categoryId == tx.categoryId && item.type == 2 && currentMonth) {
+                categoryCurrent = categoryCurrent.add(item.amount);
+            } else if (item.categoryId == tx.categoryId && item.type == 2 && sameMonth(item.date, previousMonth)) {
+                categoryLast = categoryLast.add(item.amount);
+            }
+        }
         List<String> flags = new ArrayList<>();
         String level = "low";
         if (tx.amount.compareTo(new BigDecimal("5000")) >= 0 && tx.type == 2) {
@@ -445,15 +659,6 @@ public class AccountingService {
         risk.put("categoryCurrentMonth", categoryCurrent);
         risk.put("categoryLastMonth", categoryLast);
         return risk;
-    }
-
-    private BigDecimal sumTransactions(long userId, Predicate<TransactionRecord> predicate) {
-        return store.transactions.values().stream()
-            .filter(tx -> tx.userId == userId)
-            .peek(store::attachTransactionRelations)
-            .filter(predicate)
-            .map(tx -> tx.amount)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private Predicate<TransactionRecord> filterTransaction(Map<String, String> params) {
@@ -578,6 +783,10 @@ public class AccountingService {
 
     private static BigDecimal decimalParam(Map<String, String> params, String key, BigDecimal fallback) {
         return PayloadReader.decimalParam(params, key, fallback);
+    }
+
+    private static BigDecimal nullToZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
 }

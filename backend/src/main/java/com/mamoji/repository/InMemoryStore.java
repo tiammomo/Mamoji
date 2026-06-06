@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,7 +64,7 @@ public class InMemoryStore {
         if (users.isEmpty()) {
             seed();
         } else {
-            attachBudgetData();
+            refreshBudgetData();
         }
     }
 
@@ -89,6 +90,9 @@ public class InMemoryStore {
 
     private void createSchema() {
         jdbc.execute("PRAGMA foreign_keys = ON");
+        jdbc.execute("PRAGMA journal_mode = WAL");
+        jdbc.execute("PRAGMA synchronous = NORMAL");
+        jdbc.execute("PRAGMA busy_timeout = 5000");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,15 +114,39 @@ public class InMemoryStore {
                 type TEXT NOT NULL,
                 sub_type TEXT,
                 bank TEXT,
+                account_no TEXT,
+                opening_bank TEXT,
+                currency TEXT NOT NULL DEFAULT 'CNY',
                 balance TEXT NOT NULL,
+                available_balance TEXT NOT NULL DEFAULT '0',
+                credit_limit TEXT NOT NULL DEFAULT '0',
+                frozen_amount TEXT NOT NULL DEFAULT '0',
                 include_in_net_worth INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 ledger_id INTEGER,
                 status INTEGER NOT NULL,
+                opened_at TEXT,
+                last_reconciled_at TEXT,
+                owner_name TEXT,
+                purpose TEXT,
+                reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+                risk_level TEXT NOT NULL DEFAULT 'low',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("accounts", "account_no", "TEXT");
+        ensureColumn("accounts", "opening_bank", "TEXT");
+        ensureColumn("accounts", "currency", "TEXT NOT NULL DEFAULT 'CNY'");
+        ensureColumn("accounts", "available_balance", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("accounts", "credit_limit", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("accounts", "frozen_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("accounts", "opened_at", "TEXT");
+        ensureColumn("accounts", "last_reconciled_at", "TEXT");
+        ensureColumn("accounts", "owner_name", "TEXT");
+        ensureColumn("accounts", "purpose", "TEXT");
+        ensureColumn("accounts", "reconciliation_status", "TEXT NOT NULL DEFAULT 'pending'");
+        ensureColumn("accounts", "risk_level", "TEXT NOT NULL DEFAULT 'low'");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,6 +253,41 @@ public class InMemoryStore {
                 created_at TEXT NOT NULL
             )
             """);
+        createIndexes();
+    }
+
+    private void ensureColumn(String tableName, String columnName, String definition) {
+        Boolean exists = jdbc.query("PRAGMA table_info(" + tableName + ")", rs -> {
+            while (rs.next()) {
+                if (columnName.equals(rs.getString("name"))) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (Boolean.TRUE.equals(exists)) {
+            return;
+        }
+        jdbc.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
+    }
+
+    private void createIndexes() {
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_status ON accounts(user_id, status)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_type ON accounts(user_id, type)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_reconciliation ON accounts(user_id, reconciliation_status)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_risk ON accounts(user_id, risk_level)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_categories_user_type ON categories(user_id, type)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_user_status_dates ON budgets(user_id, status, start_date, end_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_category_dates ON budgets(category_id, start_date, end_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_type_date ON transactions(user_id, type, date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_category_date ON transactions(category_id, date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_budget ON transactions(budget_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledgers_owner_default ON ledgers(owner_id, is_default)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledger_members_ledger_user ON ledger_members(ledger_id, user_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_user_status_next ON recurring_items(user_id, status, next_execution)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)");
     }
 
     private void loadAll() {
@@ -323,13 +386,28 @@ public class InMemoryStore {
         account.type = type;
         account.subType = subType;
         account.bank = bank;
+        account.accountNo = null;
+        account.openingBank = bank;
+        account.currency = "CNY";
         account.balance = money(balance);
+        account.availableBalance = account.balance;
+        account.creditLimit = "credit".equals(type) ? account.balance.abs().max(new BigDecimal("20000")) : BigDecimal.ZERO;
+        account.frozenAmount = BigDecimal.ZERO;
         account.includeInNetWorth = true;
         account.status = 1;
+        account.openedAt = LocalDate.now().minusMonths(6).toString();
+        account.lastReconciledAt = LocalDate.now().minusDays("cash".equals(type) ? 8 : 2).toString();
+        account.ownerName = "财务负责人";
+        account.purpose = defaultAccountPurpose(account);
+        account.reconciliationStatus = "cash".equals(type) ? "pending" : "reconciled";
+        account.riskLevel = "low";
         stamp(account);
         account.id = insert("""
-            INSERT INTO accounts (name, type, sub_type, bank, balance, include_in_net_worth, user_id, ledger_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO accounts (
+                name, type, sub_type, bank, account_no, opening_bank, currency, balance, available_balance,
+                credit_limit, frozen_amount, include_in_net_worth, user_id, ledger_id, status, opened_at,
+                last_reconciled_at, owner_name, purpose, reconciliation_status, risk_level, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindAccountInsert(ps, account));
         accounts.put(account.id, account);
         return account;
@@ -448,10 +526,15 @@ public class InMemoryStore {
     public void saveAccount(Account account) {
         accounts.put(account.id, account);
         jdbc.update("""
-            UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, balance = ?, include_in_net_worth = ?,
-                user_id = ?, ledger_id = ?, status = ?, created_at = ?, updated_at = ? WHERE id = ?
-            """, account.name, account.type, account.subType, account.bank, moneyText(account.balance),
-            intBool(account.includeInNetWorth), account.userId, account.ledgerId, account.status, account.createdAt, account.updatedAt, account.id);
+            UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, account_no = ?, opening_bank = ?, currency = ?,
+                balance = ?, available_balance = ?, credit_limit = ?, frozen_amount = ?, include_in_net_worth = ?,
+                user_id = ?, ledger_id = ?, status = ?, opened_at = ?, last_reconciled_at = ?, owner_name = ?,
+                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ? WHERE id = ?
+            """, account.name, account.type, account.subType, account.bank, account.accountNo, account.openingBank,
+            account.currency, moneyText(account.balance), moneyText(account.availableBalance), moneyText(account.creditLimit),
+            moneyText(account.frozenAmount), intBool(account.includeInNetWorth), account.userId, account.ledgerId,
+            account.status, account.openedAt, account.lastReconciledAt, account.ownerName, account.purpose,
+            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.id);
     }
 
     public void saveCategory(Category category) {
@@ -576,16 +659,51 @@ public class InMemoryStore {
     }
 
     public void attachBudgetData() {
+        attachBudgetData(false);
+    }
+
+    public void refreshBudgetData() {
+        attachBudgetData(true);
+    }
+
+    private void attachBudgetData(boolean persist) {
+        List<TransactionRecord> expenseTransactions = transactions.values().stream()
+            .filter(tx -> tx.type == 2)
+            .toList();
         budgets.values().forEach(budget -> {
-            budget.spent = transactions.values().stream()
-                .filter(tx -> tx.type == 2)
+            BigDecimal previousSpent = budget.spent;
+            BigDecimal previousRemaining = budget.remainingAmount;
+            double previousUsageRate = budget.usageRate;
+            boolean previousWarningReached = budget.warningReached;
+            String previousRiskLevel = budget.riskLevel;
+            String previousRiskMessage = budget.riskMessage;
+            int previousStatus = budget.status;
+            String previousCategoryName = budget.categoryName;
+            String previousCategoryIcon = budget.categoryIcon;
+
+            budget.spent = expenseTransactions.stream()
+                .filter(tx -> tx.userId == budget.userId)
+                .filter(tx -> budget.ledgerId == null || Objects.equals(budget.ledgerId, tx.familyId))
                 .filter(tx -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
                 .filter(tx -> tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0)
                 .map(tx -> tx.amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
             attachCategory(budget);
             recalculateBudget(budget);
-            saveBudget(budget);
+            if (persist && budgetComputedDataChanged(
+                budget,
+                previousSpent,
+                previousRemaining,
+                previousUsageRate,
+                previousWarningReached,
+                previousRiskLevel,
+                previousRiskMessage,
+                previousStatus,
+                previousCategoryName,
+                previousCategoryIcon
+            )) {
+                saveBudget(budget);
+            }
         });
     }
 
@@ -635,6 +753,33 @@ public class InMemoryStore {
         }
     }
 
+    private boolean budgetComputedDataChanged(
+        Budget budget,
+        BigDecimal previousSpent,
+        BigDecimal previousRemaining,
+        double previousUsageRate,
+        boolean previousWarningReached,
+        String previousRiskLevel,
+        String previousRiskMessage,
+        int previousStatus,
+        String previousCategoryName,
+        String previousCategoryIcon
+    ) {
+        return !sameMoney(previousSpent, budget.spent)
+            || !sameMoney(previousRemaining, budget.remainingAmount)
+            || Double.compare(previousUsageRate, budget.usageRate) != 0
+            || previousWarningReached != budget.warningReached
+            || previousStatus != budget.status
+            || !Objects.equals(previousRiskLevel, budget.riskLevel)
+            || !Objects.equals(previousRiskMessage, budget.riskMessage)
+            || !Objects.equals(previousCategoryName, budget.categoryName)
+            || !Objects.equals(previousCategoryIcon, budget.categoryIcon);
+    }
+
+    private boolean sameMoney(BigDecimal left, BigDecimal right) {
+        return nullToZero(left).compareTo(nullToZero(right)) == 0;
+    }
+
     public Map<String, Object> snapshot() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("users", new ArrayList<>(users.values()));
@@ -669,13 +814,26 @@ public class InMemoryStore {
         account.type = rs.getString("type");
         account.subType = rs.getString("sub_type");
         account.bank = rs.getString("bank");
+        account.accountNo = rs.getString("account_no");
+        account.openingBank = rs.getString("opening_bank");
+        account.currency = textOr(rs.getString("currency"), "CNY");
         account.balance = money(rs.getString("balance"));
+        account.availableBalance = money(rs.getString("available_balance"));
+        account.creditLimit = money(rs.getString("credit_limit"));
+        account.frozenAmount = money(rs.getString("frozen_amount"));
         account.includeInNetWorth = rs.getInt("include_in_net_worth") == 1;
         account.userId = rs.getLong("user_id");
         account.ledgerId = nullableLong(rs, "ledger_id");
         account.status = rs.getInt("status");
+        account.openedAt = rs.getString("opened_at");
+        account.lastReconciledAt = rs.getString("last_reconciled_at");
+        account.ownerName = rs.getString("owner_name");
+        account.purpose = rs.getString("purpose");
+        account.reconciliationStatus = textOr(rs.getString("reconciliation_status"), "pending");
+        account.riskLevel = textOr(rs.getString("risk_level"), "low");
         account.createdAt = rs.getString("created_at");
         account.updatedAt = rs.getString("updated_at");
+        hydrateAccountDefaults(account);
         return account;
     }
 
@@ -796,18 +954,66 @@ public class InMemoryStore {
         ps.setString(9, user.updatedAt);
     }
 
+    private static void hydrateAccountDefaults(Account account) {
+        account.currency = textOr(account.currency, "CNY");
+        account.openingBank = textOr(account.openingBank, account.bank);
+        account.ownerName = textOr(account.ownerName, "财务负责人");
+        account.purpose = textOr(account.purpose, defaultAccountPurpose(account));
+        account.reconciliationStatus = textOr(account.reconciliationStatus, "pending");
+        account.riskLevel = textOr(account.riskLevel, "low");
+        account.openedAt = textOr(account.openedAt, LocalDate.now().minusMonths(6).toString());
+        account.lastReconciledAt = textOr(account.lastReconciledAt, "cash".equals(account.type) ? null : LocalDate.now().minusDays(2).toString());
+        account.creditLimit = nullToZero(account.creditLimit);
+        account.frozenAmount = nullToZero(account.frozenAmount);
+        if ("credit".equals(account.type) && account.creditLimit.compareTo(BigDecimal.ZERO) == 0) {
+            account.creditLimit = account.balance.abs().max(new BigDecimal("20000"));
+        }
+        if (account.availableBalance == null || account.availableBalance.compareTo(BigDecimal.ZERO) == 0 && account.balance.compareTo(BigDecimal.ZERO) != 0) {
+            account.availableBalance = "credit".equals(account.type)
+                ? account.creditLimit.subtract(account.balance.abs()).subtract(account.frozenAmount).max(BigDecimal.ZERO)
+                : account.balance.subtract(account.frozenAmount);
+        }
+        account.monthlyIncome = BigDecimal.ZERO;
+        account.monthlyExpense = BigDecimal.ZERO;
+        account.currentMonthNetFlow = BigDecimal.ZERO;
+    }
+
+    private static String defaultAccountPurpose(Account account) {
+        return switch (account.type) {
+            case "cash" -> "零星备用金和小额报销";
+            case "bank" -> "客户回款、供应商付款和税费缴纳";
+            case "credit" -> "短期周转和线上订阅付款";
+            case "digital" -> "线上支付和平台收款";
+            case "investment" -> "闲置资金理财和收益管理";
+            case "debt" -> "借款、垫资和负债管理";
+            default -> "企业资金账户";
+        };
+    }
+
     private void bindAccountInsert(PreparedStatement ps, Account account) throws SQLException {
         ps.setString(1, account.name);
         ps.setString(2, account.type);
         ps.setString(3, account.subType);
         ps.setString(4, account.bank);
-        ps.setString(5, moneyText(account.balance));
-        ps.setInt(6, intBool(account.includeInNetWorth));
-        ps.setLong(7, account.userId);
-        setLongOrNull(ps, 8, account.ledgerId);
-        ps.setInt(9, account.status);
-        ps.setString(10, account.createdAt);
-        ps.setString(11, account.updatedAt);
+        ps.setString(5, account.accountNo);
+        ps.setString(6, account.openingBank);
+        ps.setString(7, account.currency);
+        ps.setString(8, moneyText(account.balance));
+        ps.setString(9, moneyText(account.availableBalance));
+        ps.setString(10, moneyText(account.creditLimit));
+        ps.setString(11, moneyText(account.frozenAmount));
+        ps.setInt(12, intBool(account.includeInNetWorth));
+        ps.setLong(13, account.userId);
+        setLongOrNull(ps, 14, account.ledgerId);
+        ps.setInt(15, account.status);
+        ps.setString(16, account.openedAt);
+        ps.setString(17, account.lastReconciledAt);
+        ps.setString(18, account.ownerName);
+        ps.setString(19, account.purpose);
+        ps.setString(20, account.reconciliationStatus);
+        ps.setString(21, account.riskLevel);
+        ps.setString(22, account.createdAt);
+        ps.setString(23, account.updatedAt);
     }
 
     private void bindCategoryInsert(PreparedStatement ps, Category category) throws SQLException {
@@ -920,6 +1126,10 @@ public class InMemoryStore {
 
     private static String moneyText(BigDecimal value) {
         return nullToZero(value).stripTrailingZeros().toPlainString();
+    }
+
+    private static String textOr(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     public static BigDecimal money(Object value) {

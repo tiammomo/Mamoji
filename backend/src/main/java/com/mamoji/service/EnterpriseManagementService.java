@@ -209,24 +209,48 @@ public class EnterpriseManagementService {
         return enterpriseStore.sortedTaxItems(company.id);
     }
 
+    public TaxItem createTaxItem(String authorization, Map<String, Object> body) {
+        User user = accessControl.requireFinanceManager(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        TaxItem item = enterpriseStore.taxItem(
+            company.id,
+            textOr(body.get("name"), "新税务事项"),
+            textOr(body.get("period"), YearMonth.now().toString()),
+            textOr(body.get("taxType"), "vat"),
+            String.valueOf(number(body.get("taxableAmount"), BigDecimal.ZERO)),
+            String.valueOf(number(body.get("taxAmount"), BigDecimal.ZERO)),
+            String.valueOf(number(body.get("paidAmount"), BigDecimal.ZERO)),
+            textOr(body.get("dueDate"), LocalDate.now().plusDays(15).toString()),
+            textOr(body.get("status"), "estimated"),
+            nullableText(body.get("note"))
+        );
+        applyTaxItemFields(item, body);
+        syncTaxItemDerivedFields(item, !body.containsKey("status"));
+        touch(item);
+        enterpriseStore.saveTaxItem(item);
+        return item;
+    }
+
     public TaxItem updateTaxItem(String authorization, long id, Map<String, Object> body) {
-        User user = accessControl.requireAdmin(authorization);
+        User user = accessControl.requireFinanceManager(authorization);
         TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
         if (!accessControl.canAccessCompany(user, item.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
-        if (body.containsKey("status")) {
-            item.status = text(body.get("status"));
-        }
-        if (body.containsKey("paidAmount")) {
-            item.paidAmount = number(body.get("paidAmount"), item.paidAmount);
-        }
-        if (body.containsKey("note")) {
-            item.note = nullableText(body.get("note"));
-        }
+        applyTaxItemFields(item, body);
+        syncTaxItemDerivedFields(item, !body.containsKey("status"));
         touch(item);
         enterpriseStore.saveTaxItem(item);
         return item;
+    }
+
+    public void deleteTaxItem(String authorization, long id) {
+        User user = accessControl.requireFinanceManager(authorization);
+        TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
+        if (!accessControl.canAccessCompany(user, item.companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
+        }
+        enterpriseStore.deleteTaxItem(id);
     }
 
     public List<EntityTransfer> listEntityTransfers(String authorization, Long entityId) {
@@ -267,6 +291,108 @@ public class EnterpriseManagementService {
             textOr(body.get("status"), "recorded"),
             user.id
         );
+    }
+
+    private void applyTaxItemFields(TaxItem item, Map<String, Object> body) {
+        if (body.containsKey("name")) {
+            item.name = text(body.get("name"));
+        }
+        if (body.containsKey("period")) {
+            item.period = text(body.get("period"));
+        }
+        if (body.containsKey("taxType")) {
+            item.taxType = text(body.get("taxType"));
+        }
+        if (body.containsKey("taxableAmount")) {
+            item.taxableAmount = number(body.get("taxableAmount"), item.taxableAmount);
+        }
+        if (body.containsKey("taxAmount")) {
+            item.taxAmount = number(body.get("taxAmount"), item.taxAmount);
+        }
+        if (body.containsKey("paidAmount")) {
+            item.paidAmount = number(body.get("paidAmount"), item.paidAmount);
+        }
+        if (body.containsKey("deductibleAmount")) {
+            item.deductibleAmount = number(body.get("deductibleAmount"), item.deductibleAmount);
+        }
+        if (body.containsKey("taxRate")) {
+            item.taxRate = number(body.get("taxRate"), item.taxRate);
+        } else {
+            item.taxRate = inferredTaxRate(item);
+        }
+        if (body.containsKey("dueDate")) {
+            item.dueDate = text(body.get("dueDate"));
+        }
+        if (body.containsKey("status")) {
+            item.status = normalizeTaxStatus(text(body.get("status")));
+        }
+        if (body.containsKey("filingStatus")) {
+            item.filingStatus = normalizeFilingStatus(text(body.get("filingStatus")));
+        }
+        if (body.containsKey("paymentStatus")) {
+            item.paymentStatus = normalizePaymentStatus(text(body.get("paymentStatus")));
+        }
+        if (body.containsKey("frequency")) {
+            item.frequency = normalizeFrequency(text(body.get("frequency")));
+        }
+        if (body.containsKey("declarationDate")) {
+            item.declarationDate = nullableText(body.get("declarationDate"));
+        }
+        if (body.containsKey("paymentDate")) {
+            item.paymentDate = nullableText(body.get("paymentDate"));
+        }
+        if (body.containsKey("responsiblePerson")) {
+            item.responsiblePerson = nullableText(body.get("responsiblePerson"));
+        }
+        if (body.containsKey("riskLevel")) {
+            item.riskLevel = normalizeRiskLevel(text(body.get("riskLevel")));
+        }
+        if (body.containsKey("policyBasis")) {
+            item.policyBasis = nullableText(body.get("policyBasis"));
+        }
+        if (body.containsKey("sourceType")) {
+            item.sourceType = normalizeSourceType(text(body.get("sourceType")));
+        }
+        if (body.containsKey("note")) {
+            item.note = nullableText(body.get("note"));
+        }
+    }
+
+    private void syncTaxItemDerivedFields(TaxItem item, boolean allowStatusSync) {
+        if ("paid".equals(item.status) && nullToZero(item.paidAmount).compareTo(nullToZero(item.taxAmount)) < 0) {
+            item.paidAmount = nullToZero(item.taxAmount);
+        }
+        item.paymentStatus = normalizePaymentStatus(paymentStatusFor(item));
+        if (item.filingStatus == null || item.filingStatus.isBlank()) {
+            item.filingStatus = filingStatusFor(item.status);
+        }
+        if (item.frequency == null || item.frequency.isBlank()) {
+            item.frequency = frequencyFor(item.period);
+        }
+        if (item.responsiblePerson == null || item.responsiblePerson.isBlank()) {
+            item.responsiblePerson = "财务负责人";
+        }
+        if (item.policyBasis == null || item.policyBasis.isBlank()) {
+            item.policyBasis = enterpriseStore.companies.containsKey(item.companyId)
+                ? enterpriseStore.companies.get(item.companyId).policyProfileKey
+                : "CN-DEFAULT-DEMO-POLICY";
+        }
+        if (item.sourceType == null || item.sourceType.isBlank()) {
+            item.sourceType = "manual";
+        }
+        if ("paid".equals(item.paymentStatus)) {
+            item.filingStatus = "accepted";
+            if (allowStatusSync) {
+                item.status = "paid";
+            }
+            if (item.paymentDate == null || item.paymentDate.isBlank()) {
+                item.paymentDate = LocalDate.now().toString();
+            }
+        } else if (allowStatusSync && parseDate(item.dueDate).isBefore(LocalDate.now())) {
+            item.status = "overdue";
+            item.filingStatus = "overdue";
+        }
+        item.riskLevel = taxRiskLevel(item);
     }
 
     private void applyCompanyFields(Company company, Map<String, Object> body) {
@@ -378,5 +504,124 @@ public class EnterpriseManagementService {
 
     private static boolean sameMonth(String date, YearMonth month) {
         return YearMonth.from(LocalDate.parse(date)).equals(month);
+    }
+
+    private BigDecimal inferredTaxRate(TaxItem item) {
+        BigDecimal taxableAmount = nullToZero(item.taxableAmount);
+        if (taxableAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return nullToZero(item.taxAmount)
+            .multiply(new BigDecimal("100"))
+            .divide(taxableAmount, 2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private String paymentStatusFor(TaxItem item) {
+        BigDecimal taxAmount = nullToZero(item.taxAmount);
+        BigDecimal paidAmount = nullToZero(item.paidAmount);
+        if (taxAmount.compareTo(BigDecimal.ZERO) <= 0 || paidAmount.compareTo(taxAmount) >= 0) {
+            return "paid";
+        }
+        if (paidAmount.compareTo(BigDecimal.ZERO) > 0) {
+            return "partial";
+        }
+        return "unpaid";
+    }
+
+    private String filingStatusFor(String status) {
+        return switch (status == null ? "" : status) {
+            case "paid" -> "accepted";
+            case "pending" -> "submitted";
+            case "overdue" -> "overdue";
+            case "estimated" -> "prepared";
+            default -> "not_started";
+        };
+    }
+
+    private String frequencyFor(String period) {
+        if (period == null) {
+            return "monthly";
+        }
+        String normalized = period.toUpperCase();
+        if (normalized.contains("Q")) {
+            return "quarterly";
+        }
+        if (normalized.matches("\\d{4}")) {
+            return "annual";
+        }
+        return "monthly";
+    }
+
+    private LocalDate parseDate(String value) {
+        try {
+            return value == null || value.isBlank() ? LocalDate.now() : LocalDate.parse(value);
+        } catch (RuntimeException ignored) {
+            return LocalDate.now();
+        }
+    }
+
+    private String taxRiskLevel(TaxItem item) {
+        BigDecimal unpaid = nullToZero(item.taxAmount).subtract(nullToZero(item.paidAmount));
+        if (unpaid.compareTo(BigDecimal.ZERO) <= 0 || "paid".equals(item.status)) {
+            return "low";
+        }
+        LocalDate dueDate = parseDate(item.dueDate);
+        LocalDate today = LocalDate.now();
+        if (dueDate.isBefore(today) || "overdue".equals(item.status)) {
+            return "high";
+        }
+        if (!dueDate.isAfter(today.plusDays(7)) || unpaid.compareTo(new BigDecimal("50000")) >= 0) {
+            return "medium";
+        }
+        if ("manual".equals(item.sourceType) || "not_started".equals(item.filingStatus)) {
+            return "medium";
+        }
+        return "low";
+    }
+
+    private BigDecimal nullToZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private String normalizeTaxStatus(String value) {
+        return switch (value) {
+            case "estimated", "pending", "paid", "overdue" -> value;
+            default -> "estimated";
+        };
+    }
+
+    private String normalizeFilingStatus(String value) {
+        return switch (value) {
+            case "not_started", "prepared", "submitted", "accepted", "overdue" -> value;
+            default -> "not_started";
+        };
+    }
+
+    private String normalizePaymentStatus(String value) {
+        return switch (value) {
+            case "unpaid", "partial", "paid" -> value;
+            default -> "unpaid";
+        };
+    }
+
+    private String normalizeFrequency(String value) {
+        return switch (value) {
+            case "monthly", "quarterly", "annual", "one_time" -> value;
+            default -> "monthly";
+        };
+    }
+
+    private String normalizeRiskLevel(String value) {
+        return switch (value) {
+            case "low", "medium", "high" -> value;
+            default -> "medium";
+        };
+    }
+
+    private String normalizeSourceType(String value) {
+        return switch (value) {
+            case "manual", "demo_estimate", "transaction", "receipt", "payroll", "policy" -> value;
+            default -> "manual";
+        };
     }
 }
