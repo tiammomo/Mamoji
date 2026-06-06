@@ -1,124 +1,67 @@
 package com.mamoji.controller;
 
-import com.mamoji.common.PermissionConstants;
-import com.mamoji.common.RoleConstants;
-import com.mamoji.common.api.ApiResponses;
-import com.mamoji.dto.BudgetDTO;
-import com.mamoji.entity.User;
-import com.mamoji.security.AuthenticationUser;
-import com.mamoji.service.BudgetService;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
+import com.mamoji.common.PagedResponse;
+import com.mamoji.domain.Models.Budget;
+import com.mamoji.service.MamojiService;
+import java.util.List;
+import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDate;
-import java.util.Map;
-
-/**
- * Budget management endpoints.
- *
- * <p>Supports budget CRUD plus active/range queries for the current user.
- */
 @RestController
 @RequestMapping("/api/v1/budgets")
-@RequiredArgsConstructor
 public class BudgetController {
+    private final MamojiService service;
 
-    private static final int FORBIDDEN_CODE = 1003;
-    private static final String BUDGET_PERMISSION_MESSAGE = "No permission to manage budgets.";
+    public BudgetController(MamojiService service) {
+        this.service = service;
+    }
 
-    private final BudgetService budgetService;
-
-    /**
-     * Lists budgets, optionally filtered by date range.
-     */
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getBudgets(
-        @AuthenticationUser User user,
-        @RequestParam(required = false) String startDate,
-        @RequestParam(required = false) String endDate
+    public PagedResponse<Budget> list(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam Map<String, String> params
     ) {
-        return ApiResponses.ok(
-            hasDateRange(startDate, endDate)
-                ? budgetService.getBudgetsByDateRange(user.getId(), LocalDate.parse(startDate), LocalDate.parse(endDate))
-                : budgetService.getBudgets(user.getId())
-        );
+        return service.listBudgets(authorization, params);
     }
 
-    /**
-     * Lists budgets active on the current date.
-     */
     @GetMapping("/active")
-    public ResponseEntity<Map<String, Object>> getActiveBudgets(@AuthenticationUser User user) {
-        return ApiResponses.ok(budgetService.getActiveBudgets(user.getId()));
+    public List<Budget> active(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.activeBudgets(authorization);
     }
 
-    /**
-     * Returns one budget by id.
-     */
     @GetMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> getBudget(@PathVariable Long id, @AuthenticationUser User user) {
-        return ApiResponses.ok(budgetService.getBudget(id, user.getId()));
+    public Budget get(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable long id) {
+        return service.getBudget(authorization, id);
     }
 
-    /**
-     * Creates a budget after permission validation.
-     */
     @PostMapping
-    public ResponseEntity<Map<String, Object>> createBudget(@RequestBody BudgetDTO dto, @AuthenticationUser User user) {
-        if (!hasBudgetPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
-        }
-        return ApiResponses.ok(budgetService.createBudget(dto, user.getId()));
-    }
-
-    /**
-     * Updates a budget after permission validation.
-     */
-    @PutMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> updateBudget(
-        @PathVariable Long id,
-        @RequestBody BudgetDTO dto,
-        @AuthenticationUser User user
+    public Budget create(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestBody Map<String, Object> body
     ) {
-        if (!hasBudgetPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
-        }
-        return ApiResponses.ok(budgetService.updateBudget(id, dto, user.getId()));
+        return service.createBudget(authorization, body);
     }
 
-    /**
-     * Deletes a budget after permission validation.
-     */
+    @PutMapping("/{id}")
+    public Budget update(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id,
+        @RequestBody Map<String, Object> body
+    ) {
+        return service.updateBudget(authorization, id, body);
+    }
+
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> deleteBudget(@PathVariable Long id, @AuthenticationUser User user) {
-        if (!hasBudgetPermission(user)) {
-            return ApiResponses.forbidden(FORBIDDEN_CODE, BUDGET_PERMISSION_MESSAGE);
-        }
-        budgetService.deleteBudget(id, user.getId());
-        return ApiResponses.ok(null);
-    }
-
-    /**
-     * Checks whether the caller can manage budget resources.
-     */
-    private boolean hasBudgetPermission(User user) {
-        return RoleConstants.isAdmin(user.getRole())
-            || PermissionConstants.hasPermission(user.getPermissions(), PermissionConstants.PERM_MANAGE_BUDGETS);
-    }
-
-    /**
-     * Returns true when both date parameters are present.
-     */
-    private boolean hasDateRange(String startDate, String endDate) {
-        return startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty();
+    public void delete(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable long id) {
+        service.deleteBudget(authorization, id);
     }
 }

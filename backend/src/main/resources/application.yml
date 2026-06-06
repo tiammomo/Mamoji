@@ -1,138 +1,29 @@
+server:
+  port: 38080
+
+debug: false
+
 spring:
   application:
-    name: mamoji
-  profiles:
-    default: dev
-
-  # H2 for MVP (in-memory) - 可切换为 MySQL
+    name: mamoji-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:mamoji}
-    driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
-    username: ${SPRING_DATASOURCE_USERNAME:sa}
-    password: ${SPRING_DATASOURCE_PASSWORD:}
-
-  jpa:
-    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.dialect.H2Dialect}
-    hibernate:
-      ddl-auto: update
-    show-sql: ${SPRING_JPA_SHOW_SQL:false}
-    properties:
-      hibernate:
-        format_sql: true
-
-  h2:
-    console:
-      enabled: ${SPRING_H2_CONSOLE_ENABLED:false}
-      path: /h2-console
-
-  data:
-    redis:
-      host: ${SPRING_REDIS_HOST:localhost}
-      port: ${SPRING_REDIS_PORT:6379}
-      password: ${SPRING_REDIS_PASSWORD:}
-      timeout: ${SPRING_REDIS_TIMEOUT:3s}
-
-server:
-  port: ${SERVER_PORT:38080}
-
-# JWT 配置
-jwt:
-  secret: ${JWT_SECRET}
-  expiration: ${JWT_EXPIRATION:86400}
-
-logging:
-  level:
-    com.mamoji: ${LOG_LEVEL:INFO}
-    org.springframework.security: ${LOG_LEVEL_SECURITY:INFO}
-
-app:
-  security:
-    h2-console-enabled: ${APP_SECURITY_H2_CONSOLE_ENABLED:false}
-    prometheus-public-enabled: ${APP_SECURITY_PROMETHEUS_PUBLIC_ENABLED:false}
-    frame-options: ${APP_SECURITY_FRAME_OPTIONS:deny}
-    cors:
-      allowed-origins: ${APP_SECURITY_CORS_ALLOWED_ORIGINS:}
-      allowed-methods: ${APP_SECURITY_CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
-      allowed-headers: ${APP_SECURITY_CORS_ALLOWED_HEADERS:*}
-      exposed-headers: ${APP_SECURITY_CORS_EXPOSED_HEADERS:Authorization,Content-Type}
-      allow-credentials: ${APP_SECURITY_CORS_ALLOW_CREDENTIALS:true}
-      max-age-seconds: ${APP_SECURITY_CORS_MAX_AGE_SECONDS:3600}
-  web-client:
-    max-connections: ${APP_WEB_CLIENT_MAX_CONNECTIONS:200}
-    pending-acquire-max-count: ${APP_WEB_CLIENT_PENDING_ACQUIRE_MAX_COUNT:500}
-    pending-acquire-timeout-ms: ${APP_WEB_CLIENT_PENDING_ACQUIRE_TIMEOUT_MS:2000}
-    connect-timeout-ms: ${APP_WEB_CLIENT_CONNECT_TIMEOUT_MS:3000}
-    response-timeout-ms: ${APP_WEB_CLIENT_RESPONSE_TIMEOUT_MS:10000}
-    read-timeout-ms: ${APP_WEB_CLIENT_READ_TIMEOUT_MS:10000}
-    write-timeout-ms: ${APP_WEB_CLIENT_WRITE_TIMEOUT_MS:10000}
-    max-idle-seconds: ${APP_WEB_CLIENT_MAX_IDLE_SECONDS:30}
-    max-life-seconds: ${APP_WEB_CLIENT_MAX_LIFE_SECONDS:300}
-
-# AI 配置
-ai:
-  engine: ${AI_ENGINE:legacy}
-  stream:
-    react-enabled: ${AI_STREAM_REACT_ENABLED:true}
-  base-url: ${ANTHROPIC_BASE_URL:https://api.minimaxi.com}
-  api-key: ${ANTHROPIC_AUTH_TOKEN:}
-  model: ${ANTHROPIC_DEFAULT_SONNET_MODEL:abab6.5s-chat}
-  fallback-model: ${AI_FALLBACK_MODEL:}
-  timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
-  max-retries: ${AI_MAX_RETRIES:2}
-  max-tokens: ${AI_MAX_TOKENS:1024}
-  temperature: ${AI_TEMPERATURE:0.7}
-  prompt-ops:
-    enabled: ${AI_PROMPT_OPS_ENABLED:true}
-    default-variant: ${AI_PROMPT_DEFAULT_VARIANT:A}
-    experiment-id: ${AI_PROMPT_EXPERIMENT_ID:prompt-exp-v1}
-    finance-variant-a-weight: ${AI_PROMPT_FINANCE_A_WEIGHT:50}
-    stock-variant-a-weight: ${AI_PROMPT_STOCK_A_WEIGHT:50}
-  tool-ops:
-    enabled: ${AI_TOOL_OPS_ENABLED:true}
-    per-user-tool-per-minute: ${AI_TOOL_PER_USER_PER_MINUTE:30}
-    blocked-tools: ${AI_TOOL_BLOCKED_TOOLS:}
-  tool-calling-ops:
-    spring-enabled: ${AI_TOOL_CALLING_SPRING_ENABLED:false}
-    stock-enabled: ${AI_TOOL_CALLING_STOCK_ENABLED:true}
-  tool-exec-ops:
-    timeout-ms: ${AI_TOOL_TIMEOUT_MS:3000}
-    max-concurrent-per-tool: ${AI_TOOL_MAX_CONCURRENT:4}
-    circuit-open-seconds: ${AI_TOOL_CIRCUIT_OPEN_SECONDS:30}
-    failure-threshold: ${AI_TOOL_FAILURE_THRESHOLD:3}
-  memory-ops:
-    redis-enabled: ${AI_MEMORY_REDIS_ENABLED:false}
-    max-stored-turns: ${AI_MEMORY_MAX_STORED_TURNS:40}
-    ttl-seconds: ${AI_MEMORY_TTL_SECONDS:86400}
-    summarize-on-overflow: ${AI_MEMORY_SUMMARIZE_OVERFLOW:true}
-    summarize-batch-size: ${AI_MEMORY_SUMMARY_BATCH_SIZE:8}
-  rag-ops:
-    file-enabled: ${AI_RAG_FILE_ENABLED:true}
-    knowledge-path: ${AI_RAG_KNOWLEDGE_PATH:classpath:ai/knowledge-base.json}
-  quality-ops:
-    min-answer-length: ${AI_QUALITY_MIN_ANSWER_LENGTH:10}
-    max-question-length: ${AI_QUALITY_MAX_QUESTION_LENGTH:2000}
-    stock-risk-required: ${AI_QUALITY_STOCK_RISK_REQUIRED:true}
-    finance-actionable-required: ${AI_QUALITY_FINANCE_ACTIONABLE_REQUIRED:true}
-    recency-statement-required: ${AI_QUALITY_RECENCY_REQUIRED:false}
-  routing-ops:
-    enabled: ${AI_ROUTING_ENABLED:true}
-    finance-model: ${AI_ROUTING_FINANCE_MODEL:}
-    stock-model: ${AI_ROUTING_STOCK_MODEL:}
-    high-complexity-model: ${AI_ROUTING_HIGH_COMPLEXITY_MODEL:}
-    high-complexity-question-chars: ${AI_ROUTING_HIGH_COMPLEXITY_CHARS:400}
+    url: jdbc:sqlite:${MAMOJI_SQLITE_PATH:data/mamoji.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+      minimum-idle: 1
+      initialization-fail-timeout: -1
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
-  endpoint:
-    health:
-      show-details: never
-  prometheus:
-    metrics:
-      export:
-        enabled: true
-  metrics:
-    tags:
-      application: ${spring.application.name}
+        include: health,info
+
+logging:
+  level:
+    root: INFO

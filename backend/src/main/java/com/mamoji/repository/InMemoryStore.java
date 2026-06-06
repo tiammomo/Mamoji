@@ -1,0 +1,965 @@
+package com.mamoji.repository;
+
+import com.mamoji.common.Permissions;
+import com.mamoji.common.Roles;
+import com.mamoji.domain.Models.Account;
+import com.mamoji.domain.Models.Budget;
+import com.mamoji.domain.Models.Category;
+import com.mamoji.domain.Models.Ledger;
+import com.mamoji.domain.Models.LedgerMember;
+import com.mamoji.domain.Models.RecurringItem;
+import com.mamoji.domain.Models.TransactionRecord;
+import com.mamoji.domain.Models.User;
+import jakarta.annotation.PostConstruct;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.stereotype.Component;
+
+@Component
+public class InMemoryStore {
+    public final Map<Long, User> users = new ConcurrentHashMap<>();
+    public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
+    public final Map<Long, Category> categories = new ConcurrentHashMap<>();
+    public final Map<Long, Budget> budgets = new ConcurrentHashMap<>();
+    public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
+    public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
+    public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
+    public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
+    public final Map<String, Long> tokens = new ConcurrentHashMap<>();
+
+    private final JdbcTemplate jdbc;
+    private final String datasourceUrl;
+
+    public InMemoryStore(JdbcTemplate jdbc, DataSource dataSource, @Value("${spring.datasource.url}") String datasourceUrl) {
+        this.jdbc = jdbc;
+        this.datasourceUrl = datasourceUrl;
+    }
+
+    @PostConstruct
+    void initialize() {
+        ensureDatabaseDirectory();
+        createSchema();
+        loadAll();
+        if (users.isEmpty()) {
+            seed();
+        } else {
+            attachBudgetData();
+        }
+    }
+
+    private void ensureDatabaseDirectory() {
+        String prefix = "jdbc:sqlite:";
+        if (!datasourceUrl.startsWith(prefix)) {
+            return;
+        }
+        String rawPath = datasourceUrl.substring(prefix.length());
+        if (rawPath.isBlank() || rawPath.equals(":memory:") || rawPath.startsWith("file:")) {
+            return;
+        }
+        Path parent = Path.of(rawPath).toAbsolutePath().getParent();
+        if (parent == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(parent);
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to create SQLite directory: " + parent, exception);
+        }
+    }
+
+    private void createSchema() {
+        jdbc.execute("PRAGMA foreign_keys = ON");
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                nickname TEXT NOT NULL,
+                avatar TEXT NOT NULL,
+                family_id INTEGER,
+                role INTEGER NOT NULL,
+                permissions INTEGER NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                sub_type TEXT,
+                bank TEXT,
+                balance TEXT NOT NULL,
+                include_in_net_worth INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                ledger_id INTEGER,
+                status INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                icon TEXT NOT NULL,
+                color TEXT NOT NULL,
+                type TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                status INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                amount TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                warning_threshold INTEGER NOT NULL,
+                status INTEGER NOT NULL,
+                spent TEXT NOT NULL,
+                remaining_amount TEXT NOT NULL,
+                usage_rate REAL NOT NULL,
+                warning_reached INTEGER NOT NULL,
+                risk_level TEXT NOT NULL,
+                risk_message TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                ledger_id INTEGER,
+                category_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                family_id INTEGER,
+                type INTEGER NOT NULL,
+                amount TEXT NOT NULL,
+                category_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                note TEXT NOT NULL,
+                original_transaction_id INTEGER,
+                refunded_amount TEXT NOT NULL,
+                is_refundable INTEGER NOT NULL,
+                budget_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS ledgers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                owner_id INTEGER NOT NULL,
+                is_default INTEGER NOT NULL,
+                status INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS ledger_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ledger_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                nickname TEXT,
+                avatar TEXT,
+                joined_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS recurring_items (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                type INTEGER NOT NULL,
+                amount TEXT NOT NULL,
+                frequency TEXT NOT NULL,
+                interval_value INTEGER NOT NULL,
+                day_of_week INTEGER,
+                day_of_month INTEGER,
+                month_of_year INTEGER,
+                start_date TEXT NOT NULL,
+                end_date TEXT,
+                last_executed TEXT,
+                next_execution TEXT NOT NULL,
+                status INTEGER NOT NULL,
+                execution_count INTEGER NOT NULL,
+                note TEXT
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """);
+    }
+
+    private void loadAll() {
+        users.clear();
+        accounts.clear();
+        categories.clear();
+        budgets.clear();
+        transactions.clear();
+        ledgers.clear();
+        ledgerMembers.clear();
+        recurringItems.clear();
+        tokens.clear();
+
+        forEachRow("SELECT * FROM users", rs -> users.put(rs.getLong("id"), mapUser(rs)));
+        forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
+        forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
+        forEachRow("SELECT * FROM budgets", rs -> budgets.put(rs.getLong("id"), mapBudget(rs)));
+        forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
+        forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
+        forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
+        forEachRow("SELECT * FROM recurring_items", rs -> recurringItems.put(rs.getString("id"), mapRecurringItem(rs)));
+        forEachRow("SELECT * FROM auth_tokens", rs -> tokens.put(rs.getString("token"), rs.getLong("user_id")));
+
+        budgets.values().forEach(this::attachCategory);
+        transactions.values().forEach(this::attachTransactionRelations);
+    }
+
+    void seed() {
+        User testUser = user("test@mamoji.com", "Mamoji 公司管理员", "😊|#3370ff", "123456", Roles.ADMIN, Permissions.ALL);
+        Ledger defaultLedger = ledger(testUser.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
+        member(defaultLedger.id, testUser.id, "owner");
+
+        Category revenue = category(testUser.id, "主营业务收入", "💼", "#22c55e", "income");
+        Category teamMeal = category(testUser.id, "团队餐饮", "🍜", "#f97316", "expense");
+        Category travel = category(testUser.id, "差旅交通", "🚇", "#0ea5e9", "expense");
+        Category procurement = category(testUser.id, "办公采购", "🛍️", "#a855f7", "expense");
+        category(testUser.id, "办公租赁", "🏢", "#6366f1", "expense");
+        category(testUser.id, "税费", "🧾", "#ef4444", "expense");
+
+        Account cash = account(testUser.id, defaultLedger.id, "公司现金备用金", "cash", "备用金", null, "1200");
+        Account bank = account(testUser.id, defaultLedger.id, "公司基本户", "bank", "对公账户", "招商银行", "26300");
+        account(testUser.id, defaultLedger.id, "企业信用卡", "credit", "信用卡", "招商银行", "1800");
+
+        Budget monthlyBudget = budget(testUser.id, defaultLedger.id, null, "本月经营预算", "6000",
+            LocalDate.now().withDayOfMonth(1).toString(), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString(), 85);
+
+        transaction(testUser.id, defaultLedger.id, 1, "15000", revenue.id, bank.id, LocalDate.now().minusDays(4).toString(), "客户项目回款");
+        transaction(testUser.id, defaultLedger.id, 2, "68.5", teamMeal.id, cash.id, LocalDate.now().minusDays(1).toString(), "团队工作餐");
+        transaction(testUser.id, defaultLedger.id, 2, "25", travel.id, cash.id, LocalDate.now().minusDays(2).toString(), "市内交通");
+        transaction(testUser.id, defaultLedger.id, 2, "899", procurement.id, bank.id, LocalDate.now().minusDays(3).toString(), "办公键盘和配件");
+
+        monthlyBudget.spent = new BigDecimal("992.5");
+        recalculateBudget(monthlyBudget);
+        saveBudget(monthlyBudget);
+
+        RecurringItem officeRent = new RecurringItem();
+        officeRent.id = UUID.randomUUID().toString();
+        officeRent.userId = testUser.id;
+        officeRent.name = "办公室租金";
+        officeRent.type = 2;
+        officeRent.amount = new BigDecimal("3200");
+        officeRent.frequency = "monthly";
+        officeRent.interval = 1;
+        officeRent.dayOfMonth = 5;
+        officeRent.startDate = LocalDate.now().withDayOfMonth(1).toString();
+        officeRent.nextExecution = LocalDate.now().withDayOfMonth(Math.min(5, LocalDate.now().lengthOfMonth())).plusMonths(1).toString();
+        officeRent.status = 1;
+        officeRent.executionCount = 0;
+        officeRent.note = "每月办公室租金";
+        recurringItems.put(officeRent.id, officeRent);
+        saveRecurring(officeRent);
+    }
+
+    public User user(String email, String nickname, String avatar, String password, int role, int permissions) {
+        User user = new User();
+        user.email = email;
+        user.nickname = nickname;
+        user.avatar = avatar == null ? "😊|#3370ff" : avatar;
+        user.role = role;
+        user.permissions = permissions;
+        user.passwordHash = password;
+        stamp(user);
+        user.id = insert("""
+            INSERT INTO users (email, nickname, avatar, family_id, role, permissions, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindUserInsert(ps, user));
+        users.put(user.id, user);
+        return user;
+    }
+
+    public Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
+        Account account = new Account();
+        account.userId = userId;
+        account.ledgerId = ledgerId;
+        account.name = name;
+        account.type = type;
+        account.subType = subType;
+        account.bank = bank;
+        account.balance = money(balance);
+        account.includeInNetWorth = true;
+        account.status = 1;
+        stamp(account);
+        account.id = insert("""
+            INSERT INTO accounts (name, type, sub_type, bank, balance, include_in_net_worth, user_id, ledger_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindAccountInsert(ps, account));
+        accounts.put(account.id, account);
+        return account;
+    }
+
+    public Category category(long userId, String name, String icon, String color, String type) {
+        Category category = new Category();
+        category.userId = userId;
+        category.name = name;
+        category.icon = icon;
+        category.color = color;
+        category.type = type;
+        category.status = 1;
+        stamp(category);
+        category.id = insert("""
+            INSERT INTO categories (name, icon, color, type, user_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindCategoryInsert(ps, category));
+        categories.put(category.id, category);
+        return category;
+    }
+
+    public Budget budget(long userId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
+        Budget budget = new Budget();
+        budget.userId = userId;
+        budget.ledgerId = ledgerId;
+        budget.categoryId = categoryId;
+        budget.name = name;
+        budget.amount = money(amount);
+        budget.startDate = startDate;
+        budget.endDate = endDate;
+        budget.warningThreshold = warningThreshold;
+        budget.status = 1;
+        budget.spent = BigDecimal.ZERO;
+        attachCategory(budget);
+        recalculateBudget(budget);
+        stamp(budget);
+        budget.id = insert("""
+            INSERT INTO budgets (
+                name, amount, start_date, end_date, warning_threshold, status, spent, remaining_amount,
+                usage_rate, warning_reached, risk_level, risk_message, user_id, ledger_id, category_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindBudgetInsert(ps, budget));
+        budgets.put(budget.id, budget);
+        return budget;
+    }
+
+    public TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
+        TransactionRecord tx = new TransactionRecord();
+        tx.userId = userId;
+        tx.familyId = ledgerId;
+        tx.type = type;
+        tx.amount = money(amount);
+        tx.categoryId = categoryId;
+        tx.accountId = accountId;
+        tx.date = date;
+        tx.note = note == null ? "" : note;
+        tx.refundedAmount = BigDecimal.ZERO;
+        tx.isRefundable = type == 2;
+        attachTransactionRelations(tx);
+        stamp(tx);
+        tx.id = insert("""
+            INSERT INTO transactions (
+                user_id, family_id, type, amount, category_id, account_id, date, note,
+                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindTransactionInsert(ps, tx));
+        transactions.put(tx.id, tx);
+        return tx;
+    }
+
+    public Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
+        Ledger ledger = new Ledger();
+        ledger.ownerId = ownerId;
+        ledger.name = name;
+        ledger.description = description == null ? "" : description;
+        ledger.currency = currency == null ? "CNY" : currency;
+        ledger.isDefault = isDefault;
+        ledger.status = 1;
+        stamp(ledger);
+        ledger.id = insert("""
+            INSERT INTO ledgers (name, description, currency, owner_id, is_default, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindLedgerInsert(ps, ledger));
+        ledgers.put(ledger.id, ledger);
+        return ledger;
+    }
+
+    public LedgerMember member(long ledgerId, long userId, String role) {
+        LedgerMember member = new LedgerMember();
+        member.ledgerId = ledgerId;
+        member.userId = userId;
+        member.role = role;
+        Optional.ofNullable(users.get(userId)).ifPresent(user -> {
+            member.nickname = user.nickname;
+            member.avatar = user.avatar;
+        });
+        member.joinedAt = now();
+        member.id = insert("""
+            INSERT INTO ledger_members (ledger_id, user_id, role, nickname, avatar, joined_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, ps -> bindLedgerMemberInsert(ps, member));
+        ledgerMembers.put(member.id, member);
+        return member;
+    }
+
+    public void saveUser(User user) {
+        users.put(user.id, user);
+        jdbc.update("""
+            UPDATE users SET email = ?, nickname = ?, avatar = ?, family_id = ?, role = ?, permissions = ?,
+                password_hash = ?, created_at = ?, updated_at = ? WHERE id = ?
+            """, user.email, user.nickname, user.avatar, user.familyId, user.role, user.permissions,
+            user.passwordHash, user.createdAt, user.updatedAt, user.id);
+    }
+
+    public void saveAccount(Account account) {
+        accounts.put(account.id, account);
+        jdbc.update("""
+            UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, balance = ?, include_in_net_worth = ?,
+                user_id = ?, ledger_id = ?, status = ?, created_at = ?, updated_at = ? WHERE id = ?
+            """, account.name, account.type, account.subType, account.bank, moneyText(account.balance),
+            intBool(account.includeInNetWorth), account.userId, account.ledgerId, account.status, account.createdAt, account.updatedAt, account.id);
+    }
+
+    public void saveCategory(Category category) {
+        categories.put(category.id, category);
+        jdbc.update("""
+            UPDATE categories SET name = ?, icon = ?, color = ?, type = ?, user_id = ?, status = ?, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """, category.name, category.icon, category.color, category.type, category.userId, category.status,
+            category.createdAt, category.updatedAt, category.id);
+    }
+
+    public void saveBudget(Budget budget) {
+        budgets.put(budget.id, budget);
+        jdbc.update("""
+            UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
+                spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?, risk_level = ?, risk_message = ?,
+                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ? WHERE id = ?
+            """, budget.name, moneyText(budget.amount), budget.startDate, budget.endDate, budget.warningThreshold, budget.status,
+            moneyText(budget.spent), moneyText(budget.remainingAmount), budget.usageRate, intBool(budget.warningReached),
+            budget.riskLevel, budget.riskMessage, budget.userId, budget.ledgerId, budget.categoryId, budget.createdAt, budget.updatedAt, budget.id);
+    }
+
+    public void saveTransaction(TransactionRecord tx) {
+        transactions.put(tx.id, tx);
+        jdbc.update("""
+            UPDATE transactions SET user_id = ?, family_id = ?, type = ?, amount = ?, category_id = ?, account_id = ?, date = ?,
+                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """, tx.userId, tx.familyId, tx.type, moneyText(tx.amount), tx.categoryId, tx.accountId, tx.date, tx.note,
+            tx.originalTransactionId, moneyText(tx.refundedAmount), intBool(tx.isRefundable), tx.budgetId, tx.createdAt, tx.updatedAt, tx.id);
+    }
+
+    public void saveRecurring(RecurringItem item) {
+        recurringItems.put(item.id, item);
+        jdbc.update("""
+            INSERT INTO recurring_items (
+                id, user_id, name, type, amount, frequency, interval_value, day_of_week, day_of_month,
+                month_of_year, start_date, end_date, last_executed, next_execution, status, execution_count, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                user_id = excluded.user_id, name = excluded.name, type = excluded.type, amount = excluded.amount,
+                frequency = excluded.frequency, interval_value = excluded.interval_value, day_of_week = excluded.day_of_week,
+                day_of_month = excluded.day_of_month, month_of_year = excluded.month_of_year, start_date = excluded.start_date,
+                end_date = excluded.end_date, last_executed = excluded.last_executed, next_execution = excluded.next_execution,
+                status = excluded.status, execution_count = excluded.execution_count, note = excluded.note
+            """, item.id, item.userId, item.name, item.type, moneyText(item.amount), item.frequency, item.interval,
+            item.dayOfWeek, item.dayOfMonth, item.monthOfYear, item.startDate, item.endDate, item.lastExecuted,
+            item.nextExecution, item.status, item.executionCount, item.note);
+    }
+
+    public void rememberToken(String token, long userId) {
+        tokens.put(token, userId);
+        jdbc.update("""
+            INSERT INTO auth_tokens (token, user_id, created_at) VALUES (?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at
+            """, token, userId, now());
+    }
+
+    public void deleteAccount(long id) {
+        accounts.remove(id);
+        jdbc.update("DELETE FROM accounts WHERE id = ?", id);
+    }
+
+    public void deleteCategory(long id) {
+        categories.remove(id);
+        jdbc.update("DELETE FROM categories WHERE id = ?", id);
+    }
+
+    public void deleteBudget(long id) {
+        budgets.remove(id);
+        jdbc.update("DELETE FROM budgets WHERE id = ?", id);
+    }
+
+    public void deleteTransaction(long id) {
+        transactions.remove(id);
+        jdbc.update("DELETE FROM transactions WHERE id = ?", id);
+    }
+
+    public void deleteRecurring(String id) {
+        recurringItems.remove(id);
+        jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
+    }
+
+    public void deleteUser(long id) {
+        users.remove(id);
+        jdbc.update("DELETE FROM users WHERE id = ?", id);
+    }
+
+    public void deleteLedgerMember(long ledgerId, long userId) {
+        ledgerMembers.values().removeIf(member -> member.ledgerId == ledgerId && member.userId == userId);
+        jdbc.update("DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?", ledgerId, userId);
+    }
+
+    public Optional<User> currentUser(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return Optional.empty();
+        }
+        Long userId = tokens.get(authorizationHeader.substring(7));
+        return userId == null ? Optional.empty() : Optional.ofNullable(users.get(userId));
+    }
+
+    public Optional<User> findUserByEmail(String email) {
+        return users.values().stream().filter(user -> user.email.equalsIgnoreCase(email)).findFirst();
+    }
+
+    public List<TransactionRecord> sortedTransactions() {
+        return transactions.values().stream()
+            .sorted(Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id))
+            .toList();
+    }
+
+    public List<Account> sortedAccounts() {
+        return accounts.values().stream().sorted(Comparator.comparing(account -> account.id)).toList();
+    }
+
+    public List<Category> sortedCategories() {
+        return categories.values().stream().sorted(Comparator.comparing(category -> category.id)).toList();
+    }
+
+    public List<Budget> sortedBudgets() {
+        return budgets.values().stream().sorted(Comparator.comparing(budget -> budget.id)).toList();
+    }
+
+    public void attachBudgetData() {
+        budgets.values().forEach(budget -> {
+            budget.spent = transactions.values().stream()
+                .filter(tx -> tx.type == 2)
+                .filter(tx -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
+                .filter(tx -> tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0)
+                .map(tx -> tx.amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            attachCategory(budget);
+            recalculateBudget(budget);
+            saveBudget(budget);
+        });
+    }
+
+    public void attachTransactionRelations(TransactionRecord tx) {
+        Optional.ofNullable(categories.get(tx.categoryId)).ifPresent(category -> {
+            tx.categoryName = category.name;
+            tx.categoryIcon = category.icon;
+            tx.categoryColor = category.color;
+        });
+        Optional.ofNullable(accounts.get(tx.accountId)).ifPresent(account -> tx.accountName = account.name);
+    }
+
+    public void attachCategory(Budget budget) {
+        if (budget.categoryId == null) {
+            budget.categoryName = null;
+            budget.categoryIcon = null;
+            return;
+        }
+        Optional.ofNullable(categories.get(budget.categoryId)).ifPresent(category -> {
+            budget.categoryName = category.name;
+            budget.categoryIcon = category.icon;
+        });
+    }
+
+    public void recalculateBudget(Budget budget) {
+        if (budget.amount == null || budget.amount.compareTo(BigDecimal.ZERO) <= 0) {
+            budget.remainingAmount = BigDecimal.ZERO;
+            budget.usageRate = 0;
+        } else {
+            budget.remainingAmount = budget.amount.subtract(nullToZero(budget.spent));
+            budget.usageRate = nullToZero(budget.spent).divide(budget.amount, 4, java.math.RoundingMode.HALF_UP).doubleValue();
+        }
+        budget.warningReached = budget.usageRate * 100 >= budget.warningThreshold;
+        if (budget.usageRate >= 1) {
+            budget.riskLevel = "critical";
+            budget.riskMessage = "预算已超支";
+            budget.status = 3;
+        } else if (budget.usageRate * 100 >= budget.warningThreshold) {
+            budget.riskLevel = "high";
+            budget.riskMessage = "接近预算上限";
+        } else if (budget.usageRate >= 0.6) {
+            budget.riskLevel = "medium";
+            budget.riskMessage = "使用进度正常偏高";
+        } else {
+            budget.riskLevel = "low";
+            budget.riskMessage = "预算健康";
+        }
+    }
+
+    public Map<String, Object> snapshot() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("users", new ArrayList<>(users.values()));
+        data.put("accounts", sortedAccounts());
+        data.put("categories", sortedCategories());
+        data.put("transactions", sortedTransactions());
+        data.put("budgets", sortedBudgets());
+        data.put("ledgers", new ArrayList<>(ledgers.values()));
+        data.put("recurring", new ArrayList<>(recurringItems.values()));
+        return data;
+    }
+
+    private User mapUser(ResultSet rs) throws SQLException {
+        User user = new User();
+        user.id = rs.getLong("id");
+        user.email = rs.getString("email");
+        user.nickname = rs.getString("nickname");
+        user.avatar = rs.getString("avatar");
+        user.familyId = nullableLong(rs, "family_id");
+        user.role = rs.getInt("role");
+        user.permissions = rs.getInt("permissions");
+        user.passwordHash = rs.getString("password_hash");
+        user.createdAt = rs.getString("created_at");
+        user.updatedAt = rs.getString("updated_at");
+        return user;
+    }
+
+    private Account mapAccount(ResultSet rs) throws SQLException {
+        Account account = new Account();
+        account.id = rs.getLong("id");
+        account.name = rs.getString("name");
+        account.type = rs.getString("type");
+        account.subType = rs.getString("sub_type");
+        account.bank = rs.getString("bank");
+        account.balance = money(rs.getString("balance"));
+        account.includeInNetWorth = rs.getInt("include_in_net_worth") == 1;
+        account.userId = rs.getLong("user_id");
+        account.ledgerId = nullableLong(rs, "ledger_id");
+        account.status = rs.getInt("status");
+        account.createdAt = rs.getString("created_at");
+        account.updatedAt = rs.getString("updated_at");
+        return account;
+    }
+
+    private Category mapCategory(ResultSet rs) throws SQLException {
+        Category category = new Category();
+        category.id = rs.getLong("id");
+        category.name = rs.getString("name");
+        category.icon = rs.getString("icon");
+        category.color = rs.getString("color");
+        category.type = rs.getString("type");
+        category.userId = rs.getLong("user_id");
+        category.status = rs.getInt("status");
+        category.createdAt = rs.getString("created_at");
+        category.updatedAt = rs.getString("updated_at");
+        return category;
+    }
+
+    private Budget mapBudget(ResultSet rs) throws SQLException {
+        Budget budget = new Budget();
+        budget.id = rs.getLong("id");
+        budget.name = rs.getString("name");
+        budget.amount = money(rs.getString("amount"));
+        budget.startDate = rs.getString("start_date");
+        budget.endDate = rs.getString("end_date");
+        budget.warningThreshold = rs.getInt("warning_threshold");
+        budget.status = rs.getInt("status");
+        budget.spent = money(rs.getString("spent"));
+        budget.remainingAmount = money(rs.getString("remaining_amount"));
+        budget.usageRate = rs.getDouble("usage_rate");
+        budget.warningReached = rs.getInt("warning_reached") == 1;
+        budget.riskLevel = rs.getString("risk_level");
+        budget.riskMessage = rs.getString("risk_message");
+        budget.userId = rs.getLong("user_id");
+        budget.ledgerId = nullableLong(rs, "ledger_id");
+        budget.categoryId = nullableLong(rs, "category_id");
+        budget.createdAt = rs.getString("created_at");
+        budget.updatedAt = rs.getString("updated_at");
+        return budget;
+    }
+
+    private TransactionRecord mapTransaction(ResultSet rs) throws SQLException {
+        TransactionRecord tx = new TransactionRecord();
+        tx.id = rs.getLong("id");
+        tx.userId = rs.getLong("user_id");
+        tx.familyId = nullableLong(rs, "family_id");
+        tx.type = rs.getInt("type");
+        tx.amount = money(rs.getString("amount"));
+        tx.categoryId = rs.getLong("category_id");
+        tx.accountId = rs.getLong("account_id");
+        tx.date = rs.getString("date");
+        tx.note = rs.getString("note");
+        tx.originalTransactionId = nullableLong(rs, "original_transaction_id");
+        tx.refundedAmount = money(rs.getString("refunded_amount"));
+        tx.isRefundable = rs.getInt("is_refundable") == 1;
+        tx.budgetId = nullableLong(rs, "budget_id");
+        tx.createdAt = rs.getString("created_at");
+        tx.updatedAt = rs.getString("updated_at");
+        return tx;
+    }
+
+    private Ledger mapLedger(ResultSet rs) throws SQLException {
+        Ledger ledger = new Ledger();
+        ledger.id = rs.getLong("id");
+        ledger.name = rs.getString("name");
+        ledger.description = rs.getString("description");
+        ledger.currency = rs.getString("currency");
+        ledger.ownerId = rs.getLong("owner_id");
+        ledger.isDefault = rs.getInt("is_default") == 1;
+        ledger.status = rs.getInt("status");
+        ledger.createdAt = rs.getString("created_at");
+        ledger.updatedAt = rs.getString("updated_at");
+        return ledger;
+    }
+
+    private LedgerMember mapLedgerMember(ResultSet rs) throws SQLException {
+        LedgerMember member = new LedgerMember();
+        member.id = rs.getLong("id");
+        member.ledgerId = rs.getLong("ledger_id");
+        member.userId = rs.getLong("user_id");
+        member.role = rs.getString("role");
+        member.nickname = rs.getString("nickname");
+        member.avatar = rs.getString("avatar");
+        member.joinedAt = rs.getString("joined_at");
+        return member;
+    }
+
+    private RecurringItem mapRecurringItem(ResultSet rs) throws SQLException {
+        RecurringItem item = new RecurringItem();
+        item.id = rs.getString("id");
+        item.userId = rs.getLong("user_id");
+        item.name = rs.getString("name");
+        item.type = rs.getInt("type");
+        item.amount = money(rs.getString("amount"));
+        item.frequency = rs.getString("frequency");
+        item.interval = rs.getInt("interval_value");
+        item.dayOfWeek = nullableInt(rs, "day_of_week");
+        item.dayOfMonth = nullableInt(rs, "day_of_month");
+        item.monthOfYear = nullableInt(rs, "month_of_year");
+        item.startDate = rs.getString("start_date");
+        item.endDate = rs.getString("end_date");
+        item.lastExecuted = rs.getString("last_executed");
+        item.nextExecution = rs.getString("next_execution");
+        item.status = rs.getInt("status");
+        item.executionCount = rs.getInt("execution_count");
+        item.note = rs.getString("note");
+        return item;
+    }
+
+    private void bindUserInsert(PreparedStatement ps, User user) throws SQLException {
+        ps.setString(1, user.email);
+        ps.setString(2, user.nickname);
+        ps.setString(3, user.avatar);
+        setLongOrNull(ps, 4, user.familyId);
+        ps.setInt(5, user.role);
+        ps.setInt(6, user.permissions);
+        ps.setString(7, user.passwordHash);
+        ps.setString(8, user.createdAt);
+        ps.setString(9, user.updatedAt);
+    }
+
+    private void bindAccountInsert(PreparedStatement ps, Account account) throws SQLException {
+        ps.setString(1, account.name);
+        ps.setString(2, account.type);
+        ps.setString(3, account.subType);
+        ps.setString(4, account.bank);
+        ps.setString(5, moneyText(account.balance));
+        ps.setInt(6, intBool(account.includeInNetWorth));
+        ps.setLong(7, account.userId);
+        setLongOrNull(ps, 8, account.ledgerId);
+        ps.setInt(9, account.status);
+        ps.setString(10, account.createdAt);
+        ps.setString(11, account.updatedAt);
+    }
+
+    private void bindCategoryInsert(PreparedStatement ps, Category category) throws SQLException {
+        ps.setString(1, category.name);
+        ps.setString(2, category.icon);
+        ps.setString(3, category.color);
+        ps.setString(4, category.type);
+        ps.setLong(5, category.userId);
+        ps.setInt(6, category.status);
+        ps.setString(7, category.createdAt);
+        ps.setString(8, category.updatedAt);
+    }
+
+    private void bindBudgetInsert(PreparedStatement ps, Budget budget) throws SQLException {
+        ps.setString(1, budget.name);
+        ps.setString(2, moneyText(budget.amount));
+        ps.setString(3, budget.startDate);
+        ps.setString(4, budget.endDate);
+        ps.setInt(5, budget.warningThreshold);
+        ps.setInt(6, budget.status);
+        ps.setString(7, moneyText(budget.spent));
+        ps.setString(8, moneyText(budget.remainingAmount));
+        ps.setDouble(9, budget.usageRate);
+        ps.setInt(10, intBool(budget.warningReached));
+        ps.setString(11, budget.riskLevel);
+        ps.setString(12, budget.riskMessage);
+        ps.setLong(13, budget.userId);
+        setLongOrNull(ps, 14, budget.ledgerId);
+        setLongOrNull(ps, 15, budget.categoryId);
+        ps.setString(16, budget.createdAt);
+        ps.setString(17, budget.updatedAt);
+    }
+
+    private void bindTransactionInsert(PreparedStatement ps, TransactionRecord tx) throws SQLException {
+        ps.setLong(1, tx.userId);
+        setLongOrNull(ps, 2, tx.familyId);
+        ps.setInt(3, tx.type);
+        ps.setString(4, moneyText(tx.amount));
+        ps.setLong(5, tx.categoryId);
+        ps.setLong(6, tx.accountId);
+        ps.setString(7, tx.date);
+        ps.setString(8, tx.note);
+        setLongOrNull(ps, 9, tx.originalTransactionId);
+        ps.setString(10, moneyText(tx.refundedAmount));
+        ps.setInt(11, intBool(tx.isRefundable));
+        setLongOrNull(ps, 12, tx.budgetId);
+        ps.setString(13, tx.createdAt);
+        ps.setString(14, tx.updatedAt);
+    }
+
+    private void bindLedgerInsert(PreparedStatement ps, Ledger ledger) throws SQLException {
+        ps.setString(1, ledger.name);
+        ps.setString(2, ledger.description);
+        ps.setString(3, ledger.currency);
+        ps.setLong(4, ledger.ownerId);
+        ps.setInt(5, intBool(ledger.isDefault));
+        ps.setInt(6, ledger.status);
+        ps.setString(7, ledger.createdAt);
+        ps.setString(8, ledger.updatedAt);
+    }
+
+    private void bindLedgerMemberInsert(PreparedStatement ps, LedgerMember member) throws SQLException {
+        ps.setLong(1, member.ledgerId);
+        ps.setLong(2, member.userId);
+        ps.setString(3, member.role);
+        ps.setString(4, member.nickname);
+        ps.setString(5, member.avatar);
+        ps.setString(6, member.joinedAt);
+    }
+
+    private long insert(String sql, SqlBinder binder) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            binder.bind(ps);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        if (key == null) {
+            throw new IllegalStateException("SQLite did not return a generated key");
+        }
+        return key.longValue();
+    }
+
+    private void forEachRow(String sql, SqlRowConsumer consumer) {
+        jdbc.query(sql, (org.springframework.jdbc.core.RowCallbackHandler) consumer::accept);
+    }
+
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        Object value = rs.getObject(column);
+        return value == null ? null : ((Number) value).longValue();
+    }
+
+    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        Object value = rs.getObject(column);
+        return value == null ? null : ((Number) value).intValue();
+    }
+
+    private static void setLongOrNull(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setObject(index, null);
+        } else {
+            ps.setLong(index, value);
+        }
+    }
+
+    private static int intBool(boolean value) {
+        return value ? 1 : 0;
+    }
+
+    private static String moneyText(BigDecimal value) {
+        return nullToZero(value).stripTrailingZeros().toPlainString();
+    }
+
+    public static BigDecimal money(Object value) {
+        if (value == null || String.valueOf(value).isBlank()) {
+            return BigDecimal.ZERO;
+        }
+        return new BigDecimal(String.valueOf(value));
+    }
+
+    public static BigDecimal nullToZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    public static String now() {
+        return OffsetDateTime.now().toString();
+    }
+
+    public static void stamp(Object model) {
+        String now = now();
+        try {
+            model.getClass().getField("createdAt").set(model, now);
+            model.getClass().getField("updatedAt").set(model, now);
+        } catch (NoSuchFieldException ignored) {
+            try {
+                model.getClass().getField("joinedAt").set(model, now);
+            } catch (ReflectiveOperationException ignoredAgain) {
+                // Some models intentionally have no timestamp fields.
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // Test fixture models are mutable POJOs; reflection keeps the seeding code compact.
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlBinder {
+        void bind(PreparedStatement ps) throws SQLException;
+    }
+
+    @FunctionalInterface
+    private interface SqlRowConsumer {
+        void accept(ResultSet rs) throws SQLException;
+    }
+}
