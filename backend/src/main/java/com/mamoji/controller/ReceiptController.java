@@ -1,6 +1,6 @@
 package com.mamoji.controller;
 
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.ReceiptService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -12,9 +12,9 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/v1/receipts")
 public class ReceiptController {
-    private final MamojiService service;
+    private final ReceiptService service;
 
-    public ReceiptController(MamojiService service) {
+    public ReceiptController(ReceiptService service) {
         this.service = service;
     }
 
@@ -23,6 +23,6 @@ public class ReceiptController {
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam("file") MultipartFile file
     ) {
-        return service.uploadReceipt(authorization, file);
+        return service.upload(authorization, file);
     }
 }

@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.User;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.AuthService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,9 +14,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
-    private final MamojiService service;
+    private final AuthService service;
 
-    public AuthController(MamojiService service) {
+    public AuthController(AuthService service) {
         this.service = service;
     }
 

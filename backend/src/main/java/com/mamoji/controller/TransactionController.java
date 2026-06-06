@@ -2,7 +2,7 @@ package com.mamoji.controller;
 
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.TransactionRecord;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.AccountingService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,9 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/transactions")
 public class TransactionController {
-    private final MamojiService service;
+    private final AccountingService service;
 
-    public TransactionController(MamojiService service) {
+    public TransactionController(AccountingService service) {
         this.service = service;
     }
 

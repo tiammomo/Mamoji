@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.RecurringItem;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.RecurringService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -17,9 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/recurring")
 public class RecurringController {
-    private final MamojiService service;
+    private final RecurringService service;
 
-    public RecurringController(MamojiService service) {
+    public RecurringController(RecurringService service) {
         this.service = service;
     }
 

@@ -6,7 +6,7 @@ import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.EnterpriseManagementService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,9 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/enterprise")
 public class EnterpriseController {
-    private final MamojiService service;
+    private final EnterpriseManagementService service;
 
-    public EnterpriseController(MamojiService service) {
+    public EnterpriseController(EnterpriseManagementService service) {
         this.service = service;
     }
 
@@ -33,12 +33,12 @@ public class EnterpriseController {
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.enterpriseSummary(authorization, companyId);
+        return service.summary(authorization, companyId);
     }
 
     @GetMapping("/permission-matrix")
     public Map<String, Object> permissionMatrix(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.enterprisePermissionMatrix(authorization);
+        return service.permissionMatrix(authorization);
     }
 
     @GetMapping("/companies")

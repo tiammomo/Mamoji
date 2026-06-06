@@ -1,6 +1,6 @@
 package com.mamoji.controller;
 
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.ReportingService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -14,9 +14,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/stats")
 public class StatsController {
-    private final MamojiService service;
+    private final ReportingService service;
 
-    public StatsController(MamojiService service) {
+    public StatsController(ReportingService service) {
         this.service = service;
     }
 

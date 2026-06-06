@@ -18,8 +18,12 @@ public class PagedResponse<T> {
     }
 
     public static <T> PagedResponse<T> of(List<T> items, int page, int size) {
-        int safePage = Math.max(page, 0);
-        int safeSize = Math.max(size, 1);
+        return of(items, new PageRequest(page, size));
+    }
+
+    public static <T> PagedResponse<T> of(List<T> items, PageRequest pageRequest) {
+        int safePage = pageRequest.page();
+        int safeSize = pageRequest.size();
         int from = Math.min(safePage * safeSize, items.size());
         int to = Math.min(from + safeSize, items.size());
         int totalPages = (int) Math.ceil((double) items.size() / safeSize);

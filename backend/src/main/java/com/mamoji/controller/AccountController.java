@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Account;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.AccountingService;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -18,9 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/accounts")
 public class AccountController {
-    private final MamojiService service;
+    private final AccountingService service;
 
-    public AccountController(MamojiService service) {
+    public AccountController(AccountingService service) {
         this.service = service;
     }
 

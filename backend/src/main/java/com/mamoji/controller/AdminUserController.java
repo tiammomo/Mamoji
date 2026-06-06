@@ -2,7 +2,7 @@ package com.mamoji.controller;
 
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.User;
-import com.mamoji.service.MamojiService;
+import com.mamoji.service.AdminUserService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/admin/users")
 public class AdminUserController {
-    private final MamojiService service;
+    private final AdminUserService service;
 
-    public AdminUserController(MamojiService service) {
+    public AdminUserController(AdminUserService service) {
         this.service = service;
     }
 
