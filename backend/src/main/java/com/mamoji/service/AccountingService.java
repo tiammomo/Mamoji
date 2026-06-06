@@ -464,6 +464,9 @@ public class AccountingService {
             if (params.get("categoryId") != null && tx.categoryId != longParam(params, "categoryId", tx.categoryId)) {
                 return false;
             }
+            if (params.get("accountId") != null && tx.accountId != longParam(params, "accountId", tx.accountId)) {
+                return false;
+            }
             if (params.get("startDate") != null && tx.date.compareTo(params.get("startDate")) < 0) {
                 return false;
             }

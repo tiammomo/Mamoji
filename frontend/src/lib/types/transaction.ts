@@ -48,6 +48,7 @@ export interface RefundDTO {
 export interface TransactionQuery {
   type?: TransactionType;
   categoryId?: number;
+  accountId?: number;
   startDate?: string;
   endDate?: string;
   keyword?: string;
