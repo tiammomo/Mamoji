@@ -4,7 +4,9 @@ import { Button, Card, Form, Grid, Input, Message, Modal, Select, Tag } from "@a
 import { IconEdit, IconPlus, IconSearch, IconUserGroup } from "@arco-design/web-react/icon";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
+import AppPagination from "@/components/common/AppPagination";
 import { enterpriseApi } from "@/lib/api/enterprise";
+import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
 import type { Department, Employee, EmployeePayload, EnterpriseSummary, PermissionMatrix, TaxItem } from "@/lib/types";
 
@@ -74,6 +76,7 @@ export default function AdminUsersPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const employeesPagination = useClientPagination(employees, 10);
 
   const departmentMap = useMemo(
     () => new Map(departments.map((department) => [department.id, department.name])),
@@ -182,17 +185,17 @@ export default function AdminUsersPage() {
       const payload = toPayload(values);
       if (editingEmployee) {
         await enterpriseApi.updateEmployee(editingEmployee.id, payload);
-        Message.success("员工档案已更新");
+        Message.success("员工信息已更新");
       } else {
         await enterpriseApi.createEmployee(payload);
-        Message.success("员工档案已创建");
+        Message.success("员工信息已创建");
       }
       setModalVisible(false);
       setEditingEmployee(null);
       setLoading(true);
       void fetchData(keyword, status);
     } catch {
-      Message.error("员工档案保存失败");
+      Message.error("员工信息保存失败");
     }
   };
 
@@ -201,10 +204,10 @@ export default function AdminUsersPage() {
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
       <PageHeader
-        title="人员管理"
+        title="人员信息"
         subtitle={summary?.company
           ? `${summary.company.name} · ${summary.company.industry} · ${summary.company.operatingRegion || "地区待完善"}`
-          : "员工档案、入职离职与人力成本"}
+          : "员工信息、入职离职与组织权限"}
         icon={<IconUserGroup />}
         extra={
           <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
@@ -256,7 +259,7 @@ export default function AdminUsersPage() {
         <Col xs={24}>
           <Card style={{ borderRadius: 12 }}>
             <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-              <div className="font-medium">员工档案</div>
+              <div className="font-medium">员工信息</div>
               <div className="flex gap-2 flex-wrap">
                 <Input
                   prefix={<IconSearch />}
@@ -264,6 +267,7 @@ export default function AdminUsersPage() {
                   value={keyword}
                   onChange={setKeyword}
                   onPressEnter={() => {
+                    employeesPagination.resetPage();
                     setLoading(true);
                     void fetchData(keyword, status);
                   }}
@@ -274,6 +278,7 @@ export default function AdminUsersPage() {
                   onChange={(event) => {
                     const value = event.target.value;
                     setStatus(value);
+                    employeesPagination.resetPage();
                     setLoading(true);
                     void fetchData(keyword, value);
                   }}
@@ -288,6 +293,7 @@ export default function AdminUsersPage() {
                 <Button
                   type="primary"
                   onClick={() => {
+                    employeesPagination.resetPage();
                     setLoading(true);
                     void fetchData(keyword, status);
                   }}
@@ -323,10 +329,10 @@ export default function AdminUsersPage() {
                   ) : employees.length === 0 ? (
                     <tr>
                       <td colSpan={10} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>
-                        暂无员工档案
+                        暂无员工信息
                       </td>
                     </tr>
-                  ) : employees.map((employee) => {
+                  ) : employeesPagination.pagedData.map((employee) => {
                     const statusConfig = statusLabels[employee.status] || { label: employee.status, color: "gray" };
                     const role = accessRoleLabels[employee.accessRole] || { label: employee.accessRole, color: "gray" };
                     return (
@@ -368,6 +374,13 @@ export default function AdminUsersPage() {
                 </tbody>
               </table>
             </div>
+            <AppPagination
+              current={employeesPagination.page}
+              pageSize={employeesPagination.pageSize}
+              total={employeesPagination.total}
+              pageSizeOptions={[10, 20, 50, 100]}
+              onChange={employeesPagination.handleChange}
+            />
           </Card>
         </Col>
 
@@ -427,7 +440,7 @@ export default function AdminUsersPage() {
       </Row>
 
       <Modal
-        title={editingEmployee ? "编辑员工档案" : "新增员工档案"}
+        title={editingEmployee ? "编辑员工信息" : "新增员工信息"}
         visible={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}

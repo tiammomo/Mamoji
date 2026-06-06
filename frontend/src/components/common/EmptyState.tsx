@@ -1,8 +1,9 @@
 "use client";
+import type { ReactNode } from "react";
 import { Button } from "@arco-design/web-react";
 
 interface EmptyStateProps {
-  icon?: string;
+  icon?: ReactNode;
   title?: string;
   description?: string;
   actionText?: string;
@@ -18,7 +19,7 @@ export default function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center py-16 animate-fade-in">
-      <div className="text-6xl mb-4">{icon}</div>
+      <div className="mb-4 text-6xl">{icon}</div>
       <h3 className="text-lg font-medium mb-2" style={{ color: "var(--text-color-2)" }}>
         {title}
       </h3>

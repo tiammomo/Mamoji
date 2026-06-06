@@ -43,19 +43,19 @@ export default function SettingsPage() {
         avatar: selectedAvatar,
       });
       updateUser(res.data);
-      Message.success("更新成功");
+      Message.success(t("profileUpdated"));
     } catch {
-      Message.error("更新失败");
+      Message.error(t("profileUpdateFailed"));
     }
   };
 
   const handleChangePassword = async (values: { oldPassword: string; newPassword: string }) => {
     try {
       await authApi.changePassword(values);
-      Message.success("密码修改成功");
+      Message.success(t("passwordChanged"));
       passwordForm.resetFields();
     } catch {
-      Message.error("密码修改失败");
+      Message.error(t("passwordChangeFailed"));
     }
   };
 
@@ -182,10 +182,10 @@ export default function SettingsPage() {
                   <span className="text-2xl">{theme === "light" ? "☀️" : "🌙"}</span>
                   <div>
                     <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
-                      {theme === "light" ? "亮色模式" : "暗色模式"}
+                      {theme === "light" ? t("lightMode") : t("darkMode")}
                     </div>
                     <div className="text-sm" style={{ color: "var(--text-color-3)" }}>
-                      当前使用{theme === "light" ? "亮色" : "暗色"}主题
+                      {t("currentTheme", { theme: theme === "light" ? t("light") : t("dark") })}
                     </div>
                   </div>
                 </div>
@@ -195,7 +195,7 @@ export default function SettingsPage() {
                   onClick={toggleTheme}
                   style={{ borderRadius: 12 }}
                 >
-                  切换
+                  {t("switch")}
                 </Button>
               </div>
             </div>
@@ -215,10 +215,10 @@ export default function SettingsPage() {
                   <span className="text-2xl">{locale === "zh" ? "🇨🇳" : "🇺🇸"}</span>
                   <div>
                     <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
-                      {locale === "zh" ? "中文" : "English"}
+                      {locale === "zh" ? t("languageChinese") : t("languageEnglish")}
                     </div>
                     <div className="text-sm" style={{ color: "var(--text-color-3)" }}>
-                      当前使用{locale === "zh" ? "中文" : "英文"}界面
+                      {t("currentLanguage", { language: locale === "zh" ? t("languageChinese") : t("languageEnglish") })}
                     </div>
                   </div>
                 </div>
@@ -227,7 +227,7 @@ export default function SettingsPage() {
                   onClick={toggleLocale}
                   style={{ borderRadius: 12 }}
                 >
-                  切换到{locale === "zh" ? "English" : "中文"}
+                  {t("switchToLanguage", { language: locale === "zh" ? t("languageEnglish") : t("languageChinese") })}
                 </Button>
               </div>
             </div>
@@ -265,7 +265,7 @@ export default function SettingsPage() {
                     <span className="text-2xl">👥</span>
                     <div>
                       <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
-                        人员管理
+                        人员信息
                       </div>
                       <div className="text-sm" style={{ color: "var(--text-color-3)" }}>
                         管理团队成员、角色和权限，仅管理员可见。

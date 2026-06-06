@@ -1,5 +1,6 @@
 "use client";
-import { Button, Dropdown, Avatar, Badge, Tooltip } from "@arco-design/web-react";
+import { useState } from "react";
+import { Button, Dropdown, Avatar, Badge, Tooltip, Input } from "@arco-design/web-react";
 import {
   IconMenu,
   IconSun,
@@ -21,6 +22,8 @@ export default function Header() {
   const { user, logout } = useAuthStore();
   const router = useRouter();
   const t = useTranslations();
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
 
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
@@ -39,6 +42,45 @@ export default function Header() {
     setLocale(next);
     window.location.reload();
   };
+
+  const submitGlobalSearch = () => {
+    const keyword = globalSearch.trim();
+    const params = new URLSearchParams();
+    if (keyword) {
+      params.set("keyword", keyword);
+    }
+    router.push(`/transactions${params.toString() ? `?${params.toString()}` : ""}`);
+    setSearchVisible(false);
+  };
+
+  const searchDroplist = (
+    <div
+      className="global-search-panel rounded-xl border p-3 shadow-lg"
+      style={{
+        width: 360,
+        backgroundColor: "var(--bg-color-card)",
+        borderColor: "var(--border-color)",
+      }}
+    >
+      <Input
+        autoFocus
+        prefix={<IconSearch style={{ color: "var(--text-color-4)" }} />}
+        placeholder={t("common.globalSearchPlaceholder")}
+        value={globalSearch}
+        onChange={setGlobalSearch}
+        onPressEnter={submitGlobalSearch}
+        style={{ height: 40 }}
+      />
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-xs" style={{ color: "var(--text-color-3)" }}>
+          {t("common.globalSearchHint")}
+        </span>
+        <Button type="primary" size="small" onClick={submitGlobalSearch}>
+          {t("common.search")}
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -64,17 +106,24 @@ export default function Header() {
         <CompanySwitcher />
 
         {/* Search button */}
-        <Tooltip content="搜索">
+        <Dropdown
+          droplist={searchDroplist}
+          trigger="click"
+          position="br"
+          popupVisible={searchVisible}
+          onVisibleChange={setSearchVisible}
+        >
           <Button
             type="text"
             icon={<IconSearch />}
+            aria-label={t("common.search")}
             className="arco-btn-icon-only"
             style={{ color: "var(--text-color-3)" }}
           />
-        </Tooltip>
+        </Dropdown>
 
         {/* Notification */}
-        <Tooltip content="通知">
+        <Tooltip content={t("common.notifications")}>
           <Badge count={0} dot>
             <Button
               type="text"
@@ -86,7 +135,7 @@ export default function Header() {
         </Tooltip>
 
         {/* Theme toggle */}
-        <Tooltip content={theme === "light" ? "切换暗色" : "切换亮色"}>
+        <Tooltip content={theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}>
           <Button
             type="text"
             icon={theme === "light" ? <IconMoon /> : <IconSun />}

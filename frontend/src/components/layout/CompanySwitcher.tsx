@@ -5,6 +5,7 @@ import { IconBranch, IconCheck, IconDown, IconLocation, IconPlus } from "@arco-d
 import { enterpriseApi } from "@/lib/api/enterprise";
 import { useAppStore } from "@/lib/stores/appStore";
 import type { Company } from "@/lib/types";
+import { useTranslations } from "next-intl";
 
 const FormItem = Form.Item;
 
@@ -20,10 +21,10 @@ interface CompanyFormValues {
   district?: string;
 }
 
-const regionText = (company: Company) => (
+const regionText = (company: Company, fallback: string) => (
   company.operatingRegion
   || [company.country, company.province, company.city, company.district].filter(Boolean).join("/")
-  || "地区待完善"
+  || fallback
 );
 
 const policyKeyFor = (values: CompanyFormValues) => {
@@ -33,11 +34,8 @@ const policyKeyFor = (values: CompanyFormValues) => {
   return "CN-DEFAULT-DEMO-POLICY";
 };
 
-const subjectTypeLabel = (company: Pick<Company, "entityType">) => (
-  company.entityType === "household" ? "家庭主体" : "公司主体"
-);
-
 export default function CompanySwitcher() {
+  const t = useTranslations("companySwitcher");
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
@@ -62,11 +60,11 @@ export default function CompanySwitcher() {
         setActiveCompanyId(res.data[0].id);
       }
     } catch {
-      Message.error("公司主体加载失败");
+      Message.error(t("loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [setActiveCompanyId]);
+  }, [setActiveCompanyId, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -113,9 +111,9 @@ export default function CompanySwitcher() {
       setActiveCompanyId(res.data.id);
       setModalVisible(false);
       form.resetFields();
-      Message.success("主体已创建并切换");
+      Message.success(t("createSuccess"));
     } catch {
-      Message.error("主体创建失败");
+      Message.error(t("createFailed"));
     } finally {
       setCreating(false);
     }
@@ -131,8 +129,8 @@ export default function CompanySwitcher() {
         className="flex h-14 flex-col justify-center border-b px-4"
         style={{ borderColor: "var(--border-color)" }}
       >
-        <div className="text-sm font-medium" style={{ color: "var(--text-color-1)" }}>主体切换</div>
-        <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>公司和家庭资金分开管理，往来单独记录</div>
+        <div className="text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{t("title")}</div>
+        <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>{t("description")}</div>
       </div>
 
       <div className="max-h-[264px] overflow-y-auto p-2">
@@ -142,10 +140,11 @@ export default function CompanySwitcher() {
           </div>
         ) : companies.length === 0 ? (
           <div className="flex h-20 items-center justify-center px-3 text-center text-sm" style={{ color: "var(--text-color-3)" }}>
-            暂无可访问主体
+            {t("empty")}
           </div>
         ) : companies.map((company) => {
           const isActive = company.id === activeCompany?.id;
+          const subjectLabel = company.entityType === "household" ? t("householdSubject") : t("companySubject");
           return (
             <button
               key={company.id}
@@ -168,7 +167,7 @@ export default function CompanySwitcher() {
                 </span>
                 <span className="mt-0.5 flex items-center gap-1 truncate text-xs" style={{ color: "var(--text-color-3)" }}>
                   <IconLocation />
-                  {subjectTypeLabel(company)} · {regionText(company)} · {company.taxpayerType}
+                  {subjectLabel} · {regionText(company, t("regionFallback"))} · {company.taxpayerType}
                 </span>
               </span>
               {isActive && <IconCheck style={{ color: "var(--color-primary)" }} />}
@@ -185,7 +184,7 @@ export default function CompanySwitcher() {
           onClick={openCreateModal}
         >
           <IconPlus />
-          新增主体
+          {t("addSubject")}
         </button>
       </div>
     </div>
@@ -197,31 +196,46 @@ export default function CompanySwitcher() {
         <button
           data-company-switcher-trigger
           type="button"
-          className="flex h-10 w-11 cursor-pointer items-center gap-2 rounded-xl border bg-white px-2 text-left transition-colors hover:bg-black/[0.025] md:w-[280px] md:px-3 xl:w-[360px] dark:bg-transparent dark:hover:bg-white/[0.04]"
-          style={{ borderColor: "var(--border-color)", color: "var(--text-color-2)" }}
+          className="flex h-12 w-12 cursor-pointer items-center gap-2 rounded-full border px-2 text-left shadow-sm transition-all hover:-translate-y-px hover:shadow-md md:w-auto md:min-w-[252px] md:max-w-[360px] md:pl-2 md:pr-2"
+          style={{
+            borderColor: "rgba(99, 102, 241, 0.16)",
+            color: "var(--text-color-2)",
+            backgroundColor: "var(--bg-color-card)",
+          }}
         >
           <span
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg"
-            style={{ backgroundColor: "rgba(99, 102, 241, 0.1)", color: "var(--color-primary)" }}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
+            style={{
+              background: "linear-gradient(135deg, rgba(99,102,241,0.16) 0%, rgba(37,99,235,0.1) 100%)",
+              color: "var(--color-primary)",
+            }}
           >
             <IconBranch />
           </span>
-          <span className="hidden min-w-0 md:block">
-            <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
-              {loading ? "加载公司主体..." : activeCompany?.name || "选择公司主体"}
+          <span className="hidden min-w-0 flex-1 md:block">
+            <span className="block max-w-[214px] truncate text-sm font-semibold leading-5 xl:max-w-[276px]" style={{ color: "var(--text-color-1)" }}>
+              {loading ? t("loading") : activeCompany?.name || t("selectSubject")}
             </span>
             {activeCompany && (
-              <span className="hidden truncate text-xs xl:block" style={{ color: "var(--text-color-3)" }}>
-                {subjectTypeLabel(activeCompany)} · {regionText(activeCompany)}
+              <span className="mt-0.5 hidden max-w-[214px] items-center gap-1 truncate text-xs leading-4 xl:flex xl:max-w-[276px]" style={{ color: "var(--text-color-3)" }}>
+                <span className="rounded-full px-1.5 py-0.5 text-[11px] leading-none" style={{ backgroundColor: "rgba(99, 102, 241, 0.09)", color: "var(--color-primary)" }}>
+                  {activeCompany.entityType === "household" ? t("householdSubject") : t("companySubject")}
+                </span>
+                <span className="truncate">{regionText(activeCompany, t("regionFallback"))}</span>
               </span>
             )}
           </span>
-          <IconDown className="hidden shrink-0 md:block" style={{ color: "var(--text-color-3)" }} />
+          <span
+            className="hidden h-8 w-8 shrink-0 place-items-center rounded-full md:grid"
+            style={{ backgroundColor: "rgba(100, 116, 139, 0.08)", color: "var(--text-color-3)" }}
+          >
+            <IconDown />
+          </span>
         </button>
       </Dropdown>
 
       <Modal
-        title="新增主体"
+        title={t("addSubject")}
         visible={modalVisible}
         confirmLoading={creating}
         onCancel={() => setModalVisible(false)}

@@ -5,6 +5,19 @@ import {
   IconRight,
   IconArrowRise,
   IconArrowFall,
+  IconCalendar,
+  IconCheckCircle,
+  IconDashboard,
+  IconEdit,
+  IconEmpty,
+  IconExclamationCircle,
+  IconFile,
+  IconHome,
+  IconIdcard,
+  IconSafe,
+  IconStorage,
+  IconSwap,
+  IconUserGroup,
 } from "@arco-design/web-react/icon";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -20,12 +33,12 @@ import type { OverviewStats, Transaction, Budget, EnterpriseSummary, EntityTrans
 
 const { Row, Col } = Grid;
 
-const transferTypeLabels: Record<string, string> = {
-  shareholder_advance: "家庭垫资",
-  advance_repayment: "垫资归还",
-  expense_reimbursement: "代垫报销",
-  reimbursement_payment: "报销付款",
-  inter_entity_transfer: "主体往来",
+const transferTypeLabelKeys: Record<string, string> = {
+  shareholder_advance: "transferShareholderAdvance",
+  advance_repayment: "transferAdvanceRepayment",
+  expense_reimbursement: "transferExpenseReimbursement",
+  reimbursement_payment: "transferReimbursementPayment",
+  inter_entity_transfer: "transferInterEntity",
 };
 
 export default function DashboardPage() {
@@ -88,36 +101,36 @@ export default function DashboardPage() {
 
   const quickActions = [
     {
-      icon: "✏️",
-      label: "录入流水",
-      path: "/transactions/new",
+      icon: <IconEdit />,
+      label: t("quickNewRecord"),
+      path: "/transactions?action=new",
       color: "#6366f1",
       bg: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
     },
     {
-      icon: "💸",
-      label: "经营流水",
+      icon: <IconSwap />,
+      label: t("quickLedger"),
       path: "/transactions",
       color: "#10b981",
       bg: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
     },
     {
-      icon: "📊",
-      label: "经营报表",
+      icon: <IconDashboard />,
+      label: t("quickReports"),
       path: "/reports",
       color: "#3b82f6",
       bg: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
     },
     {
-      icon: "🎯",
-      label: "经营预算",
+      icon: <IconCalendar />,
+      label: t("quickBudgets"),
       path: "/budgets",
       color: "#f59e0b",
       bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
     },
     {
-      icon: "👥",
-      label: "人员管理",
+      icon: <IconUserGroup />,
+      label: t("quickPeople"),
       path: "/admin/users",
       color: "#06b6d4",
       bg: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)",
@@ -129,7 +142,9 @@ export default function DashboardPage() {
       label: t("monthlyIncome"),
       value: stats?.monthlyIncome || 0,
       type: 1 as const,
-      icon: "💰",
+      icon: <IconSafe />,
+      iconColor: "#059669",
+      iconBg: "#10b98118",
       gradient: "var(--gradient-income)",
       trend: "+12%",
       trendUp: true,
@@ -138,7 +153,9 @@ export default function DashboardPage() {
       label: t("monthlyExpense"),
       value: stats?.monthlyExpense || 0,
       type: 2 as const,
-      icon: "💸",
+      icon: <IconSwap />,
+      iconColor: "#dc2626",
+      iconBg: "#ef444418",
       gradient: "var(--gradient-expense)",
       trend: "-5%",
       trendUp: false,
@@ -147,7 +164,9 @@ export default function DashboardPage() {
       label: t("monthlyBalance"),
       value: stats?.monthlyBalance || 0,
       type: (stats?.monthlyBalance && stats.monthlyBalance >= 0 ? 1 : 2) as 1 | 2,
-      icon: "📊",
+      icon: <IconDashboard />,
+      iconColor: "#4f46e5",
+      iconBg: "#6366f118",
       gradient: "var(--gradient-primary)",
       trend: stats?.monthlyBalance && stats.monthlyBalance >= 0 ? "+8%" : "-3%",
       trendUp: stats?.monthlyBalance ? stats.monthlyBalance >= 0 : true,
@@ -155,7 +174,9 @@ export default function DashboardPage() {
     {
       label: t("budgetUsage"),
       value: stats?.budgetUsageRate ? stats.budgetUsageRate * 100 : 0,
-      icon: "🎯",
+      icon: <IconCalendar />,
+      iconColor: "#d97706",
+      iconBg: "#f59e0b18",
       gradient: "var(--gradient-warning)",
       suffix: "%",
       trend: "65%",
@@ -173,29 +194,34 @@ export default function DashboardPage() {
       >
         <div className="relative z-10">
           <h1 className="text-2xl font-bold text-white mb-2">
-            欢迎回到经营工作台 👋
+            {t("welcomeTitle")}
           </h1>
           <p className="text-white/80">
             {enterpriseSummary?.company?.name
-              ? `${enterpriseSummary.company.name} 的收入、成本、人员和税费概览`
-              : "这是公司的收入、成本、人员和税费概览"}
+              ? t("welcomeSubtitleWithCompany", { company: enterpriseSummary.company.name })
+              : t("welcomeSubtitle")}
           </p>
         </div>
-        <div className="absolute right-6 top-1/2 -translate-y-1/2 text-8xl opacity-20">
-          💰
+        <div className="absolute right-8 top-1/2 -translate-y-1/2 text-8xl opacity-20 text-white">
+          <IconDashboard />
         </div>
       </div>
 
       {/* Stat cards */}
-      <Row gutter={16} className="mb-6">
+      <Row gutter={16} className="dashboard-card-row mb-6">
         {statCards.map((card, index) => (
-          <Col key={index} xs={12} sm={12} md={6}>
+          <Col key={index} xs={12} sm={12} md={6} className="dashboard-card-col">
             <div
-              className="stat-card mb-4 animate-fade-in"
+              className="stat-card dashboard-metric-card animate-fade-in"
               style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className="flex items-start justify-between mb-3">
-                <span className="text-3xl">{card.icon}</span>
+                <span
+                  className="dashboard-card-icon"
+                  style={{ color: card.iconColor, backgroundColor: card.iconBg }}
+                >
+                  {card.icon}
+                </span>
                 <div
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded-full"
                   style={{
@@ -226,16 +252,18 @@ export default function DashboardPage() {
       </Row>
 
       {/* Enterprise overview */}
-      <Row gutter={16} className="mb-6">
-        <Col xs={12} sm={12} md={6}>
-          <div className="stat-card mb-4 animate-fade-in">
+      <Row gutter={16} className="dashboard-card-row mb-6">
+        <Col xs={12} sm={12} md={6} className="dashboard-card-col">
+          <div className="stat-card dashboard-metric-card animate-fade-in">
             <div className="flex items-start justify-between mb-3">
-              <span className="text-3xl">🏢</span>
+              <span className="dashboard-card-icon" style={{ color: "#4f46e5", backgroundColor: "#6366f118" }}>
+                <IconHome />
+              </span>
               <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#6366f120", color: "#6366f1" }}>
-                公司
+                {t("companyBadge")}
               </span>
             </div>
-            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>公司主体</div>
+            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("companySubject")}</div>
             {loading ? (
               <Skeleton />
             ) : (
@@ -250,15 +278,17 @@ export default function DashboardPage() {
             )}
           </div>
         </Col>
-        <Col xs={12} sm={12} md={6}>
-          <div className="stat-card mb-4 animate-fade-in">
+        <Col xs={12} sm={12} md={6} className="dashboard-card-col">
+          <div className="stat-card dashboard-metric-card animate-fade-in">
             <div className="flex items-start justify-between mb-3">
-              <span className="text-3xl">👥</span>
+              <span className="dashboard-card-icon" style={{ color: "#059669", backgroundColor: "#10b98118" }}>
+                <IconUserGroup />
+              </span>
               <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#10b98120", color: "#10b981" }}>
-                人员
+                {t("peopleBadge")}
               </span>
             </div>
-            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>在职员工</div>
+            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("activeEmployees")}</div>
             {loading ? (
               <Skeleton />
             ) : (
@@ -267,21 +297,23 @@ export default function DashboardPage() {
                   {enterpriseSummary?.activeEmployeeCount || 0}
                 </div>
                 <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>
-                  待入职 {enterpriseSummary?.onboardingCount || 0} · 本月入职 {enterpriseSummary?.hiresThisMonth || 0}
+                  {t("pendingOnboarding")} {enterpriseSummary?.onboardingCount || 0} · {t("hiresThisMonth")} {enterpriseSummary?.hiresThisMonth || 0}
                 </div>
               </div>
             )}
           </div>
         </Col>
-        <Col xs={12} sm={12} md={6}>
-          <div className="stat-card mb-4 animate-fade-in">
+        <Col xs={12} sm={12} md={6} className="dashboard-card-col">
+          <div className="stat-card dashboard-metric-card animate-fade-in">
             <div className="flex items-start justify-between mb-3">
-              <span className="text-3xl">💼</span>
+              <span className="dashboard-card-icon" style={{ color: "#dc2626", backgroundColor: "#ef444418" }}>
+                <IconIdcard />
+              </span>
               <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#ef444420", color: "#ef4444" }}>
-                人力
+                {t("peopleCostBadge")}
               </span>
             </div>
-            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>月人力成本</div>
+            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("monthlyPeopleCost")}</div>
             {loading ? (
               <Skeleton />
             ) : (
@@ -289,22 +321,24 @@ export default function DashboardPage() {
             )}
           </div>
         </Col>
-        <Col xs={12} sm={12} md={6}>
-          <div className="stat-card mb-4 animate-fade-in">
+        <Col xs={12} sm={12} md={6} className="dashboard-card-col">
+          <div className="stat-card dashboard-metric-card animate-fade-in">
             <div className="flex items-start justify-between mb-3">
-              <span className="text-3xl">🧾</span>
+              <span className="dashboard-card-icon" style={{ color: "#d97706", backgroundColor: "#f59e0b18" }}>
+                <IconFile />
+              </span>
               <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#f59e0b20", color: "#d97706" }}>
-                税费
+                {t("taxBadge")}
               </span>
             </div>
-            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>待处理税费</div>
+            <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("pendingTax")}</div>
             {loading ? (
               <Skeleton />
             ) : (
               <div>
                 <AmountDisplay amount={enterpriseSummary?.pendingTaxAmount || 0} type={2} size="large" />
                 <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>
-                  截止日 {enterpriseSummary?.nextTaxDueDate || "--"}
+                  {t("dueDate")} {enterpriseSummary?.nextTaxDueDate || "--"}
                 </div>
               </div>
             )}
@@ -318,8 +352,8 @@ export default function DashboardPage() {
         style={{ borderRadius: 16 }}
         title={
           <div className="flex items-center gap-2">
-            <span className="text-lg">↔️</span>
-            <span>主体往来</span>
+            <IconSwap />
+            <span>{t("entityTransfers")}</span>
           </div>
         }
       >
@@ -333,12 +367,12 @@ export default function DashboardPage() {
           </Row>
         ) : entityTransfers.length === 0 ? (
           <div className="text-center py-10">
-            <div className="text-5xl mb-4">🔁</div>
+            <IconSwap className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
             <p className="font-medium" style={{ color: "var(--text-color-2)" }}>
-              暂无主体间资金往来
+              {t("noEntityTransfers")}
             </p>
             <p className="text-sm mt-1" style={{ color: "var(--text-color-3)" }}>
-              公司主体与家庭主体之间的垫资、报销和归还会在这里汇总
+              {t("entityTransfersDescription")}
             </p>
           </div>
         ) : (
@@ -347,12 +381,12 @@ export default function DashboardPage() {
               const isInbound = activeEntityId === transfer.toEntityId;
               const isOutbound = activeEntityId === transfer.fromEntityId;
               const amountType: 1 | 2 | undefined = isInbound ? 1 : isOutbound ? 2 : undefined;
-              const direction = isInbound ? "转入" : isOutbound ? "转出" : "往来";
+              const direction = isInbound ? t("inbound") : isOutbound ? t("outbound") : t("transfer");
               const counterparty = isInbound
-                ? transfer.fromEntityName || "来源主体"
+                ? transfer.fromEntityName || t("sourceEntity")
                 : isOutbound
-                  ? transfer.toEntityName || "目标主体"
-                  : `${transfer.fromEntityName || "来源主体"} → ${transfer.toEntityName || "目标主体"}`;
+                  ? transfer.toEntityName || t("targetEntity")
+                  : `${transfer.fromEntityName || t("sourceEntity")} → ${transfer.toEntityName || t("targetEntity")}`;
 
               return (
                 <Col key={transfer.id} xs={24} md={12}>
@@ -377,7 +411,7 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <div className="text-xs" style={{ color: "var(--text-color-3)" }}>
-                          {transferTypeLabels[transfer.transferType] || "主体往来"} · {formatDate(transfer.transferDate)}
+                          {t(transferTypeLabelKeys[transfer.transferType] || "transferInterEntity")} · {formatDate(transfer.transferDate)}
                         </div>
                         {transfer.note ? (
                           <div className="text-sm mt-3 line-clamp-2" style={{ color: "var(--text-color-2)" }}>
@@ -439,7 +473,7 @@ export default function DashboardPage() {
             style={{ borderRadius: 16 }}
             title={
               <div className="flex items-center gap-2">
-                <span className="text-lg">💸</span>
+                <IconStorage />
                 <span>{t("recentTransactions")}</span>
               </div>
             }
@@ -450,7 +484,7 @@ export default function DashboardPage() {
                 onClick={() => router.push("/transactions")}
                 style={{ color: "var(--color-primary)" }}
               >
-                查看更多 <IconRight />
+                {t("viewMore")} <IconRight />
               </Button>
             }
           >
@@ -462,14 +496,14 @@ export default function DashboardPage() {
               </div>
             ) : recentTx.length === 0 ? (
               <div className="text-center py-12">
-                <div className="text-5xl mb-4">📭</div>
-                <p style={{ color: "var(--text-color-3)" }}>暂无经营流水</p>
+                <IconEmpty className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
+                <p style={{ color: "var(--text-color-3)" }}>{t("noRecentTransactions")}</p>
                 <Button
                   type="primary"
                   className="mt-4"
-                  onClick={() => router.push("/transactions/new")}
+                  onClick={() => router.push("/transactions?action=new")}
                 >
-                  录入流水
+                  {t("quickNewRecord")}
                 </Button>
               </div>
             ) : (
@@ -492,7 +526,7 @@ export default function DashboardPage() {
                       </div>
                       <div>
                         <div className="font-medium text-sm" style={{ color: "var(--text-color-1)" }}>
-                          {tx.note || tx.categoryName || "未命名"}
+                          {tx.note || tx.categoryName || t("unnamed")}
                         </div>
                         <div className="text-xs" style={{ color: "var(--text-color-3)" }}>
                           {tx.categoryName} · {formatDate(tx.date)}
@@ -513,7 +547,7 @@ export default function DashboardPage() {
             style={{ borderRadius: 16 }}
             title={
               <div className="flex items-center gap-2">
-                <span className="text-lg">⚠️</span>
+                <IconExclamationCircle />
                 <span>{t("budgetAlerts")}</span>
               </div>
             }
@@ -524,7 +558,7 @@ export default function DashboardPage() {
                 onClick={() => router.push("/budgets")}
                 style={{ color: "var(--color-primary)" }}
               >
-                管理 <IconRight />
+                {t("manage")} <IconRight />
               </Button>
             }
           >
@@ -536,12 +570,12 @@ export default function DashboardPage() {
               </div>
             ) : alerts.length === 0 ? (
               <div className="text-center py-12">
-                <div className="text-5xl mb-4">✅</div>
+                <IconCheckCircle className="mb-4" style={{ fontSize: 42, color: "var(--color-success)" }} />
                 <p className="font-medium" style={{ color: "var(--text-color-2)" }}>
-                  预算状态良好
+                  {t("budgetHealthy")}
                 </p>
                 <p className="text-sm mt-1" style={{ color: "var(--text-color-3)" }}>
-                  暂无预算预警
+                  {t("noBudgetAlerts")}
                 </p>
               </div>
             ) : (
@@ -562,7 +596,7 @@ export default function DashboardPage() {
                           color: budget.riskLevel === "critical" ? "#ef4444" : "#f59e0b",
                         }}
                       >
-                        {budget.riskLevel === "critical" ? "超支" : "预警"}
+                        {budget.riskLevel === "critical" ? t("overrun") : t("warning")}
                       </span>
                     </div>
                     <BudgetProgress

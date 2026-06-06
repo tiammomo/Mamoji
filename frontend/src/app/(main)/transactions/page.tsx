@@ -1,27 +1,50 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Card, Button, Space, Input, Select, Modal, Message } from "@arco-design/web-react";
-import { IconPlus, IconSearch, IconDelete, IconEdit, IconRefresh } from "@arco-design/web-react/icon";
-import { useRouter } from "next/navigation";
+import { IconPlus, IconSearch, IconDelete, IconEdit, IconRefresh, IconSafe, IconSwap, IconEmpty } from "@arco-design/web-react/icon";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { transactionApi } from "@/lib/api/transactions";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import EmptyState from "@/components/common/EmptyState";
+import AppPagination from "@/components/common/AppPagination";
+import TransactionFormModal, { type TransactionFormMode } from "@/components/transactions/TransactionFormModal";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 import type { Transaction, TransactionQuery } from "@/lib/types";
 
+const normalizeTypeFilter = (value: string | null) => (
+  value === "1" || value === "2" || value === "3" ? value : "all"
+);
+
 export default function TransactionsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useTranslations("transaction");
   const { fetchCategories } = useCategoryStore();
+  const initialKeyword = searchParams.get("keyword") || "";
+  const initialType = normalizeTypeFilter(searchParams.get("type"));
+  const appliedKeyword = searchParams.get("keyword") || "";
+  const appliedTypeFilter = normalizeTypeFilter(searchParams.get("type"));
+  const appliedType = appliedTypeFilter === "all" ? undefined : Number(appliedTypeFilter) as 1 | 2 | 3;
   const [data, setData] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState<TransactionQuery>({ page: 0, size: 20 });
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState(initialKeyword);
+  const [typeFilter, setTypeFilter] = useState<string>(initialType);
+  const [formVisible, setFormVisible] = useState(false);
+  const [formMode, setFormMode] = useState<TransactionFormMode>("create");
+  const [activeTransactionId, setActiveTransactionId] = useState<number | null>(null);
+
+  const query = useMemo<TransactionQuery>(() => ({
+    page: pageIndex,
+    size: pageSize,
+    keyword: appliedKeyword || undefined,
+    type: appliedType,
+  }), [appliedKeyword, appliedType, pageIndex, pageSize]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -61,14 +84,67 @@ export default function TransactionsPage() {
     };
   }, [fetchCategories, query]);
 
+  useEffect(() => {
+    if (searchParams.get("action") !== "new") return;
+    const timer = window.setTimeout(() => {
+      setFormMode("create");
+      setActiveTransactionId(null);
+      setFormVisible(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(appliedKeyword);
+      setTypeFilter(appliedTypeFilter);
+      setPageIndex(0);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [appliedKeyword, appliedTypeFilter]);
+
+  const openForm = (mode: TransactionFormMode, transactionId?: number) => {
+    setFormMode(mode);
+    setActiveTransactionId(transactionId || null);
+    setFormVisible(true);
+  };
+
+  const closeForm = () => {
+    setFormVisible(false);
+    setActiveTransactionId(null);
+    if (searchParams.get("action")) {
+      router.replace("/transactions", { scroll: false });
+    }
+  };
+
+  const refreshData = () => {
+    setLoading(true);
+    void fetchData();
+  };
+
+  const handlePageChange = (page: number, size: number) => {
+    setLoading(true);
+    setPageSize(size);
+    setPageIndex(page - 1);
+  };
+
   const handleSearch = () => {
     setLoading(true);
-    setQuery((prev) => ({
-      ...prev,
-      keyword: search || undefined,
-      type: typeFilter === "all" ? undefined : Number(typeFilter) as 1 | 2 | 3,
-      page: 0,
-    }));
+    const keyword = search.trim();
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("action");
+    if (keyword) {
+      params.set("keyword", keyword);
+    } else {
+      params.delete("keyword");
+    }
+    if (typeFilter === "all") {
+      params.delete("type");
+    } else {
+      params.set("type", typeFilter);
+    }
+    setPageIndex(0);
+    router.replace(`/transactions${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
   };
 
   const handleDelete = (id: number) => {
@@ -93,16 +169,22 @@ export default function TransactionsPage() {
     3: { color: "#f59e0b", bg: "#f59e0b20", label: "退款" },
   };
 
+  const renderTransactionIcon = (type: number) => {
+    if (type === 1) return <IconSafe />;
+    if (type === 3) return <IconRefresh />;
+    return <IconSwap />;
+  };
+
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
       <PageHeader
         title={t("title")}
-        icon="💸"
+        icon={<IconSwap />}
         extra={
           <Button
             type="primary"
             icon={<IconPlus />}
-            onClick={() => router.push("/transactions/new")}
+            onClick={() => openForm("create")}
           >
             {t("new")}
           </Button>
@@ -114,7 +196,7 @@ export default function TransactionsPage() {
         <Space wrap>
           <Input
             prefix={<IconSearch style={{ color: "var(--text-color-4)" }} />}
-            placeholder="搜索备注..."
+            placeholder={t("searchPlaceholder")}
             value={search}
             onChange={setSearch}
             onPressEnter={handleSearch}
@@ -125,13 +207,13 @@ export default function TransactionsPage() {
             onChange={setTypeFilter}
             style={{ width: 140, borderRadius: 12 }}
           >
-            <Select.Option value="all">全部类型</Select.Option>
-            <Select.Option value="1">💰 收入</Select.Option>
-            <Select.Option value="2">💸 成本支出</Select.Option>
-            <Select.Option value="3">↩️ 退款</Select.Option>
+            <Select.Option value="all">{t("allTypes")}</Select.Option>
+            <Select.Option value="1">{t("income")}</Select.Option>
+            <Select.Option value="2">{t("expense")}</Select.Option>
+            <Select.Option value="3">{t("refund")}</Select.Option>
           </Select>
           <Button type="primary" onClick={handleSearch}>
-            搜索
+            {t("search")}
           </Button>
         </Space>
       </Card>
@@ -140,11 +222,11 @@ export default function TransactionsPage() {
       {data.length === 0 && !loading ? (
         <Card style={{ borderRadius: 16 }}>
           <EmptyState
-            icon="📭"
+            icon={<IconEmpty style={{ fontSize: 56, color: "var(--text-color-4)" }} />}
             title="暂无经营流水"
             description="点击上方按钮录入第一笔收入或成本"
             actionText="录入流水"
-            onAction={() => router.push("/transactions/new")}
+            onAction={() => openForm("create")}
           />
         </Card>
       ) : (
@@ -168,7 +250,7 @@ export default function TransactionsPage() {
                       className="w-12 h-12 rounded-xl flex items-center justify-center text-xl"
                       style={{ backgroundColor: typeConfig.bg }}
                     >
-                      {tx.categoryIcon || (tx.type === 1 ? "💰" : tx.type === 3 ? "↩️" : "💸")}
+                      {renderTransactionIcon(tx.type)}
                     </div>
                     <div>
                       <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
@@ -210,7 +292,7 @@ export default function TransactionsPage() {
                           type="text"
                           size="mini"
                           icon={<IconEdit />}
-                          onClick={() => router.push(`/transactions/new?edit=${tx.id}`)}
+                          onClick={() => openForm("edit", tx.id)}
                           style={{ color: "var(--text-color-3)" }}
                         />
                       )}
@@ -219,7 +301,7 @@ export default function TransactionsPage() {
                           type="text"
                           size="mini"
                           icon={<IconRefresh />}
-                          onClick={() => router.push(`/transactions/new?refund=${tx.id}`)}
+                          onClick={() => openForm("refund", tx.id)}
                           style={{ color: "var(--color-warning)" }}
                         />
                       )}
@@ -239,30 +321,23 @@ export default function TransactionsPage() {
             })}
           </div>
 
-          {/* Pagination */}
-          {total > 20 && (
-            <div className="flex justify-center mt-6">
-              <Space>
-                <Button
-                  disabled={query.page === 0}
-                  onClick={() => setQuery((prev) => ({ ...prev, page: (prev.page || 0) - 1 }))}
-                >
-                  上一页
-                </Button>
-                <span className="px-4 py-2 text-sm" style={{ color: "var(--text-color-3)" }}>
-                  第 {(query.page || 0) + 1} 页 / 共 {Math.ceil(total / (query.size || 20))} 页
-                </span>
-                <Button
-                  disabled={(query.page || 0) + 1 >= Math.ceil(total / (query.size || 20))}
-                  onClick={() => setQuery((prev) => ({ ...prev, page: (prev.page || 0) + 1 }))}
-                >
-                  下一页
-                </Button>
-              </Space>
-            </div>
-          )}
+          <AppPagination
+            current={pageIndex + 1}
+            pageSize={pageSize}
+            total={total}
+            pageSizeOptions={[10, 20, 50, 100]}
+            onChange={handlePageChange}
+          />
         </Card>
       )}
+
+      <TransactionFormModal
+        visible={formVisible}
+        mode={formMode}
+        transactionId={activeTransactionId}
+        onClose={closeForm}
+        onSuccess={refreshData}
+      />
     </div>
   );
 }

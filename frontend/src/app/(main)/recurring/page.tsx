@@ -7,6 +7,8 @@ import { recurringApi } from "@/lib/api/recurring";
 import type { RecurringItem, CreateRecurringDTO } from "@/lib/api/recurring";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
+import AppPagination from "@/components/common/AppPagination";
+import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { formatDate } from "@/lib/utils/format";
 
 const FormItem = Form.Item;
@@ -17,6 +19,7 @@ export default function RecurringPage() {
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const recurringPagination = useClientPagination(data, 10);
 
   const fetchData = async () => {
     try {
@@ -134,6 +137,11 @@ export default function RecurringPage() {
       render: (d: string) => formatDate(d),
     },
     {
+      title: t("endDate"),
+      dataIndex: "endDate",
+      render: (d?: string) => (d ? formatDate(d) : "长期"),
+    },
+    {
       title: "状态",
       dataIndex: "status",
       render: (status: number, record: RecurringItem) => (
@@ -166,7 +174,21 @@ export default function RecurringPage() {
         }
       />
 
-      <Table columns={columns} data={data} loading={loading} rowKey="id" border={false} />
+      <Table
+        columns={columns}
+        data={recurringPagination.pagedData}
+        loading={loading}
+        rowKey="id"
+        border={false}
+        pagination={false}
+      />
+      <AppPagination
+        current={recurringPagination.page}
+        pageSize={recurringPagination.pageSize}
+        total={recurringPagination.total}
+        pageSizeOptions={[10, 20, 50, 100]}
+        onChange={recurringPagination.handleChange}
+      />
 
       <Modal
         title={t("new")}
@@ -198,8 +220,11 @@ export default function RecurringPage() {
           <FormItem label={t("interval")} field="interval" initialValue={1}>
             <Input type="number" min={1} />
           </FormItem>
-          <FormItem label="开始日期" field="startDate" rules={[{ required: true }]}>
+          <FormItem label={t("startDate")} field="startDate" rules={[{ required: true }]}>
             <DatePicker className="w-full" />
+          </FormItem>
+          <FormItem label={t("endDate")} field="endDate">
+            <DatePicker className="w-full" placeholder="不设置则长期有效" allowClear />
           </FormItem>
           <FormItem label="备注" field="note">
             <Input.TextArea placeholder="备注（可选）" />

@@ -9,6 +9,7 @@ import PageHeader from "@/components/common/PageHeader";
 import BudgetProgress from "@/components/common/BudgetProgress";
 import RiskBadge from "@/components/common/RiskBadge";
 import EmptyState from "@/components/common/EmptyState";
+import AppPagination from "@/components/common/AppPagination";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 import type { Budget, BudgetQuery, CreateBudgetDTO, BudgetStatus } from "@/lib/types";
 
@@ -18,7 +19,10 @@ export default function BudgetsPage() {
   const t = useTranslations("budget");
   const { categories, fetchCategories } = useCategoryStore();
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(12);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -31,6 +35,7 @@ export default function BudgetsPage() {
     try {
       const res = await budgetApi.list(params);
       setBudgets(res.data.content);
+      setTotal(res.data.totalElements);
     } catch {
       // silent
     } finally {
@@ -43,9 +48,10 @@ export default function BudgetsPage() {
 
     const loadBudgets = async () => {
       try {
-        const res = await budgetApi.list();
+        const res = await budgetApi.list({ page: 0, size: 12 });
         if (!cancelled) {
           setBudgets(res.data.content);
+          setTotal(res.data.totalElements);
         }
       } catch {
         // silent
@@ -64,18 +70,19 @@ export default function BudgetsPage() {
     };
   }, [fetchCategories]);
 
-  const currentQuery = (): BudgetQuery => ({
+  const currentQuery = (nextPage = pageIndex, nextPageSize = pageSize): BudgetQuery => ({
     keyword: keyword || undefined,
     startDate: startDate || undefined,
     endDate: endDate || undefined,
     status: status === "all" ? undefined : Number(status) as BudgetStatus,
-    page: 0,
-    size: 100,
+    page: nextPage,
+    size: nextPageSize,
   });
 
   const handleSearch = () => {
+    setPageIndex(0);
     setLoading(true);
-    fetchData(currentQuery());
+    fetchData(currentQuery(0, pageSize));
   };
 
   const handleReset = () => {
@@ -83,8 +90,17 @@ export default function BudgetsPage() {
     setStartDate("");
     setEndDate("");
     setStatus("all");
+    setPageIndex(0);
     setLoading(true);
-    fetchData({ page: 0, size: 100 });
+    fetchData({ page: 0, size: pageSize });
+  };
+
+  const handlePageChange = (page: number, size: number) => {
+    const nextPageIndex = page - 1;
+    setPageIndex(nextPageIndex);
+    setPageSize(size);
+    setLoading(true);
+    fetchData(currentQuery(nextPageIndex, size));
   };
 
   const handleSubmit = async (values: CreateBudgetDTO & { categoryId?: number }) => {
@@ -200,9 +216,10 @@ export default function BudgetsPage() {
           />
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {budgets.map((budget, index) => (
-            <div
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {budgets.map((budget, index) => (
+              <div
               key={budget.id}
               className="stat-card animate-fade-in hover-lift"
               style={{ animationDelay: `${index * 100}ms` }}
@@ -261,9 +278,17 @@ export default function BudgetsPage() {
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
+          <AppPagination
+            current={pageIndex + 1}
+            pageSize={pageSize}
+            total={total}
+            pageSizeOptions={[6, 12, 24, 48]}
+            onChange={handlePageChange}
+          />
+        </>
       )}
 
       <Modal

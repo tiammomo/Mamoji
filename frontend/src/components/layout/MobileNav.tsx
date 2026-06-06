@@ -12,7 +12,7 @@ import {
 
 const tabs = [
   { key: "/dashboard", icon: <IconDashboard />, label: "dashboard" },
-  { key: "/transactions/new", icon: <IconFile />, label: "newTransaction" },
+  { key: "/transactions", icon: <IconFile />, label: "transactions" },
   { key: "/reports", icon: <IconStorage />, label: "reports" },
   { key: "/accounts", icon: <IconSafe />, label: "accounts" },
   { key: "/admin/users", icon: <IconUserGroup />, label: "userManagement" },

@@ -6,6 +6,8 @@ import { useTranslations } from "next-intl";
 import { accountApi } from "@/lib/api/accounts";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
+import AppPagination from "@/components/common/AppPagination";
+import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { formatAmount } from "@/lib/utils/format";
 import { ACCOUNT_TYPE_LABELS } from "@/lib/utils/constants";
 import type { Account, AccountSummary, CreateAccountDTO } from "@/lib/types";
@@ -73,6 +75,8 @@ export default function AccountsPage() {
       cancelled = true;
     };
   }, []);
+
+  const accountsPagination = useClientPagination(accounts, 12);
 
   const handleSubmit = async (values: CreateAccountDTO) => {
     try {
@@ -176,56 +180,65 @@ export default function AccountsPage() {
           />
         </Card>
       ) : (
-        <Row gutter={16}>
-          {accounts.map((acc, index) => (
-            <Col key={acc.id} xs={24} sm={12} md={8} lg={6}>
-              <div
-                className="stat-card mb-4 animate-fade-in hover-lift cursor-pointer"
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{accountIcons[acc.type] || "💰"}</span>
-                    <div>
-                      <div className="font-medium">{acc.name}</div>
-                      <Tag
-                        color="blue"
-                        className="mt-1"
-                        style={{ borderRadius: 6, fontSize: 11 }}
-                      >
-                        {ACCOUNT_TYPE_LABELS[acc.type] || acc.type}
-                      </Tag>
+        <>
+          <Row gutter={16}>
+            {accountsPagination.pagedData.map((acc, index) => (
+              <Col key={acc.id} xs={24} sm={12} md={8} lg={6}>
+                <div
+                  className="stat-card mb-4 animate-fade-in hover-lift cursor-pointer"
+                  style={{ animationDelay: `${index * 100}ms` }}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{accountIcons[acc.type] || "💰"}</span>
+                      <div>
+                        <div className="font-medium">{acc.name}</div>
+                        <Tag
+                          color="blue"
+                          className="mt-1"
+                          style={{ borderRadius: 6, fontSize: 11 }}
+                        >
+                          {ACCOUNT_TYPE_LABELS[acc.type] || acc.type}
+                        </Tag>
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        type="text"
+                        size="mini"
+                        icon={<IconEdit />}
+                        onClick={() => openEdit(acc)}
+                        style={{ color: "var(--text-color-3)" }}
+                      />
+                      <Button
+                        type="text"
+                        size="mini"
+                        status="danger"
+                        icon={<IconDelete />}
+                        onClick={() => handleDelete(acc.id)}
+                      />
                     </div>
                   </div>
-                  <div className="flex gap-1">
-                    <Button
-                      type="text"
-                      size="mini"
-                      icon={<IconEdit />}
-                      onClick={() => openEdit(acc)}
-                      style={{ color: "var(--text-color-3)" }}
-                    />
-                    <Button
-                      type="text"
-                      size="mini"
-                      status="danger"
-                      icon={<IconDelete />}
-                      onClick={() => handleDelete(acc.id)}
-                    />
+                  <div className="text-xl font-bold mt-2">
+                    <AmountDisplay amount={acc.balance} type={acc.balance >= 0 ? 1 : 2} />
                   </div>
+                  {acc.bank && (
+                    <div className="text-xs mt-2" style={{ color: "var(--text-color-4)" }}>
+                      {acc.bank}
+                    </div>
+                  )}
                 </div>
-                <div className="text-xl font-bold mt-2">
-                  <AmountDisplay amount={acc.balance} type={acc.balance >= 0 ? 1 : 2} />
-                </div>
-                {acc.bank && (
-                  <div className="text-xs mt-2" style={{ color: "var(--text-color-4)" }}>
-                    {acc.bank}
-                  </div>
-                )}
-              </div>
-            </Col>
-          ))}
-        </Row>
+              </Col>
+            ))}
+          </Row>
+          <AppPagination
+            current={accountsPagination.page}
+            pageSize={accountsPagination.pageSize}
+            total={accountsPagination.total}
+            pageSizeOptions={[8, 12, 24, 48]}
+            onChange={accountsPagination.handleChange}
+          />
+        </>
       )}
 
       {/* Modal */}

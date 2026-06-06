@@ -8,13 +8,16 @@ import { useAuthStore } from "@/lib/stores/authStore";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useRouter } from "next/navigation";
+import { useLocale } from "next-intl";
 import { Spin } from "@arco-design/web-react";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const isMobile = useIsMobile();
   const router = useRouter();
+  const locale = useLocale();
   const { isAuthenticated, loading, fetchCurrentUser } = useAuthStore();
   const { fetchCategories } = useCategoryStore();
+  const hydratePreferences = useAppStore((state) => state.hydratePreferences);
 
   useEffect(() => {
     fetchCurrentUser();
@@ -33,11 +36,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated, fetchCategories]);
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
-    if (savedTheme) {
-      useAppStore.getState().setTheme(savedTheme);
-    }
-  }, []);
+    hydratePreferences(locale === "en" ? "en" : "zh");
+  }, [hydratePreferences, locale]);
 
   if (loading) {
     return (
