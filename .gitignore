@@ -37,6 +37,16 @@ mamoji.config.json
 backend/.env
 backend/.env.local
 
+# SQLite and local runtime data
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
 # Vercel
 .vercel
 
@@ -52,9 +62,6 @@ target/
 *.log
 *.jar
 *.war
-
-# IDE
-.idea/
 
 # OS
 Thumbs.db
