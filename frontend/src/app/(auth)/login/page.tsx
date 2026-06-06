@@ -1,113 +1,174 @@
-﻿"use client";
-
+"use client";
 import { useState } from "react";
-import Link from "next/link";
+import { Form, Input, Button, Message, Checkbox } from "@arco-design/web-react";
+import { IconEmail, IconLock } from "@arco-design/web-react/icon";
 import { useRouter } from "next/navigation";
-import { api, getErrorMessage, type AuthResponse } from "@/lib/api";
-import { Wallet } from "lucide-react";
+import { useAuthStore } from "@/lib/stores/authStore";
+import { useTranslations } from "next-intl";
+import Link from "next/link";
+
+const FormItem = Form.Item;
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const { login } = useAuthStore();
+  const t = useTranslations("auth");
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError("");
+  const handleSubmit = async (values: { email: string; password: string }) => {
     setLoading(true);
-
     try {
-      const response = await api.post<AuthResponse>("/auth/login", { email, password });
-      localStorage.setItem("token", response.token);
-      localStorage.setItem("user", JSON.stringify(response.user));
-      router.push("/");
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "登录失败"));
+      await login(values);
+      Message.success(t("login") + "成功");
+      router.push("/dashboard");
+    } catch {
+      Message.error("邮箱或密码错误");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen flex">
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex-col justify-center items-center p-12">
-        <div className="text-center">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-white/20 rounded-full mb-8">
-            <Wallet className="w-12 h-12 text-white" />
+    <div className="min-h-screen flex" style={{ backgroundColor: "var(--bg-color-page)" }}>
+      {/* Left side - decorative */}
+      <div
+        className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative overflow-hidden"
+        style={{ background: "var(--gradient-primary)" }}
+      >
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-white">
+          <div className="text-8xl mb-6">💰</div>
+          <h1 className="text-4xl font-bold mb-4 text-center">Mamoji</h1>
+          <p className="text-xl text-center opacity-90 max-w-md">
+            初创公司经营助手，让收入、成本、税费和人员状态一眼清晰
+          </p>
+          <div className="mt-12 grid grid-cols-3 gap-6 text-center">
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
+              <div className="text-3xl mb-2">📊</div>
+              <div className="text-sm">经营分析</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
+              <div className="text-3xl mb-2">🎯</div>
+              <div className="text-sm">预算控制</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
+              <div className="text-3xl mb-2">🧾</div>
+              <div className="text-sm">税费提醒</div>
+            </div>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-4">Mamoji</h1>
-          <p className="text-indigo-100 text-lg max-w-md">家庭记账工具，让财务管理更简单、更智能。</p>
         </div>
+        {/* Decorative circles */}
+        <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-white/10" />
+        <div className="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10" />
+        <div className="absolute top-1/2 -right-20 w-32 h-32 rounded-full bg-white/10" />
       </div>
 
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-gray-50">
-        <div className="max-w-md w-full">
+      {/* Right side - form */}
+      <div className="w-full lg:w-1/2 xl:w-2/5 flex items-center justify-center p-8">
+        <div className="w-full max-w-md animate-fade-in">
+          {/* Mobile logo */}
           <div className="lg:hidden text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-xl mb-4">
-              <Wallet className="w-8 h-8 text-white" />
+            <div
+              className="w-16 h-16 rounded-2xl flex items-center justify-center text-4xl mx-auto mb-4"
+              style={{ background: "var(--gradient-primary)" }}
+            >
+              💰
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">Mamoji</h1>
+            <h1 className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+              Mamoji
+            </h1>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-lg p-8">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-gray-900">欢迎回来</h2>
-              <p className="text-gray-500 mt-2">登录您的账户继续使用</p>
-            </div>
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--text-color-1)" }}>
+              {t("loginTitle")}
+            </h2>
+            <p style={{ color: "var(--text-color-3)" }}>
+              登录公司工作台继续处理经营数据
+            </p>
+          </div>
 
-            <form className="space-y-6" onSubmit={handleSubmit}>
-              {error && <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">{error}</div>}
+          <Form layout="vertical" onSubmit={handleSubmit} autoComplete="off">
+            <FormItem
+              field="email"
+              rules={[
+                { required: true, message: "请输入邮箱" },
+                { type: "email", message: "请输入有效的邮箱" },
+              ]}
+            >
+              <Input
+                prefix={<IconEmail style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("email")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
 
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                  邮箱地址
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="your@email.com"
-                />
-              </div>
+            <FormItem
+              field="password"
+              rules={[{ required: true, message: "请输入密码" }]}
+            >
+              <Input.Password
+                prefix={<IconLock style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("password")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
 
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                  密码
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="请输入密码"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-medium rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:transform-none shadow-lg hover:shadow-xl"
+            <div className="flex items-center justify-between mb-6">
+              <Checkbox>记住我</Checkbox>
+              <a
+                href="#"
+                className="text-sm hover:underline"
+                style={{ color: "var(--color-primary)" }}
               >
-                {loading ? "登录中..." : "登录"}
-              </button>
+                忘记密码？
+              </a>
+            </div>
 
-              <div className="text-center text-gray-500">
-                还没有账号？{" "}
-                <Link href="/register" className="text-indigo-600 hover:text-indigo-700 font-medium">
-                  立即注册
-                </Link>
-              </div>
-            </form>
+            <FormItem>
+              <Button
+                type="primary"
+                htmlType="submit"
+                long
+                size="large"
+                loading={loading}
+                style={{
+                  height: 48,
+                  borderRadius: 12,
+                  fontSize: 16,
+                  fontWeight: 600,
+                }}
+              >
+                {t("login")}
+              </Button>
+            </FormItem>
+          </Form>
+
+          <div className="text-center mt-6">
+            <span style={{ color: "var(--text-color-3)" }}>{t("noAccount")} </span>
+            <Link
+              href="/register"
+              className="font-medium hover:underline"
+              style={{ color: "var(--color-primary)" }}
+            >
+              {t("register")}
+            </Link>
           </div>
 
-          <p className="text-center text-gray-400 text-sm mt-8">© 2026 Mamoji</p>
+          {/* Test account hint */}
+          <div
+            className="mt-8 p-4 rounded-xl text-center text-sm"
+            style={{
+              backgroundColor: "var(--bg-color-card-hover)",
+              color: "var(--text-color-3)",
+            }}
+          >
+            <div className="font-medium mb-1" style={{ color: "var(--text-color-2)" }}>
+              测试账号
+            </div>
+            <div>test@mamoji.com / 123456</div>
+          </div>
         </div>
       </div>
     </div>

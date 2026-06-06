@@ -1,133 +1,228 @@
-﻿"use client";
-
+"use client";
 import { useState } from "react";
-import Link from "next/link";
+import { Form, Input, Button, Message } from "@arco-design/web-react";
+import { IconEmail, IconLock, IconUser } from "@arco-design/web-react/icon";
 import { useRouter } from "next/navigation";
-import { api, getErrorMessage, type AuthResponse } from "@/lib/api";
-import { Wallet } from "lucide-react";
+import { useAuthStore } from "@/lib/stores/authStore";
+import { useTranslations } from "next-intl";
+import Link from "next/link";
+
+const FormItem = Form.Item;
+
+const AVATAR_PRESETS = [
+  { emoji: "😊", color: "#6366f1" },
+  { emoji: "🐱", color: "#ec4899" },
+  { emoji: "🐶", color: "#f59e0b" },
+  { emoji: "🐼", color: "#10b981" },
+  { emoji: "🦊", color: "#f97316" },
+  { emoji: "🐰", color: "#8b5cf6" },
+  { emoji: "🐻", color: "#3b82f6" },
+  { emoji: "🦁", color: "#ef4444" },
+  { emoji: "🐨", color: "#06b6d4" },
+  { emoji: "🐯", color: "#84cc16" },
+];
 
 export default function RegisterPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0]);
+  const router = useRouter();
+  const { register } = useAuthStore();
+  const t = useTranslations("auth");
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError("");
+  const handleSubmit = async (values: { email: string; password: string; nickname: string }) => {
     setLoading(true);
-
     try {
-      const response = await api.post<AuthResponse>("/auth/register", {
-        email,
-        password,
-        nickname,
+      await register({
+        ...values,
+        avatar: `${selectedAvatar.emoji}|${selectedAvatar.color}`,
       });
-      localStorage.setItem("token", response.token);
-      localStorage.setItem("user", JSON.stringify(response.user));
-      router.push("/");
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "注册失败"));
+      Message.success("注册成功");
+      router.push("/dashboard");
+    } catch {
+      Message.error("注册失败，邮箱可能已被使用");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen flex">
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex-col justify-center items-center p-12">
-        <div className="text-center">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-white/20 rounded-full mb-8">
-            <Wallet className="w-12 h-12 text-white" />
+    <div className="min-h-screen flex" style={{ backgroundColor: "var(--bg-color-page)" }}>
+      {/* Left side - decorative */}
+      <div
+        className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative overflow-hidden"
+        style={{ background: "linear-gradient(135deg, #10b981 0%, #059669 100%)" }}
+      >
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-white">
+          <div className="text-8xl mb-6">🚀</div>
+          <h1 className="text-4xl font-bold mb-4 text-center">创建企业工作台</h1>
+          <p className="text-xl text-center opacity-90 max-w-md">
+            让团队从第一天就看清人、钱和税
+          </p>
+          <div className="mt-12 space-y-4 text-left max-w-sm">
+            {[
+              { emoji: "✅", text: "人员入职离职可追踪" },
+              { emoji: "📈", text: "收入成本趋势可分析" },
+              { emoji: "🎯", text: "公司预算风险可预警" },
+              { emoji: "🏦", text: "资金账户与税费协同" },
+            ].map((item, i) => (
+              <div key={i} className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3">
+                <span className="text-xl">{item.emoji}</span>
+                <span>{item.text}</span>
+              </div>
+            ))}
           </div>
-          <h1 className="text-4xl font-bold text-white mb-4">Mamoji</h1>
-          <p className="text-indigo-100 text-lg max-w-md">开启你的家庭财务管理之旅。</p>
         </div>
+        {/* Decorative circles */}
+        <div className="absolute -bottom-20 -right-20 w-64 h-64 rounded-full bg-white/10" />
+        <div className="absolute -top-10 -left-10 w-48 h-48 rounded-full bg-white/10" />
       </div>
 
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-gray-50">
-        <div className="max-w-md w-full">
+      {/* Right side - form */}
+      <div className="w-full lg:w-1/2 xl:w-2/5 flex items-center justify-center p-8">
+        <div className="w-full max-w-md animate-fade-in">
+          {/* Mobile logo */}
           <div className="lg:hidden text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-xl mb-4">
-              <Wallet className="w-8 h-8 text-white" />
+            <div
+              className="w-16 h-16 rounded-2xl flex items-center justify-center text-4xl mx-auto mb-4"
+              style={{ background: "linear-gradient(135deg, #10b981 0%, #059669 100%)" }}
+            >
+              🚀
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">Mamoji</h1>
+            <h1 className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+              创建账户
+            </h1>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-lg p-8">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-gray-900">创建账号</h2>
-              <p className="text-gray-500 mt-2">开始使用 Mamoji</p>
-            </div>
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--text-color-1)" }}>
+              {t("registerTitle")}
+            </h2>
+            <p style={{ color: "var(--text-color-3)" }}>
+              创建公司账户开始管理经营数据
+            </p>
+          </div>
 
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              {error && <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">{error}</div>}
-
-              <div>
-                <label htmlFor="nickname" className="block text-sm font-medium text-gray-700 mb-2">
-                  昵称
-                </label>
-                <input
-                  id="nickname"
-                  type="text"
-                  required
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="请输入昵称"
-                />
+          <Form layout="vertical" onSubmit={handleSubmit} autoComplete="off">
+            {/* Avatar selector */}
+            <FormItem label="选择头像">
+              <div className="flex flex-wrap gap-3">
+                {AVATAR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.emoji}
+                    type="button"
+                    onClick={() => setSelectedAvatar(preset)}
+                    className="w-12 h-12 rounded-xl flex items-center justify-center cursor-pointer text-2xl transition-all"
+                    style={{
+                      backgroundColor: preset.color + "20",
+                      border: selectedAvatar.emoji === preset.emoji
+                        ? `2px solid ${preset.color}`
+                        : "2px solid transparent",
+                      transform: selectedAvatar.emoji === preset.emoji ? "scale(1.1)" : "scale(1)",
+                    }}
+                  >
+                    {preset.emoji}
+                  </button>
+                ))}
               </div>
+            </FormItem>
 
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                  邮箱地址
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="your@email.com"
-                />
-              </div>
+            <FormItem
+              field="nickname"
+              rules={[{ required: true, message: "请输入昵称" }]}
+            >
+              <Input
+                prefix={<IconUser style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("nickname")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
 
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                  密码
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="至少 6 位密码"
-                />
-              </div>
+            <FormItem
+              field="email"
+              rules={[
+                { required: true, message: "请输入邮箱" },
+                { type: "email", message: "请输入有效的邮箱" },
+              ]}
+            >
+              <Input
+                prefix={<IconEmail style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("email")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-medium rounded-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:transform-none shadow-lg hover:shadow-xl"
+            <FormItem
+              field="password"
+              rules={[
+                { required: true, message: "请输入密码" },
+                { minLength: 6, message: "密码至少6位" },
+              ]}
+            >
+              <Input.Password
+                prefix={<IconLock style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("password")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
+
+            <FormItem
+              field="confirmPassword"
+              rules={[
+                { required: true, message: "请确认密码" },
+                {
+                  validator: (v, cb) => {
+                    const form = v?.$form;
+                    if (form && v !== form.getFieldValue("password")) {
+                      cb(t("passwordMismatch"));
+                    } else {
+                      cb();
+                    }
+                  },
+                },
+              ]}
+            >
+              <Input.Password
+                prefix={<IconLock style={{ color: "var(--text-color-4)" }} />}
+                placeholder={t("confirmPassword")}
+                size="large"
+                style={{ height: 48, borderRadius: 12 }}
+              />
+            </FormItem>
+
+            <FormItem>
+              <Button
+                type="primary"
+                htmlType="submit"
+                long
+                size="large"
+                loading={loading}
+                style={{
+                  height: 48,
+                  borderRadius: 12,
+                  fontSize: 16,
+                  fontWeight: 600,
+                  background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                  border: "none",
+                }}
               >
-                {loading ? "注册中..." : "立即注册"}
-              </button>
+                {t("register")}
+              </Button>
+            </FormItem>
+          </Form>
 
-              <div className="text-center text-gray-500">
-                已有账号？{" "}
-                <Link href="/login" className="text-indigo-600 hover:text-indigo-700 font-medium">
-                  立即登录
-                </Link>
-              </div>
-            </form>
+          <div className="text-center mt-6">
+            <span style={{ color: "var(--text-color-3)" }}>{t("hasAccount")} </span>
+            <Link
+              href="/login"
+              className="font-medium hover:underline"
+              style={{ color: "var(--color-primary)" }}
+            >
+              {t("login")}
+            </Link>
           </div>
-
-          <p className="text-center text-gray-400 text-sm mt-8">© 2026 Mamoji</p>
         </div>
       </div>
     </div>
