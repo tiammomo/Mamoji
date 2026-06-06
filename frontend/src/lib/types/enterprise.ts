@@ -83,11 +83,46 @@ export interface TaxItem {
   taxableAmount: number;
   taxAmount: number;
   paidAmount: number;
+  deductibleAmount: number;
+  taxRate: number;
   dueDate: string;
   status: string;
+  filingStatus: string;
+  paymentStatus: string;
+  frequency: string;
+  declarationDate?: string | null;
+  paymentDate?: string | null;
+  responsiblePerson?: string | null;
+  riskLevel: string;
+  policyBasis?: string | null;
+  sourceType: string;
   note?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaxItemPayload {
+  companyId?: number;
+  name: string;
+  period: string;
+  taxType: string;
+  taxableAmount: number;
+  taxAmount: number;
+  paidAmount?: number;
+  deductibleAmount?: number;
+  taxRate?: number;
+  dueDate: string;
+  status: string;
+  filingStatus?: string;
+  paymentStatus?: string;
+  frequency?: string;
+  declarationDate?: string | null;
+  paymentDate?: string | null;
+  responsiblePerson?: string | null;
+  riskLevel?: string;
+  policyBasis?: string | null;
+  sourceType?: string;
+  note?: string | null;
 }
 
 export interface EntityTransfer {

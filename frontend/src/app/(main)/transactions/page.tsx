@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, DatePicker, Drawer, Input, Message, Modal, Select, Tag } from "@arco-design/web-react";
 import {
   IconDelete,
@@ -84,7 +84,8 @@ export default function TransactionsPage() {
   const [summaryData, setSummaryData] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState(initialKeyword);
@@ -100,6 +101,7 @@ export default function TransactionsPage() {
   const [formMode, setFormMode] = useState<TransactionFormMode>("create");
   const [activeTransactionId, setActiveTransactionId] = useState<number | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const hasLoadedRef = useRef(false);
 
   const query = useMemo<TransactionQuery>(() => ({
     page: pageIndex,
@@ -132,6 +134,12 @@ export default function TransactionsPage() {
   }), [query]);
 
   const fetchData = useCallback(async () => {
+    const isInitial = !hasLoadedRef.current;
+    if (isInitial) {
+      setInitialLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const [listRes, summaryRes] = await Promise.all([
         transactionApi.list(query),
@@ -140,10 +148,12 @@ export default function TransactionsPage() {
       setData(listRes.data.content);
       setTotal(listRes.data.totalElements);
       setSummaryData(summaryRes.data.content);
+      hasLoadedRef.current = true;
     } catch {
       Message.error("经营流水加载失败");
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshing(false);
     }
   }, [query, summaryQuery]);
 
@@ -151,6 +161,12 @@ export default function TransactionsPage() {
     let cancelled = false;
 
     const loadTransactions = async () => {
+      const isInitial = !hasLoadedRef.current;
+      if (isInitial) {
+        setInitialLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       try {
         const [listRes, summaryRes] = await Promise.all([
           transactionApi.list(query),
@@ -160,11 +176,13 @@ export default function TransactionsPage() {
         setData(listRes.data.content);
         setTotal(listRes.data.totalElements);
         setSummaryData(summaryRes.data.content);
+        hasLoadedRef.current = true;
       } catch {
         // silent
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setInitialLoading(false);
+          setRefreshing(false);
         }
       }
     };
@@ -285,7 +303,6 @@ export default function TransactionsPage() {
   const applyFilters = (nextView = viewFilter) => {
     if (!validateFilters()) return;
 
-    setLoading(true);
     const keyword = search.trim();
     const params = new URLSearchParams(searchParams.toString());
     params.delete("action");
@@ -344,7 +361,6 @@ export default function TransactionsPage() {
   };
 
   const handleReset = () => {
-    setLoading(true);
     setSearch("");
     setTypeFilter("all");
     setCategoryFilter("all");
@@ -373,12 +389,10 @@ export default function TransactionsPage() {
   };
 
   const refreshData = () => {
-    setLoading(true);
     void fetchData();
   };
 
   const handlePageChange = (page: number, size: number) => {
-    setLoading(true);
     setPageSize(size);
     setPageIndex(page - 1);
   };
@@ -519,19 +533,22 @@ export default function TransactionsPage() {
         subtitle={t("ledgerSubtitle")}
         icon={<IconSwap />}
         extra={
-          <Button
-            type="primary"
-            icon={<IconPlus />}
-            onClick={() => openForm("create")}
-          >
-            {t("new")}
-          </Button>
+          <div className="flex items-center gap-2">
+            {refreshing && <Tag color="arcoblue">刷新中</Tag>}
+            <Button
+              type="primary"
+              icon={<IconPlus />}
+              onClick={() => openForm("create")}
+            >
+              {t("new")}
+            </Button>
+          </div>
         }
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
         {summaryCards.map((item) => (
-          <Card key={item.label} style={{ borderRadius: 12 }}>
+          <Card key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
             <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
             <div className="mt-2">{item.value}</div>
           </Card>
@@ -639,7 +656,7 @@ export default function TransactionsPage() {
               style={{ borderRadius: 12 }}
             />
           </div>
-          <Button type="primary" className="w-full md:w-[110px]" onClick={() => applyFilters()}>
+          <Button type="primary" loading={refreshing} className="w-full md:w-[110px]" onClick={() => applyFilters()}>
             {t("search")}
           </Button>
           <Button className="w-full md:w-[110px]" onClick={handleReset}>
@@ -648,7 +665,7 @@ export default function TransactionsPage() {
         </div>
       </Card>
 
-      {data.length === 0 && !loading ? (
+      {data.length === 0 && !initialLoading ? (
         <Card style={{ borderRadius: 12 }}>
           <EmptyState
             icon={<IconEmpty style={{ fontSize: 56, color: "var(--text-color-4)" }} />}
@@ -665,9 +682,10 @@ export default function TransactionsPage() {
               <IconFile />
               <span>{t("ledgerTable")}</span>
               <Tag color="arcoblue">{total}</Tag>
+              {refreshing && <Tag color="gray">刷新中</Tag>}
             </div>
           }
-          loading={loading}
+          loading={initialLoading}
           style={{ borderRadius: 12 }}
         >
           <div className="hidden overflow-x-auto md:block">
@@ -753,7 +771,7 @@ export default function TransactionsPage() {
           </div>
 
           <div className="space-y-3 md:hidden">
-            {data.map((tx, index) => {
+            {data.map((tx) => {
               const typeConfig = typeColors[tx.type] || typeColors[2];
               return (
                 <button
@@ -762,7 +780,6 @@ export default function TransactionsPage() {
                   onClick={() => setSelectedTransaction(tx)}
                   className="transaction-item w-full cursor-pointer text-left"
                   style={{
-                    animationDelay: `${index * 50}ms`,
                     backgroundColor: "var(--bg-color-card)",
                     border: "1px solid var(--border-color-light)",
                     borderRadius: 12,

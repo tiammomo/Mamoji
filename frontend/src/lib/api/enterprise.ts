@@ -9,6 +9,7 @@ import type {
   EnterpriseSummary,
   PermissionMatrix,
   TaxItem,
+  TaxItemPayload,
 } from "@/lib/types";
 
 type CompanyScopedParams = { companyId?: number };
@@ -53,8 +54,10 @@ export const enterpriseApi = {
     client.put<Employee>(`/enterprise/employees/${id}`, data),
   employmentEvents: (params?: { companyId?: number }) => client.get<EmploymentEvent[]>("/enterprise/employment-events", { params: withCompany(params) }),
   taxItems: (params?: { companyId?: number }) => client.get<TaxItem[]>("/enterprise/tax-items", { params: withCompany(params) }),
-  updateTaxItem: (id: number, data: Partial<TaxItem>) =>
+  createTaxItem: (data: TaxItemPayload) => client.post<TaxItem>("/enterprise/tax-items", withCompanyBody(data)),
+  updateTaxItem: (id: number, data: Partial<TaxItemPayload>) =>
     client.put<TaxItem>(`/enterprise/tax-items/${id}`, data),
+  deleteTaxItem: (id: number) => client.delete(`/enterprise/tax-items/${id}`),
   entityTransfers: (params?: { entityId?: number }) =>
     client.get<EntityTransfer[]>("/enterprise/entity-transfers", { params }),
   createEntityTransfer: (data: {
