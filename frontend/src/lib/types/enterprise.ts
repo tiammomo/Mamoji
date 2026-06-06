@@ -1,6 +1,7 @@
 export interface Company {
   id: number;
   name: string;
+  entityType: "company" | "household" | string;
   creditCode: string | null;
   industry: string;
   taxpayerType: string;
@@ -34,7 +35,7 @@ export interface Department {
 export type EmployeeStatus = "onboarding" | "probation" | "active" | "departed";
 export type EmploymentType = "full_time" | "part_time" | "contractor" | "intern";
 export type AccessRole = "founder" | "finance_admin" | "hr_admin" | "department_manager" | "employee" | "viewer";
-export type AccessScope = "company" | "department" | "self" | "readonly";
+export type AccessScope = "group" | "company" | "company_set" | "department" | "self" | "readonly";
 
 export interface Employee {
   id: number;
@@ -89,6 +90,23 @@ export interface TaxItem {
   updatedAt: string;
 }
 
+export interface EntityTransfer {
+  id: number;
+  fromEntityId: number;
+  toEntityId: number;
+  fromEntityName?: string | null;
+  toEntityName?: string | null;
+  transferType: string;
+  amount: number;
+  currency: string;
+  transferDate: string;
+  note?: string | null;
+  status: string;
+  operatorUserId: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EnterpriseSummary {
   company: Company;
   departmentCount: number;
@@ -104,6 +122,7 @@ export interface EnterpriseSummary {
 }
 
 export interface EmployeePayload {
+  companyId?: number;
   userId?: number | null;
   departmentId?: number | null;
   name: string;

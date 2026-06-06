@@ -14,17 +14,28 @@ import { budgetApi } from "@/lib/api/budgets";
 import { enterpriseApi } from "@/lib/api/enterprise";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import BudgetProgress from "@/components/common/BudgetProgress";
+import { useAppStore } from "@/lib/stores/appStore";
 import { formatDate } from "@/lib/utils/format";
-import type { OverviewStats, Transaction, Budget, EnterpriseSummary } from "@/lib/types";
+import type { OverviewStats, Transaction, Budget, EnterpriseSummary, EntityTransfer } from "@/lib/types";
 
 const { Row, Col } = Grid;
+
+const transferTypeLabels: Record<string, string> = {
+  shareholder_advance: "家庭垫资",
+  advance_repayment: "垫资归还",
+  expense_reimbursement: "代垫报销",
+  reimbursement_payment: "报销付款",
+  inter_entity_transfer: "主体往来",
+};
 
 export default function DashboardPage() {
   const router = useRouter();
   const t = useTranslations("dashboard");
+  const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [enterpriseSummary, setEnterpriseSummary] = useState<EnterpriseSummary | null>(null);
   const [recentTx, setRecentTx] = useState<Transaction[]>([]);
+  const [entityTransfers, setEntityTransfers] = useState<EntityTransfer[]>([]);
   const [alerts, setAlerts] = useState<Budget[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,11 +43,16 @@ export default function DashboardPage() {
     let cancelled = false;
 
     const loadDashboard = async () => {
-      const [statsResult, enterpriseResult, transactionResult, budgetResult] = await Promise.allSettled([
+      setLoading(true);
+      const transferRequest = activeCompanyId
+        ? enterpriseApi.entityTransfers({ entityId: activeCompanyId })
+        : enterpriseApi.entityTransfers();
+      const [statsResult, enterpriseResult, transactionResult, budgetResult, transferResult] = await Promise.allSettled([
         statsApi.overview(),
         enterpriseApi.summary(),
         transactionApi.list({ page: 0, size: 5 }),
         budgetApi.active(),
+        transferRequest,
       ]);
 
       if (cancelled) return;
@@ -55,6 +71,11 @@ export default function DashboardPage() {
           budgetResult.value.data.filter((b) => b.riskLevel === "high" || b.riskLevel === "critical")
         );
       }
+      if (transferResult.status === "fulfilled") {
+        setEntityTransfers(transferResult.value.data);
+      } else {
+        setEntityTransfers([]);
+      }
       setLoading(false);
     };
 
@@ -63,7 +84,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeCompanyId]);
 
   const quickActions = [
     {
@@ -141,6 +162,7 @@ export default function DashboardPage() {
       trendUp: true,
     },
   ];
+  const activeEntityId = enterpriseSummary?.company?.id ?? activeCompanyId;
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
@@ -289,6 +311,96 @@ export default function DashboardPage() {
           </div>
         </Col>
       </Row>
+
+      {/* Entity transfers */}
+      <Card
+        className="mb-6"
+        style={{ borderRadius: 16 }}
+        title={
+          <div className="flex items-center gap-2">
+            <span className="text-lg">↔️</span>
+            <span>主体往来</span>
+          </div>
+        }
+      >
+        {loading ? (
+          <Row gutter={16}>
+            {[1, 2].map((item) => (
+              <Col key={item} xs={24} md={12}>
+                <Skeleton style={{ height: 96 }} />
+              </Col>
+            ))}
+          </Row>
+        ) : entityTransfers.length === 0 ? (
+          <div className="text-center py-10">
+            <div className="text-5xl mb-4">🔁</div>
+            <p className="font-medium" style={{ color: "var(--text-color-2)" }}>
+              暂无主体间资金往来
+            </p>
+            <p className="text-sm mt-1" style={{ color: "var(--text-color-3)" }}>
+              公司主体与家庭主体之间的垫资、报销和归还会在这里汇总
+            </p>
+          </div>
+        ) : (
+          <Row gutter={16}>
+            {entityTransfers.slice(0, 4).map((transfer, index) => {
+              const isInbound = activeEntityId === transfer.toEntityId;
+              const isOutbound = activeEntityId === transfer.fromEntityId;
+              const amountType: 1 | 2 | undefined = isInbound ? 1 : isOutbound ? 2 : undefined;
+              const direction = isInbound ? "转入" : isOutbound ? "转出" : "往来";
+              const counterparty = isInbound
+                ? transfer.fromEntityName || "来源主体"
+                : isOutbound
+                  ? transfer.toEntityName || "目标主体"
+                  : `${transfer.fromEntityName || "来源主体"} → ${transfer.toEntityName || "目标主体"}`;
+
+              return (
+                <Col key={transfer.id} xs={24} md={12}>
+                  <div
+                    className="mb-4 rounded-xl border p-4 transition-all hover:shadow-md animate-fade-in"
+                    style={{ borderColor: "var(--border-color)", animationDelay: `${index * 80}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span
+                            className="text-xs px-2 py-1 rounded-full shrink-0"
+                            style={{
+                              backgroundColor: isInbound ? "#10b98120" : isOutbound ? "#ef444420" : "#6366f120",
+                              color: isInbound ? "#10b981" : isOutbound ? "#ef4444" : "#6366f1",
+                            }}
+                          >
+                            {direction}
+                          </span>
+                          <span className="text-sm font-semibold truncate" style={{ color: "var(--text-color-1)" }}>
+                            {counterparty}
+                          </span>
+                        </div>
+                        <div className="text-xs" style={{ color: "var(--text-color-3)" }}>
+                          {transferTypeLabels[transfer.transferType] || "主体往来"} · {formatDate(transfer.transferDate)}
+                        </div>
+                        {transfer.note ? (
+                          <div className="text-sm mt-3 line-clamp-2" style={{ color: "var(--text-color-2)" }}>
+                            {transfer.note}
+                          </div>
+                        ) : null}
+                      </div>
+                      <span className="shrink-0 text-right">
+                        <AmountDisplay
+                          amount={transfer.amount}
+                          type={amountType}
+                          showSign={amountType !== undefined}
+                          currency={transfer.currency}
+                        />
+                      </span>
+                    </div>
+                  </div>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
+      </Card>
 
       {/* Quick actions */}
       <Card className="mb-6" style={{ borderRadius: 16 }}>

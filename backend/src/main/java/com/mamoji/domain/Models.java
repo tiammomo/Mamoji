@@ -141,6 +141,7 @@ public final class Models {
     public static class Company {
         public long id;
         public String name;
+        public String entityType;
         public String creditCode;
         public String industry;
         public String taxpayerType;
@@ -220,6 +221,23 @@ public final class Models {
         public String dueDate;
         public String status;
         public String note;
+        public String createdAt;
+        public String updatedAt;
+    }
+
+    public static class EntityTransfer {
+        public long id;
+        public long fromEntityId;
+        public long toEntityId;
+        public String fromEntityName;
+        public String toEntityName;
+        public String transferType;
+        public BigDecimal amount;
+        public String currency;
+        public String transferDate;
+        public String note;
+        public String status;
+        public long operatorUserId;
         public String createdAt;
         public String updatedAt;
     }

@@ -104,7 +104,7 @@ npm run dev
 
 前端默认地址：
 
-- `http://localhost:3000`
+- `http://localhost:33000`
 
 前端 API 地址配置在 `frontend/.env.local`：
 
@@ -135,7 +135,7 @@ curl -s http://localhost:38080/api/v1/stats/overview \
 
 ## 体验路径
 
-1. 打开 `http://localhost:3000`。
+1. 打开 `http://localhost:33000`。
 2. 使用 `test@mamoji.com / 123456` 登录。
 3. 在首页查看本月收入、成本、结余和预算风险。
 4. 进入经营流水，查看客户回款、成本支出、税费和退款记录。

@@ -98,7 +98,7 @@ export default function Sidebar() {
                 title={sidebarCollapsed ? label : undefined}
                 aria-current={isActive ? "page" : undefined}
                 onClick={() => router.push(item.key)}
-                className="group relative flex h-11 w-full items-center rounded-xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                className="group relative flex h-11 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                 style={{
                   color: isActive ? "var(--color-primary-dark)" : "var(--text-color-2)",
                   backgroundColor: isActive ? "rgba(99, 102, 241, 0.1)" : "transparent",
@@ -134,7 +134,7 @@ export default function Sidebar() {
       <div className="p-3 border-t" style={{ borderColor: "var(--border-color)" }}>
         <button
           onClick={toggleSidebar}
-          className="w-full flex h-10 items-center justify-center gap-2 rounded-xl border-0 bg-transparent px-3 transition-all hover:bg-black/5 dark:hover:bg-white/5"
+          className="flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-0 bg-transparent px-3 transition-all hover:bg-black/5 dark:hover:bg-white/5"
           style={{ color: "var(--text-color-3)" }}
         >
           {sidebarCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}

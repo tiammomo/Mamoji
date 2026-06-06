@@ -9,6 +9,7 @@ import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.LedgerMember;
@@ -817,6 +818,7 @@ public class MamojiService {
         Company company = enterpriseStore.company(
             user.id,
             textOr(body.get("name"), "新公司主体"),
+            textOr(body.get("entityType"), "company"),
             nullableText(body.get("creditCode")),
             textOr(body.get("industry"), "未设置"),
             textOr(body.get("taxpayerType"), "未设置"),
@@ -852,6 +854,9 @@ public class MamojiService {
     private void applyCompanyFields(Company company, Map<String, Object> body) {
         if (body.containsKey("name")) {
             company.name = text(body.get("name"));
+        }
+        if (body.containsKey("entityType")) {
+            company.entityType = text(body.get("entityType"));
         }
         if (body.containsKey("creditCode")) {
             company.creditCode = nullableText(body.get("creditCode"));
@@ -1068,6 +1073,46 @@ public class MamojiService {
         touch(item);
         enterpriseStore.saveTaxItem(item);
         return item;
+    }
+
+    public List<EntityTransfer> listEntityTransfers(String authorization, Long entityId) {
+        User user = requireUser(authorization);
+        Long scopedEntityId = null;
+        if (entityId != null && entityId > 0) {
+            scopedEntityId = resolveCompany(user, entityId).id;
+        }
+        List<Long> accessibleEntityIds = accessibleCompanies(user).stream().map(company -> company.id).toList();
+        return enterpriseStore.sortedEntityTransfers(accessibleEntityIds, scopedEntityId);
+    }
+
+    public EntityTransfer createEntityTransfer(String authorization, Map<String, Object> body) {
+        User user = requireUser(authorization);
+        long fromEntityId = optionalLong(body.get("fromEntityId"))
+            .or(() -> optionalLong(body.get("fromCompanyId")))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "fromEntityId is required"));
+        long toEntityId = optionalLong(body.get("toEntityId"))
+            .or(() -> optionalLong(body.get("toCompanyId")))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "toEntityId is required"));
+        if (fromEntityId == toEntityId) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot transfer within the same subject");
+        }
+        Company fromEntity = resolveCompany(user, fromEntityId);
+        Company toEntity = resolveCompany(user, toEntityId);
+        BigDecimal amount = number(body.get("amount"), BigDecimal.ZERO);
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must be positive");
+        }
+        return enterpriseStore.entityTransfer(
+            fromEntity.id,
+            toEntity.id,
+            textOr(body.get("transferType"), "inter_entity_transfer"),
+            String.valueOf(amount),
+            textOr(body.get("currency"), fromEntity.currency == null ? "CNY" : fromEntity.currency),
+            textOr(body.get("transferDate"), LocalDate.now().toString()),
+            nullableText(body.get("note")),
+            textOr(body.get("status"), "recorded"),
+            user.id
+        );
     }
 
     public List<Ledger> listLedgers(String authorization) {

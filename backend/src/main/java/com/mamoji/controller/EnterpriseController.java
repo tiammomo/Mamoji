@@ -3,6 +3,7 @@ package com.mamoji.controller;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.service.MamojiService;
@@ -134,5 +135,21 @@ public class EnterpriseController {
         @RequestBody Map<String, Object> body
     ) {
         return service.updateTaxItem(authorization, id, body);
+    }
+
+    @GetMapping("/entity-transfers")
+    public List<EntityTransfer> entityTransfers(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "entityId", required = false) Long entityId
+    ) {
+        return service.listEntityTransfers(authorization, entityId);
+    }
+
+    @PostMapping("/entity-transfers")
+    public EntityTransfer createEntityTransfer(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestBody Map<String, Object> body
+    ) {
+        return service.createEntityTransfer(authorization, body);
     }
 }

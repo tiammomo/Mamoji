@@ -5,6 +5,7 @@ import { IconEdit, IconPlus, IconSearch, IconUserGroup } from "@arco-design/web-
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import { enterpriseApi } from "@/lib/api/enterprise";
+import { useAppStore } from "@/lib/stores/appStore";
 import type { Department, Employee, EmployeePayload, EnterpriseSummary, PermissionMatrix, TaxItem } from "@/lib/types";
 
 const { Row, Col } = Grid;
@@ -61,6 +62,7 @@ type EmployeeFormValues = EmployeePayload;
 const money = (value: unknown) => Number(value || 0);
 
 export default function AdminUsersPage() {
+  const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -107,6 +109,7 @@ export default function AdminUsersPage() {
 
     const loadInitialData = async () => {
       try {
+        setLoading(true);
         const [summaryRes, departmentsRes, employeesRes, taxRes, matrixRes] = await Promise.all([
           enterpriseApi.summary(),
           enterpriseApi.departments(),
@@ -134,7 +137,7 @@ export default function AdminUsersPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeCompanyId]);
 
   const openCreate = () => {
     setEditingEmployee(null);
@@ -165,6 +168,7 @@ export default function AdminUsersPage() {
 
   const toPayload = (values: EmployeeFormValues): EmployeePayload => ({
     ...values,
+    companyId: activeCompanyId || undefined,
     departmentId: values.departmentId || null,
     leaveDate: values.leaveDate || null,
     salary: money(values.salary),

@@ -14,6 +14,7 @@ import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import CompanySwitcher from "./CompanySwitcher";
 
 export default function Header() {
   const { toggleSidebar, theme, setTheme, locale, setLocale } = useAppStore();
@@ -60,6 +61,8 @@ export default function Header() {
 
       {/* Right side */}
       <div className="flex items-center gap-2">
+        <CompanySwitcher />
+
         {/* Search button */}
         <Tooltip content="搜索">
           <Button

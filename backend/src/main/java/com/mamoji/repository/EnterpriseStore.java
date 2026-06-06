@@ -3,6 +3,7 @@ package com.mamoji.repository;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
@@ -28,6 +29,7 @@ public class EnterpriseStore {
     public final Map<Long, Company> companies = new ConcurrentHashMap<>();
     public final Map<Long, Department> departments = new ConcurrentHashMap<>();
     public final Map<Long, Employee> employees = new ConcurrentHashMap<>();
+    public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
     public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
 
@@ -45,6 +47,8 @@ public class EnterpriseStore {
         loadAll();
         ensureSeedData();
         ensureCompanyPolicyDefaults();
+        ensureHouseholdSubject();
+        ensureEntityTransferSeed();
         ensureAccessDefaults();
         attachDepartmentNames();
     }
@@ -54,6 +58,7 @@ public class EnterpriseStore {
             CREATE TABLE IF NOT EXISTS companies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
+                entity_type TEXT NOT NULL DEFAULT 'company',
                 credit_code TEXT,
                 industry TEXT NOT NULL,
                 taxpayer_type TEXT NOT NULL,
@@ -72,6 +77,7 @@ public class EnterpriseStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("companies", "entity_type", "TEXT NOT NULL DEFAULT 'company'");
         ensureColumn("companies", "country", "TEXT NOT NULL DEFAULT '中国'");
         ensureColumn("companies", "province", "TEXT NOT NULL DEFAULT ''");
         ensureColumn("companies", "city", "TEXT NOT NULL DEFAULT ''");
@@ -151,18 +157,36 @@ public class EnterpriseStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS entity_transfers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_entity_id INTEGER NOT NULL,
+                to_entity_id INTEGER NOT NULL,
+                transfer_type TEXT NOT NULL,
+                amount TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                transfer_date TEXT NOT NULL,
+                note TEXT,
+                status TEXT NOT NULL,
+                operator_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
     }
 
     private void loadAll() {
         companies.clear();
         departments.clear();
         employees.clear();
+        entityTransfers.clear();
         employmentEvents.clear();
         taxItems.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM departments", rs -> departments.put(rs.getLong("id"), mapDepartment(rs)));
         forEachRow("SELECT * FROM employees", rs -> employees.put(rs.getLong("id"), mapEmployee(rs)));
+        forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
         forEachRow("SELECT * FROM tax_items", rs -> taxItems.put(rs.getLong("id"), mapTaxItem(rs)));
     }
@@ -237,9 +261,72 @@ public class EnterpriseStore {
         taxItem(company.id, "2026-06 附加税", "2026-06", "surcharge", "534", "64.08", "0", "2026-07-15", "estimated", "增值税附加简化估算");
     }
 
+    private void ensureHouseholdSubject() {
+        boolean hasHousehold = companies.values().stream().anyMatch(company -> "household".equals(company.entityType));
+        if (hasHousehold) {
+            return;
+        }
+        User owner = coreStore.users.values().stream()
+            .filter(user -> user.role == 1)
+            .min(Comparator.comparing(user -> user.id))
+            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
+            .orElse(null);
+        if (owner == null) {
+            return;
+        }
+        Company household = company(owner.id, "演示家庭资产主体", "household", null, "家庭资产管理", "非经营主体", "CNY");
+        household.province = "广东省";
+        household.city = "深圳市";
+        household.operatingRegion = regionLabel(household);
+        household.policyProfileKey = "CN-HOUSEHOLD-ASSET-PROFILE";
+        household.updatedAt = InMemoryStore.now();
+        saveCompany(household);
+    }
+
+    private void ensureEntityTransferSeed() {
+        Optional<Company> company = companies.values().stream()
+            .filter(candidate -> "company".equals(candidate.entityType))
+            .min(Comparator.comparing(candidate -> candidate.id));
+        Optional<Company> household = companies.values().stream()
+            .filter(candidate -> "household".equals(candidate.entityType))
+            .min(Comparator.comparing(candidate -> candidate.id));
+        if (company.isEmpty() || household.isEmpty()) {
+            return;
+        }
+        long companyId = company.get().id;
+        long householdId = household.get().id;
+        boolean hasPairTransfer = entityTransfers.values().stream().anyMatch(transfer ->
+            (transfer.fromEntityId == companyId && transfer.toEntityId == householdId)
+                || (transfer.fromEntityId == householdId && transfer.toEntityId == companyId));
+        if (hasPairTransfer) {
+            return;
+        }
+        User owner = coreStore.users.values().stream()
+            .filter(user -> user.role == 1)
+            .min(Comparator.comparing(user -> user.id))
+            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
+            .orElse(null);
+        if (owner == null) {
+            return;
+        }
+        String currency = isBlank(company.get().currency) ? "CNY" : company.get().currency;
+        entityTransfer(householdId, companyId, "shareholder_advance", "50000", currency, "2026-02-01",
+            "家庭资金垫付公司启动备用金", "recorded", owner.id);
+        entityTransfer(companyId, householdId, "advance_repayment", "12000", currency, "2026-04-15",
+            "公司归还部分家庭垫资", "recorded", owner.id);
+        entityTransfer(householdId, companyId, "expense_reimbursement", "2680", currency, "2026-05-08",
+            "家庭账户代垫 SaaS 订阅和办公采购", "recorded", owner.id);
+        entityTransfer(companyId, householdId, "reimbursement_payment", "2680", currency, "2026-05-20",
+            "公司报销家庭代垫支出", "recorded", owner.id);
+    }
+
     private void ensureCompanyPolicyDefaults() {
         companies.values().forEach(company -> {
             boolean updated = false;
+            if (isBlank(company.entityType)) {
+                company.entityType = "company";
+                updated = true;
+            }
             if (isBlank(company.country)) {
                 company.country = "中国";
                 updated = true;
@@ -340,10 +427,24 @@ public class EnterpriseStore {
             .toList();
     }
 
+    public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
+        return entityTransfers.values().stream()
+            .filter(transfer -> accessibleEntityIds.contains(transfer.fromEntityId) || accessibleEntityIds.contains(transfer.toEntityId))
+            .filter(transfer -> entityId == null || transfer.fromEntityId == entityId || transfer.toEntityId == entityId)
+            .sorted(Comparator.comparing((EntityTransfer transfer) -> transfer.transferDate).reversed().thenComparing(transfer -> transfer.id))
+            .peek(this::attachEntityTransferNames)
+            .toList();
+    }
+
     public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
+        return company(ownerId, name, "company", creditCode, industry, taxpayerType, currency);
+    }
+
+    public Company company(long ownerId, String name, String entityType, String creditCode, String industry, String taxpayerType, String currency) {
         Company company = new Company();
         company.ownerId = ownerId;
         company.name = name;
+        company.entityType = entityType == null || entityType.isBlank() ? "company" : entityType;
         company.creditCode = creditCode;
         company.industry = industry;
         company.taxpayerType = taxpayerType;
@@ -360,29 +461,30 @@ public class EnterpriseStore {
         stamp(company);
         company.id = insert("""
             INSERT INTO companies (
-                name, credit_code, industry, taxpayer_type, currency, country, province, city, district,
+                name, entity_type, credit_code, industry, taxpayer_type, currency, country, province, city, district,
                 registered_address, operating_region, tax_authority, policy_profile_key, fiscal_year_start_month,
                 owner_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> {
             ps.setString(1, company.name);
-            ps.setString(2, company.creditCode);
-            ps.setString(3, company.industry);
-            ps.setString(4, company.taxpayerType);
-            ps.setString(5, company.currency);
-            ps.setString(6, company.country);
-            ps.setString(7, company.province);
-            ps.setString(8, company.city);
-            ps.setString(9, company.district);
-            ps.setString(10, company.registeredAddress);
-            ps.setString(11, company.operatingRegion);
-            ps.setString(12, company.taxAuthority);
-            ps.setString(13, company.policyProfileKey);
-            ps.setInt(14, company.fiscalYearStartMonth);
-            ps.setLong(15, company.ownerId);
-            ps.setString(16, company.createdAt);
-            ps.setString(17, company.updatedAt);
+            ps.setString(2, company.entityType);
+            ps.setString(3, company.creditCode);
+            ps.setString(4, company.industry);
+            ps.setString(5, company.taxpayerType);
+            ps.setString(6, company.currency);
+            ps.setString(7, company.country);
+            ps.setString(8, company.province);
+            ps.setString(9, company.city);
+            ps.setString(10, company.district);
+            ps.setString(11, company.registeredAddress);
+            ps.setString(12, company.operatingRegion);
+            ps.setString(13, company.taxAuthority);
+            ps.setString(14, company.policyProfileKey);
+            ps.setInt(15, company.fiscalYearStartMonth);
+            ps.setLong(16, company.ownerId);
+            ps.setString(17, company.createdAt);
+            ps.setString(18, company.updatedAt);
         });
         companies.put(company.id, company);
         return company;
@@ -391,11 +493,11 @@ public class EnterpriseStore {
     public void saveCompany(Company company) {
         companies.put(company.id, company);
         jdbc.update("""
-            UPDATE companies SET name = ?, credit_code = ?, industry = ?, taxpayer_type = ?, currency = ?,
+            UPDATE companies SET name = ?, entity_type = ?, credit_code = ?, industry = ?, taxpayer_type = ?, currency = ?,
                 country = ?, province = ?, city = ?, district = ?, registered_address = ?, operating_region = ?,
                 tax_authority = ?, policy_profile_key = ?, fiscal_year_start_month = ?, owner_id = ?, updated_at = ?
             WHERE id = ?
-            """, company.name, company.creditCode, company.industry, company.taxpayerType, company.currency,
+            """, company.name, company.entityType, company.creditCode, company.industry, company.taxpayerType, company.currency,
             company.country, company.province, company.city, company.district, company.registeredAddress, company.operatingRegion,
             company.taxAuthority, company.policyProfileKey, company.fiscalYearStartMonth, company.ownerId, company.updatedAt, company.id);
     }
@@ -565,6 +667,50 @@ public class EnterpriseStore {
             moneyText(item.paidAmount), item.dueDate, item.status, item.note, item.updatedAt, item.id);
     }
 
+    public EntityTransfer entityTransfer(
+        long fromEntityId,
+        long toEntityId,
+        String transferType,
+        String amount,
+        String currency,
+        String transferDate,
+        String note,
+        String status,
+        long operatorUserId
+    ) {
+        EntityTransfer transfer = new EntityTransfer();
+        transfer.fromEntityId = fromEntityId;
+        transfer.toEntityId = toEntityId;
+        transfer.transferType = transferType == null || transferType.isBlank() ? "inter_entity_transfer" : transferType;
+        transfer.amount = money(amount);
+        transfer.currency = currency == null || currency.isBlank() ? "CNY" : currency;
+        transfer.transferDate = transferDate == null || transferDate.isBlank() ? LocalDate.now().toString() : transferDate;
+        transfer.note = note;
+        transfer.status = status == null || status.isBlank() ? "recorded" : status;
+        transfer.operatorUserId = operatorUserId;
+        stamp(transfer);
+        transfer.id = insert("""
+            INSERT INTO entity_transfers (
+                from_entity_id, to_entity_id, transfer_type, amount, currency, transfer_date, note, status,
+                operator_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindEntityTransfer(ps, transfer));
+        attachEntityTransferNames(transfer);
+        entityTransfers.put(transfer.id, transfer);
+        return transfer;
+    }
+
+    public void saveEntityTransfer(EntityTransfer transfer) {
+        entityTransfers.put(transfer.id, transfer);
+        jdbc.update("""
+            UPDATE entity_transfers SET from_entity_id = ?, to_entity_id = ?, transfer_type = ?, amount = ?, currency = ?,
+                transfer_date = ?, note = ?, status = ?, operator_user_id = ?, updated_at = ?
+            WHERE id = ?
+            """, transfer.fromEntityId, transfer.toEntityId, transfer.transferType, moneyText(transfer.amount), transfer.currency,
+            transfer.transferDate, transfer.note, transfer.status, transfer.operatorUserId, transfer.updatedAt, transfer.id);
+        attachEntityTransferNames(transfer);
+    }
+
     public void attachDepartmentNames() {
         employees.values().forEach(employee -> employee.departmentName = Optional.ofNullable(employee.departmentId)
             .map(departments::get)
@@ -572,10 +718,16 @@ public class EnterpriseStore {
             .orElse(null));
     }
 
+    private void attachEntityTransferNames(EntityTransfer transfer) {
+        transfer.fromEntityName = Optional.ofNullable(companies.get(transfer.fromEntityId)).map(company -> company.name).orElse(null);
+        transfer.toEntityName = Optional.ofNullable(companies.get(transfer.toEntityId)).map(company -> company.name).orElse(null);
+    }
+
     private Company mapCompany(ResultSet rs) throws SQLException {
         Company company = new Company();
         company.id = rs.getLong("id");
         company.name = rs.getString("name");
+        company.entityType = rs.getString("entity_type");
         company.creditCode = rs.getString("credit_code");
         company.industry = rs.getString("industry");
         company.taxpayerType = rs.getString("taxpayer_type");
@@ -678,6 +830,24 @@ public class EnterpriseStore {
         return item;
     }
 
+    private EntityTransfer mapEntityTransfer(ResultSet rs) throws SQLException {
+        EntityTransfer transfer = new EntityTransfer();
+        transfer.id = rs.getLong("id");
+        transfer.fromEntityId = rs.getLong("from_entity_id");
+        transfer.toEntityId = rs.getLong("to_entity_id");
+        transfer.transferType = rs.getString("transfer_type");
+        transfer.amount = money(rs.getString("amount"));
+        transfer.currency = rs.getString("currency");
+        transfer.transferDate = rs.getString("transfer_date");
+        transfer.note = rs.getString("note");
+        transfer.status = rs.getString("status");
+        transfer.operatorUserId = rs.getLong("operator_user_id");
+        transfer.createdAt = rs.getString("created_at");
+        transfer.updatedAt = rs.getString("updated_at");
+        attachEntityTransferNames(transfer);
+        return transfer;
+    }
+
     private void bindDepartment(PreparedStatement ps, Department department) throws SQLException {
         ps.setLong(1, department.companyId);
         ps.setString(2, department.name);
@@ -726,6 +896,20 @@ public class EnterpriseStore {
         ps.setString(10, item.note);
         ps.setString(11, item.createdAt);
         ps.setString(12, item.updatedAt);
+    }
+
+    private void bindEntityTransfer(PreparedStatement ps, EntityTransfer transfer) throws SQLException {
+        ps.setLong(1, transfer.fromEntityId);
+        ps.setLong(2, transfer.toEntityId);
+        ps.setString(3, transfer.transferType);
+        ps.setString(4, moneyText(transfer.amount));
+        ps.setString(5, transfer.currency);
+        ps.setString(6, transfer.transferDate);
+        ps.setString(7, transfer.note);
+        ps.setString(8, transfer.status);
+        ps.setLong(9, transfer.operatorUserId);
+        ps.setString(10, transfer.createdAt);
+        ps.setString(11, transfer.updatedAt);
     }
 
     private long insert(String sql, SqlBinder binder) {
