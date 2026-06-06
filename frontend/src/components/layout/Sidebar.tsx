@@ -169,34 +169,52 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto px-3 py-3">
         <div className="space-y-3">
           {menuGroups.map((group) => (
-            <div key={group.labelKey}>
+            <div key={group.labelKey} className="space-y-1">
               {!sidebarCollapsed ? (
-                <button
-                  type="button"
-                  aria-expanded={openGroupKeys.includes(group.labelKey)}
-                  onClick={() => toggleGroup(group.labelKey)}
-                  className="mb-1.5 flex h-9 w-full cursor-pointer items-center justify-between rounded-lg border-0 bg-transparent px-2 text-left outline-none transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
-                  style={{
-                    color: group.labelKey === selectedGroupKey ? "var(--color-primary-dark)" : "var(--text-color-3)",
-                    backgroundColor: group.labelKey === selectedGroupKey ? "rgba(99, 102, 241, 0.07)" : "transparent",
-                  }}
-                >
-                  <span className="min-w-0 truncate text-sm font-medium tracking-normal">
-                    {t(group.labelKey)}
-                  </span>
-                  <span className="ml-2 flex shrink-0 items-center gap-1 text-xs">
-                    <span
-                      className="rounded-md px-1.5 py-0.5"
+                (() => {
+                  const isGroupActive = group.labelKey === selectedGroupKey;
+                  const isGroupOpen = openGroupKeys.includes(group.labelKey);
+
+                  return (
+                    <button
+                      type="button"
+                      aria-expanded={isGroupOpen}
+                      onClick={() => toggleGroup(group.labelKey)}
+                      className="group/section mb-1 flex h-8 w-full cursor-pointer items-center justify-between rounded-lg border-0 bg-transparent px-2 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                       style={{
-                        backgroundColor: "rgba(100, 116, 139, 0.08)",
-                        color: "var(--text-color-3)",
+                        color: isGroupActive ? "var(--color-primary-dark)" : "var(--text-color-3)",
+                        backgroundColor: "transparent",
                       }}
                     >
-                      {group.items.length}
-                    </span>
-                    {openGroupKeys.includes(group.labelKey) ? <IconDown /> : <IconRight />}
-                  </span>
-                </button>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="h-4 w-0.5 rounded-full transition-colors"
+                          style={{ backgroundColor: isGroupActive ? "var(--color-primary)" : "transparent" }}
+                        />
+                        <span className="min-w-0 truncate text-sm font-semibold tracking-normal">
+                          {t(group.labelKey)}
+                        </span>
+                      </span>
+                      <span className="ml-2 flex shrink-0 items-center gap-1.5 text-xs">
+                        <span
+                          className="grid h-5 min-w-5 place-items-center rounded-full px-1.5"
+                          style={{
+                            backgroundColor: isGroupActive ? "rgba(99, 102, 241, 0.11)" : "var(--color-fill-1)",
+                            color: isGroupActive ? "var(--color-primary-dark)" : "var(--text-color-3)",
+                          }}
+                        >
+                          {group.items.length}
+                        </span>
+                        <span
+                          className="grid h-5 w-5 place-items-center rounded-full transition-colors group-hover/section:bg-black/[0.04] dark:group-hover/section:bg-white/[0.06]"
+                          style={{ color: isGroupActive ? "var(--color-primary-dark)" : "var(--text-color-4)" }}
+                        >
+                          {isGroupOpen ? <IconDown /> : <IconRight />}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })()
               ) : (
                 <div className="my-1.5 border-t" style={{ borderColor: "var(--border-color-light)" }} />
               )}
@@ -213,19 +231,21 @@ export default function Sidebar() {
                       title={sidebarCollapsed ? label : undefined}
                       aria-current={isActive ? "page" : undefined}
                       onClick={() => router.push(item.key)}
-                      className="group relative flex h-10 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                      className="group relative flex h-11 w-full cursor-pointer items-center rounded-2xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                       style={{
                         color: isActive ? "var(--color-primary-dark)" : "var(--text-color-2)",
-                        backgroundColor: isActive ? "rgba(99, 102, 241, 0.1)" : "transparent",
-                        boxShadow: isActive ? "inset 0 0 0 1px rgba(99, 102, 241, 0.12)" : "none",
+                        backgroundColor: isActive ? "rgba(99, 102, 241, 0.115)" : "transparent",
+                        boxShadow: isActive
+                          ? "inset 0 0 0 1px rgba(99, 102, 241, 0.16), 0 8px 18px rgba(79, 70, 229, 0.08)"
+                          : "none",
                       }}
                     >
                       <span
-                        className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full transition-all"
+                        className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full transition-all"
                         style={{ backgroundColor: isActive ? "var(--color-primary)" : "transparent" }}
                       />
                       <span
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-all group-hover:bg-black/[0.04] dark:group-hover:bg-white/[0.06]"
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-xl transition-all group-hover:bg-black/[0.04] dark:group-hover:bg-white/[0.06]"
                         style={{
                           backgroundColor: isActive ? "var(--color-primary)" : "rgba(100, 116, 139, 0.08)",
                           color: isActive ? "#ffffff" : "var(--text-color-3)",
