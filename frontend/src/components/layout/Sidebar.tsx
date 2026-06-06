@@ -1,5 +1,5 @@
 "use client";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar } from "@arco-design/web-react";
 import {
@@ -14,6 +14,8 @@ import {
   IconSettings,
   IconMenuFold,
   IconMenuUnfold,
+  IconDown,
+  IconRight,
 } from "@arco-design/web-react/icon";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
@@ -62,11 +64,32 @@ const menuGroups: Array<{
     labelKey: "systemGroup",
     items: [
       { key: "/settings", labelKey: "settings", icon: <IconSettings /> },
+      { key: "/backup", labelKey: "backup", icon: <IconStorage /> },
     ],
   },
 ];
 
 const menuItems = menuGroups.flatMap((group) => group.items);
+const sidebarOpenGroupsStorageKey = "sidebarOpenGroups";
+
+const getSelectedGroupKey = (selectedKey: string) =>
+  menuGroups.find((group) => group.items.some((item) => item.key === selectedKey))?.labelKey || "workspaceGroup";
+
+const readStoredOpenGroups = (fallback: string[]) => {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(sidebarOpenGroupsStorageKey);
+  if (!raw) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    const validGroupKeys = new Set(menuGroups.map((group) => group.labelKey));
+    const stored = parsed.filter((value): value is string => typeof value === "string" && validGroupKeys.has(value));
+    return stored.length ? stored : fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 export default function Sidebar() {
   const router = useRouter();
@@ -79,12 +102,29 @@ export default function Sidebar() {
     ? "/admin/compensation"
     : pathname.startsWith("/admin/users")
     ? "/admin/users"
-    : pathname.startsWith("/backup") || pathname.startsWith("/admin")
+    : pathname.startsWith("/backup")
+    ? "/backup"
+    : pathname.startsWith("/admin")
     ? "/settings"
     : menuItems.find((item) => pathname.startsWith(item.key))?.key || "/dashboard";
+  const selectedGroupKey = getSelectedGroupKey(selectedKey);
+  const defaultOpenGroupKeys = ["workspaceGroup", selectedGroupKey].filter((value, index, list) => list.indexOf(value) === index);
+  const [openGroupKeys, setOpenGroupKeys] = useState(() => readStoredOpenGroups(defaultOpenGroupKeys));
 
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
+
+  const toggleGroup = (groupKey: string) => {
+    setOpenGroupKeys((current) => {
+      const next = current.includes(groupKey)
+        ? current.filter((key) => key !== groupKey)
+        : [...current, groupKey];
+      if (typeof window !== "undefined") {
+        localStorage.setItem(sidebarOpenGroupsStorageKey, JSON.stringify(next));
+      }
+      return next;
+    });
+  };
 
   return (
     <div
@@ -96,7 +136,7 @@ export default function Sidebar() {
       }}
     >
       {/* Logo */}
-      <div className="flex items-center justify-between border-b px-4" style={{ height: 72, borderColor: "var(--border-color)" }}>
+      <div className="flex items-center justify-between border-b px-4" style={{ height: 68, borderColor: "var(--border-color)" }}>
         {!sidebarCollapsed && (
           <div className="flex items-center gap-3">
             <div
@@ -126,21 +166,42 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
-        <div className="space-y-5">
+      <nav className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="space-y-3">
           {menuGroups.map((group) => (
             <div key={group.labelKey}>
               {!sidebarCollapsed ? (
-                <div
-                  className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-normal"
-                  style={{ color: "var(--text-color-3)" }}
+                <button
+                  type="button"
+                  aria-expanded={openGroupKeys.includes(group.labelKey)}
+                  onClick={() => toggleGroup(group.labelKey)}
+                  className="mb-1.5 flex h-9 w-full cursor-pointer items-center justify-between rounded-lg border-0 bg-transparent px-2 text-left outline-none transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                  style={{
+                    color: group.labelKey === selectedGroupKey ? "var(--color-primary-dark)" : "var(--text-color-3)",
+                    backgroundColor: group.labelKey === selectedGroupKey ? "rgba(99, 102, 241, 0.07)" : "transparent",
+                  }}
                 >
-                  {t(group.labelKey)}
-                </div>
+                  <span className="min-w-0 truncate text-sm font-medium tracking-normal">
+                    {t(group.labelKey)}
+                  </span>
+                  <span className="ml-2 flex shrink-0 items-center gap-1 text-xs">
+                    <span
+                      className="rounded-md px-1.5 py-0.5"
+                      style={{
+                        backgroundColor: "rgba(100, 116, 139, 0.08)",
+                        color: "var(--text-color-3)",
+                      }}
+                    >
+                      {group.items.length}
+                    </span>
+                    {openGroupKeys.includes(group.labelKey) ? <IconDown /> : <IconRight />}
+                  </span>
+                </button>
               ) : (
-                <div className="my-2 border-t" style={{ borderColor: "var(--border-color-light)" }} />
+                <div className="my-1.5 border-t" style={{ borderColor: "var(--border-color-light)" }} />
               )}
-              <div className="space-y-1.5">
+              {(sidebarCollapsed || openGroupKeys.includes(group.labelKey)) && (
+              <div className="space-y-1">
                 {group.items.map((item) => {
                   const isActive = selectedKey === item.key;
                   const label = t(item.labelKey);
@@ -152,7 +213,7 @@ export default function Sidebar() {
                       title={sidebarCollapsed ? label : undefined}
                       aria-current={isActive ? "page" : undefined}
                       onClick={() => router.push(item.key)}
-                      className="group relative flex h-11 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                      className="group relative flex h-10 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                       style={{
                         color: isActive ? "var(--color-primary-dark)" : "var(--text-color-2)",
                         backgroundColor: isActive ? "rgba(99, 102, 241, 0.1)" : "transparent",
@@ -182,16 +243,17 @@ export default function Sidebar() {
                   );
                 })}
               </div>
+              )}
             </div>
           ))}
         </div>
       </nav>
 
       {/* Collapse button */}
-      <div className="p-3 border-t" style={{ borderColor: "var(--border-color)" }}>
+      <div className="p-2 border-t" style={{ borderColor: "var(--border-color)" }}>
         <button
           onClick={toggleSidebar}
-          className="flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-0 bg-transparent px-3 transition-all hover:bg-black/5 dark:hover:bg-white/5"
+          className="flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-0 bg-transparent px-3 transition-all hover:bg-black/5 dark:hover:bg-white/5"
           style={{ color: "var(--text-color-3)" }}
         >
           {sidebarCollapsed ? <IconMenuUnfold /> : <IconMenuFold />}
@@ -201,10 +263,10 @@ export default function Sidebar() {
 
       {/* User info */}
       {!sidebarCollapsed && (
-        <div className="p-4 border-t" style={{ borderColor: "var(--border-color)" }}>
+        <div className="p-3 border-t" style={{ borderColor: "var(--border-color)" }}>
           <div className="flex items-center gap-3">
             <Avatar
-              size={40}
+              size={36}
               style={{ backgroundColor: avatarColor, borderRadius: 12 }}
             >
               {avatarEmoji}
