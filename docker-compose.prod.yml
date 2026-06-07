@@ -1,0 +1,146 @@
+name: ${MAMOJI_COMPOSE_PROJECT_NAME:-mamoji-prod}
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      MAMOJI_PUBLIC_HOST: ${MAMOJI_PUBLIC_HOST:?MAMOJI_PUBLIC_HOST is required}
+      MAMOJI_TLS_EMAIL: ${MAMOJI_TLS_EMAIL:?MAMOJI_TLS_EMAIL is required}
+      MAMOJI_MINIO_BUCKET: ${MAMOJI_MINIO_BUCKET:-mamoji}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - mamoji-caddy-data:/data
+      - mamoji-caddy-config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: mamoji-backend:prod
+    restart: unless-stopped
+    environment:
+      MAMOJI_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${MAMOJI_POSTGRES_DB:?MAMOJI_POSTGRES_DB is required}
+      MAMOJI_DATASOURCE_USERNAME: ${MAMOJI_POSTGRES_USER:?MAMOJI_POSTGRES_USER is required}
+      MAMOJI_DATASOURCE_PASSWORD: ${MAMOJI_POSTGRES_PASSWORD:?MAMOJI_POSTGRES_PASSWORD is required}
+      MAMOJI_DB_POOL_MAX_SIZE: ${MAMOJI_DB_POOL_MAX_SIZE:-20}
+      MAMOJI_DB_POOL_MIN_IDLE: ${MAMOJI_DB_POOL_MIN_IDLE:-4}
+      MAMOJI_BOOTSTRAP_MODE: ${MAMOJI_BOOTSTRAP_MODE:-bootstrap}
+      MAMOJI_BOOTSTRAP_ADMIN_EMAIL: ${MAMOJI_BOOTSTRAP_ADMIN_EMAIL:?MAMOJI_BOOTSTRAP_ADMIN_EMAIL is required}
+      MAMOJI_BOOTSTRAP_ADMIN_PASSWORD: ${MAMOJI_BOOTSTRAP_ADMIN_PASSWORD:?MAMOJI_BOOTSTRAP_ADMIN_PASSWORD is required}
+      MAMOJI_BOOTSTRAP_ADMIN_NICKNAME: ${MAMOJI_BOOTSTRAP_ADMIN_NICKNAME:-系统管理员}
+      MAMOJI_BOOTSTRAP_COMPANY_NAME: ${MAMOJI_BOOTSTRAP_COMPANY_NAME:?MAMOJI_BOOTSTRAP_COMPANY_NAME is required}
+      MAMOJI_BOOTSTRAP_COMPANY_CREDIT_CODE: ${MAMOJI_BOOTSTRAP_COMPANY_CREDIT_CODE:-}
+      MAMOJI_BOOTSTRAP_COMPANY_INDUSTRY: ${MAMOJI_BOOTSTRAP_COMPANY_INDUSTRY:-未设置}
+      MAMOJI_BOOTSTRAP_COMPANY_TAXPAYER_TYPE: ${MAMOJI_BOOTSTRAP_COMPANY_TAXPAYER_TYPE:-未设置}
+      MAMOJI_BOOTSTRAP_COMPANY_CURRENCY: ${MAMOJI_BOOTSTRAP_COMPANY_CURRENCY:-CNY}
+      MAMOJI_FLYWAY_ENABLED: ${MAMOJI_FLYWAY_ENABLED:-true}
+      MAMOJI_REGISTRATION_MODE: ${MAMOJI_REGISTRATION_MODE:-invite}
+      MAMOJI_OBJECT_STORAGE_ENABLED: "true"
+      MAMOJI_MINIO_ENDPOINT: http://minio:9000
+      MAMOJI_MINIO_ACCESS_KEY: ${MAMOJI_MINIO_ACCESS_KEY:?MAMOJI_MINIO_ACCESS_KEY is required}
+      MAMOJI_MINIO_SECRET_KEY: ${MAMOJI_MINIO_SECRET_KEY:?MAMOJI_MINIO_SECRET_KEY is required}
+      MAMOJI_MINIO_BUCKET: ${MAMOJI_MINIO_BUCKET:-mamoji}
+      MAMOJI_MINIO_EXTERNAL_URL: ${MAMOJI_MINIO_EXTERNAL_URL:?MAMOJI_MINIO_EXTERNAL_URL is required}
+      MAMOJI_MINIO_PRESIGNED_URL_EXPIRY_SECONDS: ${MAMOJI_MINIO_PRESIGNED_URL_EXPIRY_SECONDS:-600}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:38080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 12
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${MAMOJI_PUBLIC_API_BASE_URL:?MAMOJI_PUBLIC_API_BASE_URL is required}
+        NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS: "false"
+    image: mamoji-frontend:prod
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${MAMOJI_PUBLIC_API_BASE_URL:?MAMOJI_PUBLIC_API_BASE_URL is required}
+      NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS: "false"
+      HOSTNAME: 0.0.0.0
+      PORT: 33000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:33000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 12
+
+  postgres:
+    image: postgres:18.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MAMOJI_POSTGRES_DB:?MAMOJI_POSTGRES_DB is required}
+      POSTGRES_USER: ${MAMOJI_POSTGRES_USER:?MAMOJI_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${MAMOJI_POSTGRES_PASSWORD:?MAMOJI_POSTGRES_PASSWORD is required}
+    volumes:
+      - mamoji-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+
+  minio:
+    image: quay.io/minio/minio:${MAMOJI_MINIO_VERSION:-latest}
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MAMOJI_MINIO_ACCESS_KEY:?MAMOJI_MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MAMOJI_MINIO_SECRET_KEY:?MAMOJI_MINIO_SECRET_KEY is required}
+    volumes:
+      - mamoji-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "${MAMOJI_PROMETHEUS_PORT:-127.0.0.1:39090}:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mamoji-prometheus-data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mamoji-caddy-data:
+  mamoji-caddy-config:
+  mamoji-postgres-data:
+  mamoji-minio-data:
+  mamoji-prometheus-data:
