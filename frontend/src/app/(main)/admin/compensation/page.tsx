@@ -2,16 +2,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Grid, Input, InputNumber, Message, Modal, Select, Tag } from "@arco-design/web-react";
 import {
-  IconCalendar,
-  IconCheckCircle,
   IconDownload,
   IconEdit,
-  IconExclamationCircle,
-  IconFile,
   IconIdcard,
   IconSearch,
 } from "@arco-design/web-react/icon";
-import { useRouter } from "next/navigation";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
@@ -30,14 +25,12 @@ const statusLabels: Record<string, { label: string; color: string }> = {
 };
 
 const tableColumns = [
-  { label: "员工", width: "13%", align: "text-left" },
-  { label: "应发 / 实发", width: "11%", align: "text-right" },
-  { label: "五险明细", width: "31%", align: "text-left" },
-  { label: "公积金口径", width: "13%", align: "text-left" },
-  { label: "员工扣缴", width: "11%", align: "text-right" },
-  { label: "公司月成本", width: "11%", align: "text-right" },
-  { label: "状态", width: "5%", align: "text-center" },
-  { label: "操作", width: "5%", align: "text-center" },
+  { label: "员工", width: "15%", align: "text-left" },
+  { label: "个人银行卡到账", width: "16%", align: "text-left" },
+  { label: "公司总成本", width: "16%", align: "text-left" },
+  { label: "考勤/个税", width: "17%", align: "text-left" },
+  { label: "五险明细", width: "24%", align: "text-left" },
+  { label: "公积金", width: "12%", align: "text-left" },
 ] as const;
 
 const SHENZHEN_POLICY = {
@@ -48,6 +41,7 @@ const SHENZHEN_POLICY = {
   maternity: { min: 6727, max: 33633, personalRate: 0, companyRate: 0.5, validPeriod: "2026 年" },
   unemployment: { min: 2520, max: 44265, personalRate: 0.2, companyRate: 0.8, validPeriod: "2025-07 至 2026-06" },
   workInjury: { min: 2520, max: null as number | null, personalRate: 0, companyRate: 0.2, validPeriod: "2024-07 起" },
+  housingFund: { personalRate: 12, companyRate: 12 },
 };
 
 const policyRows = [
@@ -57,34 +51,19 @@ const policyRows = [
   { name: "工伤", range: "不低于 2520", rate: "公司 0.2% - 1.4%，个人不缴", period: SHENZHEN_POLICY.workInjury.validPeriod },
 ];
 
-const supplementaryScenarios = [
-  {
-    title: "2024-07 前两年内补缴/补差",
-    owner: "社保经办部门核定",
-    description: "先由社保部门核定补缴费额，再向税务部门申报缴费；审批通过后需关注缴费有效期。",
-    risk: "补缴数据通常有有效期，逾期需重新申请或重算。",
-  },
-  {
-    title: "2024-07 后未参保补登记",
-    owner: "社保补登记 + 税务缴费",
-    description: "先补办参保登记，再申报补登记时段缴费工资并完成缴费。",
-    risk: "适合入职后漏办参保登记的场景。",
-  },
-  {
-    title: "2024-07 后已登记欠费/基数补差",
-    owner: "税务申报缴费",
-    description: "已有参保登记但存在欠费或基数差额时，按税务口径申报缴费。",
-    risk: "需要和工资基数、工资流水、个税申报口径一致。",
-  },
-];
+const PAYROLL_STANDARD_DAYS = 21.75;
+const STANDARD_MONTHLY_DEDUCTION = 5000;
+const CURRENT_PAYROLL_MONTH = new Date().getMonth() + 1;
 
-const supplementaryMaterials = [
-  "补缴/补登记/合并申请表",
-  "单位与个人承诺书",
-  "劳动合同或劳动关系证明",
-  "银行工资流水、工资表、会计凭证或个税记录",
-  "补缴员工与经办人身份证件",
-];
+const cumulativeTaxBrackets = [
+  { limit: 36000, rate: 3, quickDeduction: 0 },
+  { limit: 144000, rate: 10, quickDeduction: 2520 },
+  { limit: 300000, rate: 20, quickDeduction: 16920 },
+  { limit: 420000, rate: 25, quickDeduction: 31920 },
+  { limit: 660000, rate: 30, quickDeduction: 52920 },
+  { limit: 960000, rate: 35, quickDeduction: 85920 },
+  { limit: Number.POSITIVE_INFINITY, rate: 45, quickDeduction: 181920 },
+] as const;
 
 type CompensationFormValues = {
   salary: number;
@@ -106,6 +85,8 @@ type CompensationFormValues = {
 
 type PayrollSnapshot = {
   salary: number;
+  attendance: AttendanceSnapshot;
+  taxWithholding: TaxWithholdingSnapshot;
   socialPersonalAmount: number;
   socialCompanyAmount: number;
   housingPersonalAmount: number;
@@ -120,11 +101,89 @@ type PayrollSnapshot = {
   monthlyCost: number;
 };
 
+type AttendanceSnapshot = {
+  standardDays: number;
+  paidDays: number;
+  absenceDays: number;
+  missingPunches: number;
+  attendanceDeduction: number;
+  payableSalary: number;
+  status: string;
+};
+
+type TaxWithholdingSnapshot = {
+  currentMonth: number;
+  monthlyTaxableIncome: number;
+  cumulativeTaxableIncome: number;
+  previousTaxableIncome: number;
+  cumulativeTaxBefore: number;
+  previousTaxBefore: number;
+  currentTax: number;
+  rate: number;
+  quickDeduction: number;
+};
+
 const money = (value: unknown) => Number(value || 0);
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 
 const contribution = (base: number, rate: number) => roundMoney((money(base) * money(rate)) / 100);
+
+const attendanceSnapshotOf = (salary: number): AttendanceSnapshot => ({
+  standardDays: PAYROLL_STANDARD_DAYS,
+  paidDays: PAYROLL_STANDARD_DAYS,
+  absenceDays: 0,
+  missingPunches: 0,
+  attendanceDeduction: 0,
+  payableSalary: roundMoney(money(salary)),
+  status: "全勤测算",
+});
+
+const taxForTaxableIncome = (taxableIncome: number) => {
+  const safeTaxableIncome = Math.max(0, money(taxableIncome));
+  const bracket = cumulativeTaxBrackets.find((item) => safeTaxableIncome <= item.limit) || cumulativeTaxBrackets[cumulativeTaxBrackets.length - 1];
+  return {
+    tax: roundMoney(Math.max(0, safeTaxableIncome * (bracket.rate / 100) - bracket.quickDeduction)),
+    rate: bracket.rate,
+    quickDeduction: bracket.quickDeduction,
+  };
+};
+
+const cumulativeTaxWithholding = ({
+  payableSalary,
+  socialPersonalAmount,
+  housingPersonalAmount,
+  personalDeduction,
+  month = CURRENT_PAYROLL_MONTH,
+}: {
+  payableSalary: number;
+  socialPersonalAmount: number;
+  housingPersonalAmount: number;
+  personalDeduction: number;
+  month?: number;
+}): TaxWithholdingSnapshot => {
+  const currentMonth = Math.min(12, Math.max(1, Math.floor(money(month) || 1)));
+  const monthlyTaxableIncome = roundMoney(Math.max(
+    0,
+    payableSalary - socialPersonalAmount - housingPersonalAmount - personalDeduction - STANDARD_MONTHLY_DEDUCTION
+  ));
+  const cumulativeTaxableIncome = roundMoney(monthlyTaxableIncome * currentMonth);
+  const previousTaxableIncome = roundMoney(monthlyTaxableIncome * Math.max(0, currentMonth - 1));
+  const cumulativeTax = taxForTaxableIncome(cumulativeTaxableIncome);
+  const previousTax = taxForTaxableIncome(previousTaxableIncome);
+
+  return {
+    currentMonth,
+    monthlyTaxableIncome,
+    cumulativeTaxableIncome,
+    previousTaxableIncome,
+    cumulativeTaxBefore: cumulativeTax.tax,
+    previousTaxBefore: previousTax.tax,
+    currentTax: roundMoney(Math.max(0, cumulativeTax.tax - previousTax.tax)),
+    rate: cumulativeTax.rate,
+    quickDeduction: cumulativeTax.quickDeduction,
+  };
+};
 
 const currencyText = (value: number) => `¥${money(value).toLocaleString("zh-CN", {
   minimumFractionDigits: 2,
@@ -290,18 +349,28 @@ const sumSocialCompany = (items: SocialInsuranceItem[]) => roundMoney(items.redu
 
 const payrollFromForm = (values: CompensationFormValues): PayrollSnapshot => {
   const { items: socialItems, warnings: socialWarnings } = buildSocialInsuranceItems(values);
+  const attendance = attendanceSnapshotOf(values.salary);
   const socialPersonalAmount = sumSocialPersonal(socialItems);
   const socialCompanyAmount = sumSocialCompany(socialItems);
   const housingPersonalAmount = contribution(values.housingFundBase, values.housingFundPersonalRate);
   const housingCompanyAmount = contribution(values.housingFundBase, values.housingFundCompanyRate);
   const personalContribution = socialPersonalAmount + housingPersonalAmount;
   const companyContribution = socialCompanyAmount + housingCompanyAmount;
+  const taxWithholding = cumulativeTaxWithholding({
+    payableSalary: attendance.payableSalary,
+    socialPersonalAmount,
+    housingPersonalAmount,
+    personalDeduction: values.personalDeduction,
+  });
+  const taxEstimate = taxWithholding.currentTax;
   const netPayEstimate = Math.max(
     0,
-    roundMoney(values.salary - personalContribution - values.taxEstimate - values.personalDeduction)
+    roundMoney(attendance.payableSalary - personalContribution - taxEstimate - values.personalDeduction)
   );
   return {
     salary: values.salary,
+    attendance,
+    taxWithholding,
     socialPersonalAmount,
     socialCompanyAmount,
     housingPersonalAmount,
@@ -310,10 +379,10 @@ const payrollFromForm = (values: CompensationFormValues): PayrollSnapshot => {
     companyContribution,
     socialItems,
     socialWarnings,
-    taxEstimate: values.taxEstimate,
+    taxEstimate,
     personalDeduction: values.personalDeduction,
     netPayEstimate,
-    monthlyCost: roundMoney(values.salary + companyContribution),
+    monthlyCost: roundMoney(attendance.payableSalary + companyContribution),
   };
 };
 
@@ -324,18 +393,29 @@ const payrollOf = (employee: Employee): PayrollSnapshot => {
   const socialWarnings = employee.socialInsuranceWarnings?.length ? employee.socialInsuranceWarnings : fallbackSocial.warnings;
   const socialPersonalAmount = sumSocialPersonal(socialItems) || money(employee.socialInsurancePersonalAmount);
   const socialCompanyAmount = sumSocialCompany(socialItems) || money(employee.socialInsuranceCompanyAmount) || money(employee.socialInsurance);
-  const housingPersonalAmount = money(employee.housingFundPersonalAmount);
-  const housingCompanyAmount = money(employee.housingFundCompanyAmount) || money(employee.housingFund);
+  const housingBase = money(employee.housingFundBase) || salary;
+  const housingPersonalRate = money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate;
+  const housingCompanyRate = money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate;
+  const housingPersonalAmount = money(employee.housingFundPersonalAmount) || contribution(housingBase, housingPersonalRate);
+  const housingCompanyAmount = money(employee.housingFundCompanyAmount) || money(employee.housingFund) || contribution(housingBase, housingCompanyRate);
   const personalContribution = socialPersonalAmount + housingPersonalAmount;
   const companyContribution = socialCompanyAmount + housingCompanyAmount;
-  const taxEstimate = money(employee.taxEstimate);
   const personalDeduction = money(employee.personalDeduction);
-  const netPayEstimate = money(employee.netPayEstimate)
-    || Math.max(0, roundMoney(salary - personalContribution - taxEstimate - personalDeduction));
-  const monthlyCost = money(employee.monthlyCost) || roundMoney(salary + companyContribution);
+  const attendance = attendanceSnapshotOf(salary);
+  const taxWithholding = cumulativeTaxWithholding({
+    payableSalary: attendance.payableSalary,
+    socialPersonalAmount,
+    housingPersonalAmount,
+    personalDeduction,
+  });
+  const taxEstimate = taxWithholding.currentTax;
+  const netPayEstimate = Math.max(0, roundMoney(attendance.payableSalary - personalContribution - taxEstimate - personalDeduction));
+  const monthlyCost = roundMoney(attendance.payableSalary + companyContribution);
 
   return {
     salary,
+    attendance,
+    taxWithholding,
     socialPersonalAmount,
     socialCompanyAmount,
     housingPersonalAmount,
@@ -366,8 +446,8 @@ const formFromEmployee = (employee: Employee): CompensationFormValues => {
     workInjuryBase: money(employee.workInjuryBase) || Math.max(salary, SHENZHEN_POLICY.workInjury.min),
     workInjuryCompanyRate: money(employee.workInjuryCompanyRate) || SHENZHEN_POLICY.workInjury.companyRate,
     housingFundBase: money(employee.housingFundBase) || salary,
-    housingFundPersonalRate: money(employee.housingFundPersonalRate) || 8,
-    housingFundCompanyRate: money(employee.housingFundCompanyRate) || 8,
+    housingFundPersonalRate: money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate,
+    housingFundCompanyRate: money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate,
     taxEstimate: money(employee.taxEstimate),
     personalDeduction: money(employee.personalDeduction),
   };
@@ -385,8 +465,8 @@ const zeroForm: CompensationFormValues = {
   workInjuryBase: 0,
   workInjuryCompanyRate: SHENZHEN_POLICY.workInjury.companyRate,
   housingFundBase: 0,
-  housingFundPersonalRate: 8,
-  housingFundCompanyRate: 8,
+  housingFundPersonalRate: SHENZHEN_POLICY.housingFund.personalRate,
+  housingFundCompanyRate: SHENZHEN_POLICY.housingFund.companyRate,
   taxEstimate: 0,
   personalDeduction: 0,
 };
@@ -400,14 +480,36 @@ function MetricCard({
   title: string;
   amount: number;
   caption: string;
-  tone?: "expense" | "neutral";
+  tone?: "expense" | "income" | "neutral";
 }) {
+  const amountType = tone === "expense" ? 2 : tone === "income" ? 1 : undefined;
   return (
     <Card style={{ borderRadius: 12, height: "100%" }}>
       <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>{title}</div>
-      <AmountDisplay amount={amount} type={tone === "expense" ? 2 : undefined} size="large" />
+      <AmountDisplay amount={amount} type={amountType} size="large" />
       <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>{caption}</div>
     </Card>
+  );
+}
+
+function BreakdownLine({
+  label,
+  value,
+  sign,
+  strong = false,
+}: {
+  label: string;
+  value: number;
+  sign?: "+" | "-";
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs leading-5">
+      <span className="whitespace-nowrap" style={{ color: "var(--text-color-3)" }}>{label}</span>
+      <span className={strong ? "font-semibold" : ""} style={{ color: strong ? "var(--text-color-1)" : "var(--text-color-2)" }}>
+        {sign || ""}{currencyText(value)}
+      </span>
+    </div>
   );
 }
 
@@ -460,7 +562,6 @@ function SelectField({
 }
 
 export default function CompensationPage() {
-  const router = useRouter();
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -531,7 +632,7 @@ export default function CompensationPage() {
       (acc, employee) => {
         const payroll = payrollOf(employee);
         return {
-          salary: acc.salary + payroll.salary,
+          salary: acc.salary + payroll.attendance.payableSalary,
           companyContribution: acc.companyContribution + payroll.companyContribution,
           personalContribution: acc.personalContribution + payroll.personalContribution,
           taxEstimate: acc.taxEstimate + payroll.taxEstimate,
@@ -573,9 +674,6 @@ export default function CompensationPage() {
 
   const maxDepartmentCost = Math.max(...departmentCostRows.map((row) => row.monthlyCost), 1);
   const projectedPayroll = useMemo(() => payrollFromForm(compensationForm), [compensationForm]);
-  const totalEmployeeDeductions = compensationSummary.personalContribution
-    + compensationSummary.taxEstimate
-    + compensationSummary.personalDeduction;
 
   const handleSearch = () => {
     employeesPagination.resetPage();
@@ -604,7 +702,7 @@ export default function CompensationPage() {
       setSaving(true);
       await enterpriseApi.updateEmployee(editingEmployee.id, {
         salary: compensationForm.salary,
-        taxEstimate: compensationForm.taxEstimate,
+        taxEstimate: projectedPayroll.taxEstimate,
         socialInsuranceRegion: compensationForm.socialInsuranceRegion,
         hukouType: compensationForm.hukouType,
         medicalTier: compensationForm.medicalTier,
@@ -630,12 +728,12 @@ export default function CompensationPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto animate-fade-in">
+    <div className="mx-auto max-w-[1600px] animate-fade-in">
       <PageHeader
         title="人员薪酬"
         subtitle={summary?.company
-          ? `${summary.company.name} · 每人独立维护工资、深圳五险、公积金、个税和实发测算`
-          : "每人独立维护工资、深圳五险、公积金、个税和实发测算"}
+          ? `${summary.company.name} · 每人独立维护工资、考勤后应发、累计预扣个税、银行卡到账和公司总成本`
+          : "每人独立维护工资、考勤后应发、累计预扣个税、银行卡到账和公司总成本"}
         icon={<IconIdcard />}
         extra={
           <Button
@@ -652,135 +750,44 @@ export default function CompensationPage() {
       <Row gutter={[16, 16]} className="mb-6">
         <Col xs={12} md={6}>
           <MetricCard
-            title="公司月成本"
+            title="公司总成本"
             amount={compensationSummary.monthlyCost || summary?.monthlyPeopleCost || 0}
-            caption={`当前筛选 ${employees.length} 人`}
+            caption="应发工资 + 公司五险 + 公司公积金"
+          />
+        </Col>
+        <Col xs={12} md={6}>
+          <MetricCard
+            title="个人银行卡到账"
+            amount={compensationSummary.netPayEstimate}
+            caption={`扣除个人五险、公积金和个税后的 ${employees.length} 人到账合计`}
+            tone="income"
           />
         </Col>
         <Col xs={12} md={6}>
           <MetricCard
             title="应发工资"
             amount={compensationSummary.salary}
-            caption="合同工资与固定薪酬"
+            caption="按考勤打卡校正后的应发"
+            tone="neutral"
           />
         </Col>
         <Col xs={12} md={6}>
           <MetricCard
-            title="公司缴费"
+            title="公司承担缴费"
             amount={compensationSummary.companyContribution}
-            caption="公司承担五险 + 公积金"
-          />
-        </Col>
-        <Col xs={12} md={6}>
-          <MetricCard
-            title="员工扣缴"
-            amount={totalEmployeeDeductions}
-            caption="个人缴费 + 个税 + 其他扣减"
+            caption="公司承担五险 + 公司公积金"
           />
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={7}>
-          <Card style={{ borderRadius: 12 }} title="部门薪酬成本">
-            <div className="space-y-4">
-              {departmentCostRows.length === 0 && !loading ? (
-                <div className="py-10 text-center text-sm" style={{ color: "var(--text-color-3)" }}>
-                  暂无薪酬数据
-                </div>
-              ) : departmentCostRows.map((row) => (
-                <div key={row.name}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium">{row.name}</div>
-                      <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>{row.count} 人</div>
-                    </div>
-                    <AmountDisplay amount={row.monthlyCost} type={2} size="small" />
-                  </div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ backgroundColor: "var(--color-fill-1)" }}>
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${Math.max(6, (row.monthlyCost / maxDepartmentCost) * 100)}%`,
-                        background: "var(--gradient-expense)",
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-          <Card className="mt-4" style={{ borderRadius: 12 }} title="深圳五险政策">
-            <div className="space-y-3">
-              {policyRows.map((row) => (
-                <div
-                  key={row.name}
-                  className="rounded-lg border p-3"
-                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium">{row.name}</div>
-                    <Tag color="arcoblue">{row.period}</Tag>
-                  </div>
-                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>基数 {row.range}</div>
-                  <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{row.rate}</div>
-                </div>
-              ))}
-            </div>
-          </Card>
-          <Card className="mt-4" style={{ borderRadius: 12 }} title="社保补缴/补登记">
-            <div className="space-y-3">
-              {supplementaryScenarios.map((scenario) => (
-                <div
-                  key={scenario.title}
-                  className="rounded-lg border p-3"
-                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{scenario.title}</div>
-                      <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{scenario.owner}</div>
-                    </div>
-                    <IconCalendar style={{ color: "var(--color-primary)" }} />
-                  </div>
-                  <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{scenario.description}</div>
-                  <div className="mt-2 flex items-start gap-2 text-xs" style={{ color: "var(--color-warning)" }}>
-                    <IconExclamationCircle className="mt-0.5 shrink-0" />
-                    <span>{scenario.risk}</span>
-                  </div>
-                </div>
-              ))}
-              <div
-                className="rounded-lg border p-3"
-                style={{ borderColor: "var(--border-color-light)" }}
-              >
-                <div className="mb-2 flex items-center gap-2 font-medium">
-                  <IconFile />
-                  <span>常用材料清单</span>
-                </div>
-                <div className="space-y-1">
-                  {supplementaryMaterials.map((material) => (
-                    <div key={material} className="flex items-start gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                      <IconCheckCircle className="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
-                      <span>{material}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <Button type="outline" long onClick={() => router.push("/policy-center?scope=social-insurance")}>
-                查看政策中心
-              </Button>
-            </div>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={17}>
+        <Col xs={24}>
           <Card style={{ borderRadius: 12 }}>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="font-medium">员工薪酬档案</div>
                 <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                  按员工独立维护五险基数、医保档次、户籍类型、公积金比例和实发测算
+                  个人到账 = 考勤后应发 - 个人五险 - 个人公积金 - 个税累计预扣 - 其他扣减；公司总成本 = 考勤后应发 + 公司五险 + 公司公积金
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -813,7 +820,7 @@ export default function CompensationPage() {
             </div>
 
             <div ref={tableScrollRef} className="overflow-x-auto">
-              <table className="w-full min-w-[1300px] table-fixed border-collapse text-sm">
+              <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm">
                 <colgroup>
                   {tableColumns.map((column) => (
                     <col key={column.label} style={{ width: column.width }} />
@@ -831,29 +838,92 @@ export default function CompensationPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>加载中...</td>
+                      <td colSpan={tableColumns.length} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>加载中...</td>
                     </tr>
                   ) : employees.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>暂无薪酬数据</td>
+                      <td colSpan={tableColumns.length} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>暂无薪酬数据</td>
                     </tr>
                   ) : employeesPagination.pagedData.map((employee) => {
                     const statusConfig = statusLabels[employee.status] || { label: employee.status, color: "gray" };
                     const payroll = payrollOf(employee);
+                    const housingBase = money(employee.housingFundBase) || payroll.salary;
+                    const housingPersonalRate = money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate;
+                    const housingCompanyRate = money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate;
+                    const taxAndOtherDeduction = payroll.taxEstimate + payroll.personalDeduction;
                     return (
                       <tr key={employee.id} className="border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
                         <td className="px-4 py-4 align-middle">
-                          <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{employee.name}</div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="whitespace-nowrap font-medium" style={{ color: "var(--text-color-1)" }}>{employee.name}</div>
+                                <Tag color={statusConfig.color}>{statusConfig.label}</Tag>
+                              </div>
+                            </div>
+                            <Button
+                              type="text"
+                              size="mini"
+                              icon={<IconEdit />}
+                              title="编辑薪酬档案"
+                              onClick={() => openCompensationEditor(employee)}
+                            />
+                          </div>
                           <div className="mt-1 break-all text-xs" style={{ color: "var(--text-color-3)" }}>{employee.email}</div>
                           <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
                             {employee.departmentName || "未分配部门"} · {employee.position}
                           </div>
                         </td>
-                        <td className="px-4 py-4 align-middle text-right">
-                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>应发</div>
-                          <AmountDisplay amount={payroll.salary} type={2} size="small" />
-                          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>实发预估</div>
-                          <AmountDisplay amount={payroll.netPayEstimate} size="small" />
+                        <td className="px-4 py-4 align-middle">
+                          <div className="rounded-xl border p-3" style={{ borderColor: "rgba(16, 185, 129, 0.24)", backgroundColor: "rgba(16, 185, 129, 0.06)" }}>
+                            <div className="text-xs font-medium" style={{ color: "var(--text-color-3)" }}>个人银行卡到账</div>
+                            <div className="mt-1">
+                              <AmountDisplay amount={payroll.netPayEstimate} type={1} size="medium" />
+                            </div>
+                            <div className="mt-2 space-y-0.5">
+                              <BreakdownLine label="考勤后应发" value={payroll.attendance.payableSalary} strong />
+                              <BreakdownLine label="个人五险" value={payroll.socialPersonalAmount} sign="-" />
+                              <BreakdownLine label="个人公积金" value={payroll.housingPersonalAmount} sign="-" />
+                              <BreakdownLine label="个税/其他" value={taxAndOtherDeduction} sign="-" />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 align-middle">
+                          <div className="rounded-xl border p-3" style={{ borderColor: "rgba(239, 68, 68, 0.22)", backgroundColor: "rgba(239, 68, 68, 0.05)" }}>
+                            <div className="text-xs font-medium" style={{ color: "var(--text-color-3)" }}>公司总成本</div>
+                            <div className="mt-1">
+                              <AmountDisplay amount={payroll.monthlyCost} type={2} size="medium" />
+                            </div>
+                            <div className="mt-2 space-y-0.5">
+                              <BreakdownLine label="考勤后应发" value={payroll.attendance.payableSalary} strong />
+                              <BreakdownLine label="公司五险" value={payroll.socialCompanyAmount} sign="+" />
+                              <BreakdownLine label="公司公积金" value={payroll.housingCompanyAmount} sign="+" />
+                              <BreakdownLine label="公司承担合计" value={payroll.companyContribution} sign="+" />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 align-middle">
+                          <div className="space-y-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium" style={{ color: "var(--text-color-2)" }}>考勤打卡</span>
+                              <Tag color="green">{payroll.attendance.status}</Tag>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1" style={{ color: "var(--text-color-3)" }}>
+                              <span>计薪 {payroll.attendance.paidDays}/{payroll.attendance.standardDays} 天</span>
+                              <span>缺卡 {payroll.attendance.missingPunches} 次</span>
+                              <span>缺勤 {payroll.attendance.absenceDays} 天</span>
+                              <span>扣减 {currencyShort(payroll.attendance.attendanceDeduction)}</span>
+                            </div>
+                            <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                              <div className="flex items-center justify-between gap-2">
+                                <span style={{ color: "var(--text-color-3)" }}>个税预扣</span>
+                                <AmountDisplay amount={payroll.taxEstimate} type={2} size="small" />
+                              </div>
+                              <div className="mt-1" style={{ color: "var(--text-color-3)" }}>
+                                第 {payroll.taxWithholding.currentMonth} 月 · 累计应税 {currencyShort(payroll.taxWithholding.cumulativeTaxableIncome)} · 税率 {formatPercent(payroll.taxWithholding.rate)}
+                              </div>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-4 py-4 align-middle">
                           <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -868,7 +938,7 @@ export default function CompensationPage() {
                             {payroll.socialItems.map((item) => (
                               <div
                                 key={item.key}
-                                className="grid grid-cols-[72px_112px_1fr] items-center gap-2 text-xs"
+                                className="grid grid-cols-[78px_112px_1fr] items-center gap-2 text-xs"
                                 style={{ color: "var(--text-color-3)" }}
                               >
                                 <span className="font-medium" style={{ color: "var(--text-color-2)" }}>{item.name}</span>
@@ -885,41 +955,14 @@ export default function CompensationPage() {
                           </div>
                         </td>
                         <td className="px-4 py-4 align-middle">
-                          <div className="font-medium"><AmountDisplay amount={money(employee.housingFundBase) || payroll.salary} size="small" /></div>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>缴存基数</div>
+                          <div className="font-medium"><AmountDisplay amount={housingBase} size="small" /></div>
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                            个人 {formatPercent(money(employee.housingFundPersonalRate))} · <AmountDisplay amount={payroll.housingPersonalAmount} size="small" />
+                            个人 {formatPercent(housingPersonalRate)} · <AmountDisplay amount={payroll.housingPersonalAmount} size="small" />
                           </div>
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                            公司 {formatPercent(money(employee.housingFundCompanyRate))} · <AmountDisplay amount={payroll.housingCompanyAmount} type={2} size="small" />
+                            公司 {formatPercent(housingCompanyRate)} · <AmountDisplay amount={payroll.housingCompanyAmount} type={2} size="small" />
                           </div>
-                        </td>
-                        <td className="px-4 py-4 align-middle text-right">
-                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个人缴费</div>
-                          <AmountDisplay amount={payroll.personalContribution} size="small" />
-                          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>个税 / 其他</div>
-                          <div className="text-sm">
-                            <AmountDisplay amount={payroll.taxEstimate + payroll.personalDeduction} size="small" />
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 align-middle text-right">
-                          <AmountDisplay amount={payroll.monthlyCost} type={2} />
-                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                            公司缴费 <AmountDisplay amount={payroll.companyContribution} type={2} size="small" />
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <div className="flex justify-center">
-                            <Tag color={statusConfig.color}>{statusConfig.label}</Tag>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 align-middle text-center">
-                          <Button
-                            type="text"
-                            size="mini"
-                            icon={<IconEdit />}
-                            title="编辑薪酬档案"
-                            onClick={() => openCompensationEditor(employee)}
-                          />
                         </td>
                       </tr>
                     );
@@ -934,6 +977,56 @@ export default function CompensationPage() {
               pageSizeOptions={[10, 20, 50, 100]}
               onChange={employeesPagination.handleChange}
             />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card style={{ borderRadius: 12 }} title="部门薪酬成本">
+            <div className="space-y-4">
+              {departmentCostRows.length === 0 && !loading ? (
+                <div className="py-10 text-center text-sm" style={{ color: "var(--text-color-3)" }}>
+                  暂无薪酬数据
+                </div>
+              ) : departmentCostRows.map((row) => (
+                <div key={row.name}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">{row.name}</div>
+                      <div className="text-xs mt-1" style={{ color: "var(--text-color-3)" }}>{row.count} 人</div>
+                    </div>
+                    <AmountDisplay amount={row.monthlyCost} type={2} size="small" />
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.max(6, (row.monthlyCost / maxDepartmentCost) * 100)}%`,
+                        background: "var(--gradient-expense)",
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card style={{ borderRadius: 12 }} title="深圳五险政策">
+            <div className="grid gap-3 md:grid-cols-2">
+              {policyRows.map((row) => (
+                <div
+                  key={row.name}
+                  className="rounded-lg border p-3"
+                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium">{row.name}</div>
+                    <Tag color="arcoblue">{row.period}</Tag>
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>基数 {row.range}</div>
+                  <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{row.rate}</div>
+                </div>
+              ))}
+            </div>
           </Card>
         </Col>
       </Row>
@@ -960,7 +1053,7 @@ export default function CompensationPage() {
                 <AmountDisplay amount={projectedPayroll.monthlyCost} type={2} />
               </div>
               <div>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>实发预估</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>银行卡到账</div>
                 <AmountDisplay amount={projectedPayroll.netPayEstimate} />
               </div>
               <div>
@@ -968,8 +1061,8 @@ export default function CompensationPage() {
                 <AmountDisplay amount={projectedPayroll.companyContribution} type={2} />
               </div>
               <div>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个人扣缴</div>
-                <AmountDisplay amount={projectedPayroll.personalContribution + projectedPayroll.taxEstimate + projectedPayroll.personalDeduction} />
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>本月个税</div>
+                <AmountDisplay amount={projectedPayroll.taxEstimate} type={2} />
               </div>
             </div>
             {projectedPayroll.socialWarnings.length > 0 && (
@@ -986,8 +1079,37 @@ export default function CompensationPage() {
             <div className="mb-3 font-medium">工资与扣缴</div>
             <div className="grid gap-3 md:grid-cols-3">
               <NumberField label="基本工资" value={compensationForm.salary} onChange={(value) => updateForm("salary", value)} />
-              <NumberField label="个税估算" value={compensationForm.taxEstimate} onChange={(value) => updateForm("taxEstimate", value)} />
+              <div
+                className="rounded-lg border p-3"
+                style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+              >
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个税累计预扣</div>
+                <div className="mt-1">
+                  <AmountDisplay amount={projectedPayroll.taxEstimate} type={2} />
+                </div>
+                <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                  第 {projectedPayroll.taxWithholding.currentMonth} 月 · 累计应税 {currencyShort(projectedPayroll.taxWithholding.cumulativeTaxableIncome)}
+                </div>
+              </div>
               <NumberField label="其他个人扣减" value={compensationForm.personalDeduction} onChange={(value) => updateForm("personalDeduction", value)} />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>标准计薪天数</div>
+                <div className="mt-1 font-semibold">{projectedPayroll.attendance.standardDays} 天</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>本月计薪天数</div>
+                <div className="mt-1 font-semibold">{projectedPayroll.attendance.paidDays} 天</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>考勤扣减</div>
+                <div className="mt-1 font-semibold">{currencyText(projectedPayroll.attendance.attendanceDeduction)}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>考勤后应发</div>
+                <div className="mt-1 font-semibold">{currencyText(projectedPayroll.attendance.payableSalary)}</div>
+              </div>
             </div>
           </div>
 

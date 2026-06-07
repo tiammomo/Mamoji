@@ -60,7 +60,7 @@ public class EnterpriseStore {
     private static final BigDecimal DEFAULT_UNEMPLOYMENT_PERSONAL_RATE = new BigDecimal("0.2");
     private static final BigDecimal DEFAULT_UNEMPLOYMENT_COMPANY_RATE = new BigDecimal("0.8");
     private static final BigDecimal DEFAULT_WORK_INJURY_COMPANY_RATE = new BigDecimal("0.2");
-    private static final BigDecimal DEFAULT_HOUSING_FUND_RATE = new BigDecimal("8");
+    private static final BigDecimal DEFAULT_HOUSING_FUND_RATE = new BigDecimal("12");
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
     private final JdbcTemplate jdbc;
@@ -372,7 +372,7 @@ public class EnterpriseStore {
 
         Employee founder = employee(company.id, owner.id, management.id, owner.nickname, owner.email, "13800000001",
             "创始人 / CEO", "full_time", "active", "founder", "company", "2026-01-05", null,
-            "28000", "4200", "3360", "2600", "38160", "李女士 13800000009");
+            "40000", "6993.99", "4800", "4550.86", "51793.99", "李女士 13800000009");
         Optional<User> member = coreStore.users.values().stream()
             .filter(user -> user.id != owner.id)
             .min(Comparator.comparing(user -> user.id));
@@ -388,6 +388,9 @@ public class EnterpriseStore {
         employee(company.id, null, sales.id, "周予安", "zhou.yuan@mamoji.local", "13800000005",
             "客户成功经理", "full_time", "onboarding", "employee", "self", "2026-06-15", null,
             "15000", "2250", "1800", "600", "19650", "周女士 13800000013");
+        employee(company.id, null, sales.id, "运营专员", "operations.specialist@mamoji.local", "13800000007",
+            "运营专员", "full_time", "active", "employee", "self", "2026-06-07", null,
+            "5000", "1287.26", "600", "0", "6887.26", "赵女士 13800000015");
         employee(company.id, null, sales.id, "吴青", "wu.qing@mamoji.local", "13800000006",
             "市场运营", "full_time", "departed", "viewer", "self", "2026-02-15", "2026-06-03",
             "14000", "2100", "1680", "500", "18280", "吴先生 13800000014");
