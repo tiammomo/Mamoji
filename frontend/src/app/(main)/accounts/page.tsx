@@ -33,6 +33,7 @@ import AppPagination from "@/components/common/AppPagination";
 import RiskBadge from "@/components/common/RiskBadge";
 import { accountApi } from "@/lib/api/accounts";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
+import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 import type { Account, AccountRiskLevel, AccountSummary, CreateAccountDTO } from "@/lib/types";
 
@@ -106,6 +107,8 @@ const loadAccountView = async (): Promise<AccountViewData> => {
 };
 
 export default function AccountsPage() {
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
+  const isHousehold = activeSubjectType === "household";
   const [viewData, setViewData] = useState<AccountViewData>({ accounts: [], summary: null });
   const [filters, setFilters] = useState<AccountFilters>(initialFilters);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -231,7 +234,7 @@ export default function AccountsPage() {
       reconciliationStatus: "pending",
       openedAt: today(),
       lastReconciledAt: today(),
-      ownerName: "财务负责人",
+      ownerName: isHousehold ? "家庭成员" : "财务负责人",
     });
     setModalVisible(true);
   };
@@ -297,8 +300,8 @@ export default function AccountsPage() {
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
       <PageHeader
-        title="资金账户"
-        subtitle="现金、银行、信用、负债和可用资金集中管理"
+        title={isHousehold ? "家庭账户" : "资金账户"}
+        subtitle={isHousehold ? "现金、银行卡、数字钱包、理财、负债和家庭可用资金集中管理" : "现金、银行、信用、负债和可用资金集中管理"}
         icon={<IconSafe />}
         extra={
           <div className="flex items-center gap-2">
@@ -307,7 +310,7 @@ export default function AccountsPage() {
               刷新
             </Button>
             <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
-              新增账户
+              {isHousehold ? "新增家庭账户" : "新增账户"}
             </Button>
           </div>
         }

@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar } from "@arco-design/web-react";
 import {
@@ -24,10 +24,12 @@ import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
 import { useTranslations } from "next-intl";
 
-const menuGroups: Array<{
+type MenuGroup = {
   labelKey: string;
   items: Array<{ key: string; labelKey: string; icon: ReactNode }>;
-}> = [
+};
+
+const companyMenuGroups: MenuGroup[] = [
   {
     labelKey: "workspaceGroup",
     items: [
@@ -64,7 +66,35 @@ const menuGroups: Array<{
       { key: "/hr/organization", labelKey: "organizationManagement", icon: <IconBranch /> },
       { key: "/admin/users", labelKey: "userManagement", icon: <IconUserGroup /> },
       { key: "/admin/compensation", labelKey: "compensationManagement", icon: <IconIdcard /> },
+      { key: "/hr/benefits", labelKey: "benefitsManagement", icon: <IconSafe /> },
       { key: "/hr/performance", labelKey: "performanceManagement", icon: <IconTrophy /> },
+    ],
+  },
+  {
+    labelKey: "systemGroup",
+    items: [
+      { key: "/settings", labelKey: "settings", icon: <IconSettings /> },
+      { key: "/policy-center", labelKey: "policyCenter", icon: <IconFile /> },
+      { key: "/backup", labelKey: "backup", icon: <IconStorage /> },
+    ],
+  },
+];
+
+const householdMenuGroups: MenuGroup[] = [
+  {
+    labelKey: "householdWorkspaceGroup",
+    items: [
+      { key: "/dashboard", labelKey: "householdDashboard", icon: <IconHome /> },
+    ],
+  },
+  {
+    labelKey: "householdFinanceGroup",
+    items: [
+      { key: "/transactions", labelKey: "householdTransactions", icon: <IconSwap /> },
+      { key: "/accounts", labelKey: "householdAccounts", icon: <IconSafe /> },
+      { key: "/budgets", labelKey: "householdBudgets", icon: <IconCalendar /> },
+      { key: "/reports", labelKey: "householdReports", icon: <IconStorage /> },
+      { key: "/recurring", labelKey: "householdRecurring", icon: <IconCalendar /> },
     ],
   },
   {
@@ -76,13 +106,12 @@ const menuGroups: Array<{
   },
 ];
 
-const menuItems = menuGroups.flatMap((group) => group.items);
 const sidebarOpenGroupsStorageKey = "sidebarOpenGroups";
 
-const getSelectedGroupKey = (selectedKey: string) =>
-  menuGroups.find((group) => group.items.some((item) => item.key === selectedKey))?.labelKey || "workspaceGroup";
+const getSelectedGroupKey = (groups: MenuGroup[], selectedKey: string) =>
+  groups.find((group) => group.items.some((item) => item.key === selectedKey))?.labelKey || groups[0]?.labelKey || "workspaceGroup";
 
-const readStoredOpenGroups = (fallback: string[]) => {
+const readStoredOpenGroups = (groups: MenuGroup[], fallback: string[]) => {
   if (typeof window === "undefined") return fallback;
   const raw = localStorage.getItem(sidebarOpenGroupsStorageKey);
   if (!raw) return fallback;
@@ -90,7 +119,7 @@ const readStoredOpenGroups = (fallback: string[]) => {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return fallback;
-    const validGroupKeys = new Set(menuGroups.map((group) => group.labelKey));
+    const validGroupKeys = new Set(groups.map((group) => group.labelKey));
     const stored = parsed.filter((value): value is string => typeof value === "string" && validGroupKeys.has(value));
     return stored.length ? stored : fallback;
   } catch {
@@ -101,12 +130,16 @@ const readStoredOpenGroups = (fallback: string[]) => {
 export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
-  const { sidebarCollapsed, toggleSidebar } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, activeSubjectType } = useAppStore();
   const { user } = useAuthStore();
   const t = useTranslations("nav");
+  const menuGroups = activeSubjectType === "household" ? householdMenuGroups : companyMenuGroups;
+  const menuItems = menuGroups.flatMap((group) => group.items);
 
   const selectedKey = pathname.startsWith("/hr/organization")
     ? "/hr/organization"
+    : pathname.startsWith("/hr/benefits")
+    ? "/hr/benefits"
     : pathname.startsWith("/hr/performance")
     ? "/hr/performance"
     : pathname.startsWith("/admin/compensation")
@@ -115,21 +148,29 @@ export default function Sidebar() {
     ? "/admin/users"
     : pathname.startsWith("/backup")
     ? "/backup"
+    : pathname.startsWith("/policy-center")
+    ? "/policy-center"
     : pathname.startsWith("/admin")
     ? "/settings"
     : menuItems.find((item) => pathname.startsWith(item.key))?.key || "/dashboard";
-  const selectedGroupKey = getSelectedGroupKey(selectedKey);
-  const defaultOpenGroupKeys = ["workspaceGroup", selectedGroupKey].filter((value, index, list) => list.indexOf(value) === index);
-  const [openGroupKeys, setOpenGroupKeys] = useState(() => readStoredOpenGroups(defaultOpenGroupKeys));
+  const selectedGroupKey = getSelectedGroupKey(menuGroups, selectedKey);
+  const defaultOpenGroupKeys = [menuGroups[0]?.labelKey || "workspaceGroup", selectedGroupKey].filter((value, index, list) => list.indexOf(value) === index);
+  const [openGroupKeys, setOpenGroupKeys] = useState(() => readStoredOpenGroups(menuGroups, defaultOpenGroupKeys));
+  const validGroupKeys = useMemo(() => new Set(menuGroups.map((group) => group.labelKey)), [menuGroups]);
+  const effectiveOpenGroupKeys = useMemo(() => {
+    const sanitized = openGroupKeys.filter((key) => validGroupKeys.has(key));
+    return sanitized.includes(selectedGroupKey) ? sanitized : [...sanitized, selectedGroupKey];
+  }, [openGroupKeys, selectedGroupKey, validGroupKeys]);
 
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
 
   const toggleGroup = (groupKey: string) => {
     setOpenGroupKeys((current) => {
-      const next = current.includes(groupKey)
-        ? current.filter((key) => key !== groupKey)
-        : [...current, groupKey];
+      const sanitized = current.filter((key) => validGroupKeys.has(key));
+      const next = sanitized.includes(groupKey)
+        ? sanitized.filter((key) => key !== groupKey)
+        : [...sanitized, groupKey];
       if (typeof window !== "undefined") {
         localStorage.setItem(sidebarOpenGroupsStorageKey, JSON.stringify(next));
       }
@@ -184,7 +225,7 @@ export default function Sidebar() {
               {!sidebarCollapsed ? (
                 (() => {
                   const isGroupActive = group.labelKey === selectedGroupKey;
-                  const isGroupOpen = openGroupKeys.includes(group.labelKey);
+                  const isGroupOpen = effectiveOpenGroupKeys.includes(group.labelKey);
 
                   return (
                     <button
@@ -229,7 +270,7 @@ export default function Sidebar() {
               ) : (
                 <div className="my-1.5 border-t" style={{ borderColor: "var(--border-color-light)" }} />
               )}
-              {(sidebarCollapsed || openGroupKeys.includes(group.labelKey)) && (
+              {(sidebarCollapsed || effectiveOpenGroupKeys.includes(group.labelKey)) && (
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const isActive = selectedKey === item.key;

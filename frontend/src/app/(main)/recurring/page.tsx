@@ -21,6 +21,7 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import EmptyState from "@/components/common/EmptyState";
 import AppPagination from "@/components/common/AppPagination";
+import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 
 const FormItem = Form.Item;
@@ -176,6 +177,8 @@ function isActiveInMonth(item: RecurringItem, monthRange: { start: string; end: 
 
 export default function RecurringPage() {
   const t = useTranslations("recurring");
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
+  const isHousehold = activeSubjectType === "household";
   const [items, setItems] = useState<RecurringItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
@@ -193,6 +196,15 @@ export default function RecurringPage() {
   const [pageSize, setPageSize] = useState(10);
   const [form] = Form.useForm();
   const monthRange = useMemo(() => currentMonthRange(), []);
+  const visibleCategoryOptions = useMemo(
+    () => isHousehold
+      ? categoryOptions.filter((option) => option.value === "all" || option.value === "finance" || option.value === "other")
+      : categoryOptions,
+    [isHousehold]
+  );
+  const effectiveCategoryFilter = visibleCategoryOptions.some((option) => option.value === categoryFilter)
+    ? categoryFilter
+    : "all";
 
   const fetchData = async () => {
     setLoading(true);
@@ -254,7 +266,7 @@ export default function RecurringPage() {
       if (typeFilter !== "all" && String(item.type) !== typeFilter) return false;
       if (statusFilter !== "all" && String(item.status) !== statusFilter) return false;
       if (frequencyFilter !== "all" && item.frequency !== frequencyFilter) return false;
-      if (categoryFilter !== "all" && category.key !== categoryFilter) return false;
+      if (effectiveCategoryFilter !== "all" && category.key !== effectiveCategoryFilter) return false;
       if (!isInRange(item.nextExecution, startDate, endDate)) return false;
       if (quickView === "today" && item.nextExecution !== today) return false;
       if (quickView === "week" && (days < 0 || days > 7 || item.status !== 1)) return false;
@@ -265,7 +277,7 @@ export default function RecurringPage() {
 
       return true;
     });
-  }, [categoryFilter, endDate, frequencyFilter, keyword, quickView, sortedItems, startDate, statusFilter, typeFilter]);
+  }, [effectiveCategoryFilter, endDate, frequencyFilter, keyword, quickView, sortedItems, startDate, statusFilter, typeFilter]);
 
   const maxPageIndex = Math.max(0, Math.ceil(filteredItems.length / pageSize) - 1);
   const effectivePageIndex = Math.min(pageIndex, maxPageIndex);
@@ -440,7 +452,7 @@ export default function RecurringPage() {
   const handleExecute = async (item: RecurringItem) => {
     try {
       await recurringApi.execute(item.id);
-      Message.success("执行成功，已生成经营流水");
+      Message.success(isHousehold ? "执行成功，已生成家庭收支记录" : "执行成功，已生成经营流水");
       await fetchData();
     } catch {
       Message.error("执行失败");
@@ -504,7 +516,7 @@ export default function RecurringPage() {
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
         title={t("title")}
-        subtitle="固定收入、固定支出、税务、HR 和经营节奏统一管理"
+        subtitle={isHousehold ? "房租、贷款、订阅、固定收入和家庭周期事项统一管理" : "固定收入、固定支出、税务、HR 和经营节奏统一管理"}
         icon={<IconCalendar />}
         extra={
           <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
@@ -583,8 +595,8 @@ export default function RecurringPage() {
               <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
             ))}
           </Select>
-          <Select value={categoryFilter} onChange={(value) => setCategoryFilter(value as CategoryFilter)} style={{ width: "100%", borderRadius: 12 }}>
-            {categoryOptions.map((item) => (
+          <Select value={effectiveCategoryFilter} onChange={(value) => setCategoryFilter(value as CategoryFilter)} style={{ width: "100%", borderRadius: 12 }}>
+            {visibleCategoryOptions.map((item) => (
               <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
             ))}
           </Select>
@@ -640,7 +652,7 @@ export default function RecurringPage() {
           <EmptyState
             icon={<IconCalendar style={{ fontSize: 56, color: "var(--text-color-4)" }} />}
             title="暂无周期事项"
-            description="创建固定收入、成本、税务或 HR 节点，形成企业经营日历"
+            description={isHousehold ? "创建房租、贷款、订阅、固定收入等家庭周期事项" : "创建固定收入、成本、税务或 HR 节点，形成企业经营日历"}
             actionText="新建周期事项"
             onAction={openCreate}
           />

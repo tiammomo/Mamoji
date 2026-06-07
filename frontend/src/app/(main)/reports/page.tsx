@@ -19,6 +19,7 @@ import type { RecurringItem } from "@/lib/api/recurring";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import EmptyState from "@/components/common/EmptyState";
+import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatPercent } from "@/lib/utils/format";
 import type {
   AdvancedInsight,
@@ -127,6 +128,7 @@ function resolved<T>(result: PromiseSettledResult<{ data: T }>, fallback: T) {
 }
 
 export default function ReportsPage() {
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -149,6 +151,7 @@ export default function ReportsPage() {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [recurringItems, setRecurringItems] = useState<RecurringItem[]>([]);
   const [detail, setDetail] = useState<DetailPayload | null>(null);
+  const isHousehold = activeSubjectType === "household" || enterpriseSummary?.company?.entityType === "household";
 
   useEffect(() => {
     const syncTheme = () => {
@@ -161,6 +164,13 @@ export default function ReportsPage() {
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
     return () => observer.disconnect();
   }, []);
+
+  const effectiveActiveTab: ReportTab = isHousehold && (activeTab === "tax" || activeTab === "people")
+    ? "overview"
+    : activeTab;
+  const effectiveFocus = isHousehold && (focus === "tax" || focus === "people")
+    ? "all"
+    : focus;
 
   const defaultRange = useMemo(() => periodRange(period), [period]);
   const reportRange = useMemo(
@@ -319,27 +329,27 @@ export default function ReportsPage() {
 
   const summaryCards: Array<{ label: string; value: ReactNode; helper: string; icon: ReactNode; accent: string }> = [
     {
-      label: "经营收入",
+      label: isHousehold ? "家庭收入" : "经营收入",
       value: <span className="text-lg font-bold" style={{ color: "#10b981" }}>{formatAmount(operatingSummary.income)}</span>,
       helper: `${displayDate(reportRange.startDate)} 至 ${displayDate(reportRange.endDate)}`,
       icon: <IconDashboard />,
       accent: "#10b981",
     },
     {
-      label: "经营成本",
+      label: isHousehold ? "家庭支出" : "经营成本",
       value: <span className="text-lg font-bold" style={{ color: "#ef4444" }}>{formatAmount(operatingSummary.expense)}</span>,
-      helper: `人力 ${formatAmount(operatingSummary.peopleCost)}`,
+      helper: isHousehold ? `固定支出 ${formatAmount(operatingSummary.recurringExpense)}` : `人力 ${formatAmount(operatingSummary.peopleCost)}`,
       icon: <IconFile />,
       accent: "#ef4444",
     },
     {
-      label: "经营利润",
+      label: isHousehold ? "家庭结余" : "经营利润",
       value: (
         <span className="text-lg font-bold" style={{ color: operatingSummary.profit >= 0 ? "#10b981" : "#ef4444" }}>
           {operatingSummary.profit >= 0 ? "+" : "-"}{formatAmount(Math.abs(operatingSummary.profit))}
         </span>
       ),
-      helper: `利润率 ${displayPercent(operatingSummary.profitMargin)}`,
+      helper: `${isHousehold ? "结余率" : "利润率"} ${displayPercent(operatingSummary.profitMargin)}`,
       icon: <IconSafe />,
       accent: operatingSummary.profit >= 0 ? "#10b981" : "#ef4444",
     },
@@ -350,16 +360,28 @@ export default function ReportsPage() {
       icon: <IconCalendar />,
       accent: "#6366f1",
     },
+    isHousehold
+      ? {
+        label: "固定事项",
+        value: <span className="text-lg font-bold" style={{ color: "var(--text-color-1)" }}>{recurringItems.filter((item) => item.status === 1).length}</span>,
+        helper: `月固定支出 ${formatAmount(operatingSummary.recurringExpense)}`,
+        icon: <IconExclamationCircle />,
+        accent: "#f59e0b",
+      }
+      : {
+        label: "待处理税费",
+        value: <span className="text-lg font-bold" style={{ color: "#ef4444" }}>{formatAmount(operatingSummary.pendingTax)}</span>,
+        helper: `截止日 ${enterpriseSummary?.nextTaxDueDate || "--"}`,
+        icon: <IconExclamationCircle />,
+        accent: "#f59e0b",
+      },
     {
-      label: "待处理税费",
-      value: <span className="text-lg font-bold" style={{ color: "#ef4444" }}>{formatAmount(operatingSummary.pendingTax)}</span>,
-      helper: `截止日 ${enterpriseSummary?.nextTaxDueDate || "--"}`,
-      icon: <IconExclamationCircle />,
-      accent: "#f59e0b",
-    },
-    {
-      label: "现金支撑",
-      value: <span className="text-lg font-bold" style={{ color: "var(--text-color-1)" }}>{cashSummary.runway ? `${cashSummary.runway.toFixed(1)} 月` : "--"}</span>,
+      label: isHousehold ? "家庭净资产" : "现金支撑",
+      value: (
+        <span className="text-lg font-bold" style={{ color: "var(--text-color-1)" }}>
+          {isHousehold ? formatAmount(cashSummary.netWorth) : cashSummary.runway ? `${cashSummary.runway.toFixed(1)} 月` : "--"}
+        </span>
+      ),
       helper: `净资产 ${formatAmount(cashSummary.netWorth)}`,
       icon: <IconSafe />,
       accent: "#0ea5e9",
@@ -566,8 +588,8 @@ export default function ReportsPage() {
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
-        title="经营报表"
-        subtitle={`${enterpriseSummary?.company?.name || "当前主体"} · 收入、成本、现金流、预算、税务和人力成本分析`}
+        title={isHousehold ? "家庭报表" : "经营报表"}
+        subtitle={`${enterpriseSummary?.company?.name || "当前主体"} · ${isHousehold ? "家庭收入、支出、现金流、预算和固定事项分析" : "收入、成本、现金流、预算、税务和人力成本分析"}`}
         icon={<IconDashboard />}
         extra={
           <Button icon={<IconFile />} disabled>
@@ -603,7 +625,7 @@ export default function ReportsPage() {
             />
           </div>
           <Select
-            value={focus}
+            value={effectiveFocus}
             onChange={(value) => {
               const nextFocus = value as typeof focus;
               setFocus(nextFocus);
@@ -621,10 +643,10 @@ export default function ReportsPage() {
             style={{ width: "100%", borderRadius: 12 }}
           >
             <Select.Option value="all">全部视角</Select.Option>
-            <Select.Option value="finance">财务经营</Select.Option>
+            <Select.Option value="finance">{isHousehold ? "收支分析" : "财务经营"}</Select.Option>
             <Select.Option value="budget">预算执行</Select.Option>
-            <Select.Option value="tax">税务合规</Select.Option>
-            <Select.Option value="people">人力成本</Select.Option>
+            {!isHousehold && <Select.Option value="tax">税务合规</Select.Option>}
+            {!isHousehold && <Select.Option value="people">人力成本</Select.Option>}
           </Select>
           <Button
             icon={<IconSearch />}
@@ -661,13 +683,13 @@ export default function ReportsPage() {
             ))}
           </div>
 
-          <Tabs activeTab={activeTab} onChange={(key) => setActiveTab(key as ReportTab)}>
-            <TabPane key="overview" title="经营总览">
+          <Tabs activeTab={effectiveActiveTab} onChange={(key) => setActiveTab(key as ReportTab)}>
+            <TabPane key="overview" title={isHousehold ? "家庭总览" : "经营总览"}>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-                <Card title={`${periodLabels[period]}经营趋势`} style={{ borderRadius: 12 }}>
+                <Card title={`${periodLabels[period]}${isHousehold ? "收支趋势" : "经营趋势"}`} style={{ borderRadius: 12 }}>
                   <ReactECharts option={trendOption} style={{ height: 360 }} />
                 </Card>
-                <Card title="经营结论" style={{ borderRadius: 12 }}>
+                <Card title={isHousehold ? "家庭结论" : "经营结论"} style={{ borderRadius: 12 }}>
                   <div className="space-y-3">
                     {findingCards.map((item) => (
                       <div key={item.title} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-page)" }}>
@@ -692,7 +714,7 @@ export default function ReportsPage() {
               </div>
             </TabPane>
 
-            <TabPane key="profit" title="利润分析">
+            <TabPane key="profit" title={isHousehold ? "收支结余" : "利润分析"}>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
                 <Card title="年度利润走势" style={{ borderRadius: 12 }}>
                   {yearlyOption ? <ReactECharts option={yearlyOption} style={{ height: 360 }} /> : <EmptyState title="暂无年度数据" description="没有可展示的年度经营数据" />}
@@ -833,7 +855,7 @@ export default function ReportsPage() {
               </Card>
             </TabPane>
 
-            <TabPane key="tax" title="税务分析">
+            {!isHousehold && <TabPane key="tax" title="税务分析">
               <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <Card style={{ borderRadius: 12 }}>
                   <div className="text-xs" style={{ color: "var(--text-color-3)" }}>待处理税费</div>
@@ -879,9 +901,9 @@ export default function ReportsPage() {
                   </table>
                 </div>
               </Card>
-            </TabPane>
+            </TabPane>}
 
-            <TabPane key="people" title="人力成本">
+            {!isHousehold && <TabPane key="people" title="人力成本">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
                 <Card title="部门人力成本" style={{ borderRadius: 12 }}>
                   <ReactECharts option={departmentCostOption} style={{ height: 360 }} />
@@ -928,7 +950,7 @@ export default function ReportsPage() {
                   </table>
                 </div>
               </Card>
-            </TabPane>
+            </TabPane>}
 
             <TabPane key="insights" title="异常洞察">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

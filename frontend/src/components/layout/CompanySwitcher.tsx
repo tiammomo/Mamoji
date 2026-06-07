@@ -43,6 +43,7 @@ export default function CompanySwitcher() {
   const [form] = Form.useForm<CompanyFormValues>();
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const setActiveCompanyId = useAppStore((state) => state.setActiveCompanyId);
+  const setActiveSubjectType = useAppStore((state) => state.setActiveSubjectType);
 
   const activeCompany = useMemo(
     () => companies.find((company) => company.id === activeCompanyId) || companies[0] || null,
@@ -58,13 +59,19 @@ export default function CompanySwitcher() {
       const storedCompanyId = useAppStore.getState().activeCompanyId;
       if (res.data.length > 0 && (!storedCompanyId || !res.data.some((company) => company.id === storedCompanyId))) {
         setActiveCompanyId(res.data[0].id);
+        setActiveSubjectType(res.data[0].entityType === "household" ? "household" : "company");
+      } else {
+        const currentCompany = res.data.find((company) => company.id === storedCompanyId);
+        if (currentCompany) {
+          setActiveSubjectType(currentCompany.entityType === "household" ? "household" : "company");
+        }
       }
     } catch {
       Message.error(t("loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [setActiveCompanyId, t]);
+  }, [setActiveCompanyId, setActiveSubjectType, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -109,6 +116,7 @@ export default function CompanySwitcher() {
         return [...next, res.data].sort((left, right) => left.id - right.id);
       });
       setActiveCompanyId(res.data.id);
+      setActiveSubjectType(res.data.entityType === "household" ? "household" : "company");
       setModalVisible(false);
       form.resetFields();
       Message.success(t("createSuccess"));
@@ -150,7 +158,10 @@ export default function CompanySwitcher() {
               key={company.id}
               type="button"
               className="flex h-16 w-full cursor-pointer items-center gap-3 rounded-lg border-0 bg-transparent px-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-              onClick={() => setActiveCompanyId(company.id)}
+              onClick={() => {
+                setActiveCompanyId(company.id);
+                setActiveSubjectType(company.entityType === "household" ? "household" : "company");
+              }}
             >
               <span
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-lg"

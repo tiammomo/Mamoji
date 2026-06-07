@@ -4,13 +4,16 @@ import { useTranslations } from "next-intl";
 import {
   IconDashboard,
   IconFile,
+  IconCalendar,
   IconSafe,
   IconSettings,
   IconStorage,
+  IconSwap,
   IconUserGroup,
 } from "@arco-design/web-react/icon";
+import { useAppStore } from "@/lib/stores/appStore";
 
-const tabs = [
+const companyTabs = [
   { key: "/dashboard", icon: <IconDashboard />, label: "dashboard" },
   { key: "/operations", icon: <IconFile />, label: "operationsOverview" },
   { key: "/reports", icon: <IconStorage />, label: "reports" },
@@ -19,10 +22,21 @@ const tabs = [
   { key: "/settings", icon: <IconSettings />, label: "settings" },
 ];
 
+const householdTabs = [
+  { key: "/dashboard", icon: <IconDashboard />, label: "householdDashboard" },
+  { key: "/transactions", icon: <IconSwap />, label: "householdTransactions" },
+  { key: "/accounts", icon: <IconSafe />, label: "householdAccounts" },
+  { key: "/budgets", icon: <IconCalendar />, label: "householdBudgets" },
+  { key: "/reports", icon: <IconStorage />, label: "householdReports" },
+  { key: "/settings", icon: <IconSettings />, label: "settings" },
+];
+
 export default function MobileNav() {
   const router = useRouter();
   const pathname = usePathname();
   const t = useTranslations("nav");
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
+  const tabs = activeSubjectType === "household" ? householdTabs : companyTabs;
 
   return (
     <div
@@ -34,9 +48,12 @@ export default function MobileNav() {
       }}
     >
       {tabs.map((tab) => {
-        const financeChildActive = tab.key === "/finance" && ["/accounts", "/receipts"].some((key) => pathname.startsWith(key));
-        const operationsChildActive = tab.key === "/operations" && ["/transactions", "/budgets", "/reports", "/recurring"].some((key) => pathname.startsWith(key));
-        const isActive = pathname === tab.key || pathname.startsWith(tab.key + "/") || financeChildActive || operationsChildActive;
+        const financeChildActive = activeSubjectType !== "household" && tab.key === "/finance" && ["/accounts", "/receipts"].some((key) => pathname.startsWith(key));
+        const operationsChildActive = activeSubjectType !== "household" && tab.key === "/operations" && ["/transactions", "/budgets", "/reports", "/recurring"].some((key) => pathname.startsWith(key));
+        const householdTransactionsActive = activeSubjectType === "household" && tab.key === "/transactions" && pathname.startsWith("/recurring");
+        const hrChildActive = activeSubjectType !== "household" && tab.key === "/admin/users" && ["/hr/organization", "/admin/compensation", "/hr/benefits", "/hr/performance"].some((key) => pathname.startsWith(key));
+        const systemChildActive = tab.key === "/settings" && ["/backup", "/policy-center"].some((key) => pathname.startsWith(key));
+        const isActive = pathname === tab.key || pathname.startsWith(tab.key + "/") || financeChildActive || operationsChildActive || householdTransactionsActive || hrChildActive || systemChildActive;
         return (
           <button
             key={tab.key}

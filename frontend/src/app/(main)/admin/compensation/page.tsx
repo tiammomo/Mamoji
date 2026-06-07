@@ -1,7 +1,17 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Grid, Input, InputNumber, Message, Modal, Select, Tag } from "@arco-design/web-react";
-import { IconDownload, IconEdit, IconIdcard, IconSearch } from "@arco-design/web-react/icon";
+import {
+  IconCalendar,
+  IconCheckCircle,
+  IconDownload,
+  IconEdit,
+  IconExclamationCircle,
+  IconFile,
+  IconIdcard,
+  IconSearch,
+} from "@arco-design/web-react/icon";
+import { useRouter } from "next/navigation";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
@@ -45,6 +55,35 @@ const policyRows = [
   { name: "医疗/生育", range: "6727 - 33633", rate: "一档 2%/6%，二档 0.5%/1.5%，生育公司 0.5%", period: SHENZHEN_POLICY.medicalTier1.validPeriod },
   { name: "失业", range: "2520 - 44265", rate: "个人 0.2% / 公司 0.8%", period: SHENZHEN_POLICY.unemployment.validPeriod },
   { name: "工伤", range: "不低于 2520", rate: "公司 0.2% - 1.4%，个人不缴", period: SHENZHEN_POLICY.workInjury.validPeriod },
+];
+
+const supplementaryScenarios = [
+  {
+    title: "2024-07 前两年内补缴/补差",
+    owner: "社保经办部门核定",
+    description: "先由社保部门核定补缴费额，再向税务部门申报缴费；审批通过后需关注缴费有效期。",
+    risk: "补缴数据通常有有效期，逾期需重新申请或重算。",
+  },
+  {
+    title: "2024-07 后未参保补登记",
+    owner: "社保补登记 + 税务缴费",
+    description: "先补办参保登记，再申报补登记时段缴费工资并完成缴费。",
+    risk: "适合入职后漏办参保登记的场景。",
+  },
+  {
+    title: "2024-07 后已登记欠费/基数补差",
+    owner: "税务申报缴费",
+    description: "已有参保登记但存在欠费或基数差额时，按税务口径申报缴费。",
+    risk: "需要和工资基数、工资流水、个税申报口径一致。",
+  },
+];
+
+const supplementaryMaterials = [
+  "补缴/补登记/合并申请表",
+  "单位与个人承诺书",
+  "劳动合同或劳动关系证明",
+  "银行工资流水、工资表、会计凭证或个税记录",
+  "补缴员工与经办人身份证件",
 ];
 
 type CompensationFormValues = {
@@ -421,6 +460,7 @@ function SelectField({
 }
 
 export default function CompensationPage() {
+  const router = useRouter();
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -686,6 +726,50 @@ export default function CompensationPage() {
                   <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{row.rate}</div>
                 </div>
               ))}
+            </div>
+          </Card>
+          <Card className="mt-4" style={{ borderRadius: 12 }} title="社保补缴/补登记">
+            <div className="space-y-3">
+              {supplementaryScenarios.map((scenario) => (
+                <div
+                  key={scenario.title}
+                  className="rounded-lg border p-3"
+                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{scenario.title}</div>
+                      <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{scenario.owner}</div>
+                    </div>
+                    <IconCalendar style={{ color: "var(--color-primary)" }} />
+                  </div>
+                  <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{scenario.description}</div>
+                  <div className="mt-2 flex items-start gap-2 text-xs" style={{ color: "var(--color-warning)" }}>
+                    <IconExclamationCircle className="mt-0.5 shrink-0" />
+                    <span>{scenario.risk}</span>
+                  </div>
+                </div>
+              ))}
+              <div
+                className="rounded-lg border p-3"
+                style={{ borderColor: "var(--border-color-light)" }}
+              >
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <IconFile />
+                  <span>常用材料清单</span>
+                </div>
+                <div className="space-y-1">
+                  {supplementaryMaterials.map((material) => (
+                    <div key={material} className="flex items-start gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                      <IconCheckCircle className="mt-0.5 shrink-0" style={{ color: "var(--color-success)" }} />
+                      <span>{material}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <Button type="outline" long onClick={() => router.push("/policy-center?scope=social-insurance")}>
+                查看政策中心
+              </Button>
             </div>
           </Card>
         </Col>

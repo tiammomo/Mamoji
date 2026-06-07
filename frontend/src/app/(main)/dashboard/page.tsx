@@ -94,6 +94,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const t = useTranslations("dashboard");
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [enterpriseSummary, setEnterpriseSummary] = useState<EnterpriseSummary | null>(null);
   const [recentTx, setRecentTx] = useState<Transaction[]>([]);
@@ -266,6 +267,7 @@ export default function DashboardPage() {
     },
   ];
   const activeEntityId = enterpriseSummary?.company?.id ?? activeCompanyId;
+  const isHousehold = activeSubjectType === "household" || enterpriseSummary?.company?.entityType === "household";
 
   const workspaceModel = useMemo(() => {
     const monthlyIncome = stats?.monthlyIncome || 0;
@@ -489,6 +491,416 @@ export default function DashboardPage() {
     recurringItems,
     stats,
   ]);
+
+  const householdModel = useMemo(() => {
+    const monthlyIncome = stats?.monthlyIncome || 0;
+    const monthlyExpense = stats?.monthlyExpense || 0;
+    const monthlyBalance = stats?.monthlyBalance ?? monthlyIncome - monthlyExpense;
+    const availableBalance = accountSummary?.availableBalance ?? accountSummary?.netWorth ?? 0;
+    const activeRecurring = recurringItems.filter((item) => item.status === 1);
+    const overdueRecurring = activeRecurring.filter((item) => {
+      const days = daysUntil(item.nextExecution);
+      return days !== null && days < 0;
+    });
+    const weekRecurring = activeRecurring.filter((item) => {
+      const days = daysUntil(item.nextExecution);
+      return days !== null && days >= 0 && days <= 7;
+    });
+    const fixedIncome = activeRecurring.filter((item) => item.type === 1).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const fixedExpense = activeRecurring.filter((item) => item.type === 2).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const largeTransactions = recentTx.filter((tx) => Number(tx.amount || 0) >= 10000);
+    const openTransfers = entityTransfers.filter((transfer) => transfer.status !== "settled" && transfer.status !== "completed");
+    const budgetRiskCount = alerts.length;
+    const score = clamp(
+      100
+      - (monthlyBalance < 0 ? 18 : 0)
+      - Math.min(budgetRiskCount * 10, 30)
+      - Math.min(overdueRecurring.length * 14, 24)
+      - Math.min(largeTransactions.length * 4, 16)
+      - (availableBalance < monthlyExpense ? 8 : 0)
+    );
+    const severity: WorkspaceSeverity = score >= 85 ? "success" : score >= 70 ? "notice" : score >= 55 ? "warning" : "danger";
+
+    const priorityActions: WorkspaceAction[] = [];
+    if (monthlyBalance < 0) {
+      priorityActions.push({
+        title: "本月家庭结余为负",
+        detail: `结余 ${formatAmount(monthlyBalance)}，建议复盘大额支出和固定支出`,
+        path: "/transactions",
+        severity: "danger",
+        icon: <IconExclamationCircle />,
+      });
+    }
+    if (budgetRiskCount > 0) {
+      priorityActions.push({
+        title: "家庭预算需要关注",
+        detail: `${budgetRiskCount} 项预算接近阈值或已超支`,
+        path: "/budgets",
+        severity: "warning",
+        icon: <IconCalendar />,
+      });
+    }
+    if (overdueRecurring.length > 0 || weekRecurring.length > 0) {
+      priorityActions.push({
+        title: "固定事项临近",
+        detail: `逾期 ${overdueRecurring.length} 项，7 天内 ${weekRecurring.length} 项`,
+        path: "/recurring",
+        severity: overdueRecurring.length > 0 ? "danger" : "notice",
+        icon: <IconCalendar />,
+      });
+    }
+    if (openTransfers.length > 0) {
+      priorityActions.push({
+        title: "公司/家庭往来待闭环",
+        detail: `${openTransfers.length} 笔主体资金往来未完成结清`,
+        path: "/dashboard",
+        severity: "notice",
+        icon: <IconSwap />,
+      });
+    }
+    if (priorityActions.length === 0) {
+      priorityActions.push({
+        title: "家庭资金状态良好",
+        detail: "收入、支出、预算和固定事项暂无明显风险",
+        path: "/dashboard",
+        severity: "success",
+        icon: <IconCheckCircle />,
+      });
+    }
+
+    const dailyChecks = [
+      {
+        label: "家庭收支已记录",
+        done: recentTx.length > 0,
+        detail: recentTx.length > 0 ? `最近 ${recentTx.length} 笔` : "本月还没有收支记录",
+        path: "/transactions",
+      },
+      {
+        label: "预算执行可控",
+        done: budgetRiskCount === 0,
+        detail: budgetRiskCount === 0 ? "暂无预算风险" : `${budgetRiskCount} 项需关注`,
+        path: "/budgets",
+      },
+      {
+        label: "固定事项跟进",
+        done: overdueRecurring.length === 0,
+        detail: overdueRecurring.length === 0 ? `${weekRecurring.length} 项 7 天内` : `${overdueRecurring.length} 项逾期`,
+        path: "/recurring",
+      },
+      {
+        label: "账户资金充足",
+        done: availableBalance >= monthlyExpense,
+        detail: `可用资金 ${formatAmount(availableBalance)}`,
+        path: "/accounts",
+      },
+    ];
+
+    return {
+      monthlyIncome,
+      monthlyExpense,
+      monthlyBalance,
+      availableBalance,
+      budgetUsage: stats?.budgetUsageRate ? stats.budgetUsageRate * 100 : 0,
+      fixedIncome,
+      fixedExpense,
+      score,
+      severity,
+      priorityActions,
+      dailyChecks,
+      largeTransactions,
+      weekRecurring,
+      overdueRecurring,
+      openTransfers,
+    };
+  }, [accountSummary, alerts.length, entityTransfers, recentTx, recurringItems, stats]);
+
+  const householdMetricCards = [
+    {
+      label: "本月家庭收入",
+      value: householdModel.monthlyIncome,
+      type: 1 as const,
+      icon: <IconSafe />,
+      accent: "#10b981",
+      helper: `固定收入 ${formatAmount(householdModel.fixedIncome)}`,
+    },
+    {
+      label: "本月家庭支出",
+      value: householdModel.monthlyExpense,
+      type: 2 as const,
+      icon: <IconSwap />,
+      accent: "#ef4444",
+      helper: `固定支出 ${formatAmount(householdModel.fixedExpense)}`,
+    },
+    {
+      label: "本月家庭结余",
+      value: Math.abs(householdModel.monthlyBalance),
+      type: householdModel.monthlyBalance >= 0 ? 1 as const : 2 as const,
+      icon: <IconDashboard />,
+      accent: householdModel.monthlyBalance >= 0 ? "#10b981" : "#ef4444",
+      helper: householdModel.monthlyBalance >= 0 ? "当月收入覆盖支出" : "支出高于收入",
+    },
+    {
+      label: "家庭可用资金",
+      value: householdModel.availableBalance,
+      type: householdModel.availableBalance >= 0 ? 1 as const : 2 as const,
+      icon: <IconHome />,
+      accent: "#6366f1",
+      helper: `预算使用 ${householdModel.budgetUsage.toFixed(0)}%`,
+    },
+  ];
+
+  if (isHousehold) {
+    return (
+      <div className="max-w-7xl mx-auto animate-fade-in">
+        <div
+          className="rounded-2xl p-6 mb-6 relative overflow-hidden"
+          style={{ background: "linear-gradient(135deg, #0f766e 0%, #2563eb 58%, #6366f1 100%)" }}
+        >
+          <div className="relative z-10">
+            <div className="mb-2 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white">
+              家庭主体
+            </div>
+            <h1 className="text-2xl font-bold text-white mb-2">家庭资金工作台</h1>
+            <p className="text-white/80">
+              {enterpriseSummary?.company?.name || "当前家庭主体"} 的收入、支出、预算、账户和公司往来管理
+            </p>
+          </div>
+          <div className="absolute right-8 top-1/2 -translate-y-1/2 text-8xl opacity-20 text-white">
+            <IconHome />
+          </div>
+        </div>
+
+        <Row gutter={16} className="dashboard-card-row mb-6">
+          {householdMetricCards.map((card, index) => (
+            <Col key={card.label} xs={12} sm={12} md={6} className="dashboard-card-col">
+              <div className="stat-card dashboard-metric-card animate-fade-in" style={{ animationDelay: `${index * 80}ms` }}>
+                <div className="flex items-start justify-between mb-3">
+                  <span className="dashboard-card-icon" style={{ color: card.accent, backgroundColor: `${card.accent}18` }}>
+                    {card.icon}
+                  </span>
+                  <Tag color={card.type === 1 ? "green" : "red"}>{card.type === 1 ? "流入" : "流出"}</Tag>
+                </div>
+                <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{card.label}</div>
+                {loading ? (
+                  <Skeleton />
+                ) : (
+                  <>
+                    <AmountDisplay amount={card.value} type={card.type} showSign={card.label.includes("结余")} size="large" />
+                    <div className="mt-2 truncate text-xs" style={{ color: "var(--text-color-3)" }}>{card.helper}</div>
+                  </>
+                )}
+              </div>
+            </Col>
+          ))}
+        </Row>
+
+        <Card className="mb-6" style={{ borderRadius: 16 }} title={<div className="flex items-center gap-2"><IconHome /><span>家庭资金驾驶舱</span></div>}>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+            <div className="flex min-h-[242px] flex-col items-center justify-center rounded-xl border px-5 py-6" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+              {loading ? (
+                <Skeleton />
+              ) : (
+                <>
+                  <Progress type="circle" percent={householdModel.score} width={136} color={severityMeta[householdModel.severity].accent} formatText={() => `${householdModel.score}分`} />
+                  <Tag className="mt-4" color={severityMeta[householdModel.severity].color}>{severityMeta[householdModel.severity].label}</Tag>
+                  <div className="mt-3 text-center text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                    综合家庭结余、预算、账户、固定事项和主体往来计算
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="min-w-0">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>今日家庭待办</h3>
+                <Button type="text" size="small" onClick={() => router.push("/transactions")}>家庭收支 <IconRight /></Button>
+              </div>
+              {loading ? (
+                <div className="space-y-3">{[1, 2, 3].map((item) => <Skeleton key={item} style={{ height: 54 }} />)}</div>
+              ) : (
+                <div className="space-y-3">
+                  {householdModel.priorityActions.slice(0, 4).map((action) => {
+                    const meta = severityMeta[action.severity];
+                    return (
+                      <button
+                        key={action.title}
+                        type="button"
+                        onClick={() => router.push(action.path)}
+                        className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent p-3 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                        style={{ borderColor: "var(--border-color-light)" }}
+                      >
+                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ backgroundColor: "var(--color-fill-1)", color: meta.accent }}>{action.icon}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{action.title}</span>
+                          <span className="mt-1 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{action.detail}</span>
+                        </span>
+                        <Tag color={meta.color}>{meta.label}</Tag>
+                        <IconRight style={{ color: "var(--text-color-4)" }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>家庭日清</h3>
+                <Tag color="arcoblue">{householdModel.dailyChecks.filter((item) => item.done).length}/{householdModel.dailyChecks.length}</Tag>
+              </div>
+              {loading ? (
+                <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} style={{ height: 48 }} />)}</div>
+              ) : (
+                <div className="space-y-2">
+                  {householdModel.dailyChecks.map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => router.push(item.path)}
+                      className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent px-3 py-2.5 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                      style={{ borderColor: "var(--border-color-light)" }}
+                    >
+                      <span
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-full"
+                        style={{
+                          backgroundColor: item.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
+                          color: item.done ? "var(--color-success)" : "var(--color-warning)",
+                        }}
+                      >
+                        {item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{item.label}</span>
+                        <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.detail}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <Row gutter={16} className="mb-6">
+          {[
+            { label: "大额收支", value: householdModel.largeTransactions.length, helper: "单笔 1 万以上", icon: <IconExclamationCircle />, accent: "#ef4444" },
+            { label: "7 天内固定事项", value: householdModel.weekRecurring.length, helper: `逾期 ${householdModel.overdueRecurring.length} 项`, icon: <IconCalendar />, accent: "#f59e0b" },
+            { label: "公司/家庭往来", value: entityTransfers.length, helper: `${householdModel.openTransfers.length} 笔待闭环`, icon: <IconSwap />, accent: "#6366f1" },
+            { label: "家庭预算", value: activeBudgets.length, helper: `${alerts.length} 项预警`, icon: <IconStorage />, accent: "#0ea5e9" },
+          ].map((card) => (
+            <Col key={card.label} xs={12} md={6}>
+              <Card style={{ borderRadius: 16, minHeight: 132 }}>
+                <div className="flex h-[92px] flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
+                    <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ backgroundColor: `${card.accent}18`, color: card.accent }}>{card.icon}</span>
+                  </div>
+                  {loading ? <Skeleton /> : <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{card.value}</div>}
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{card.helper}</div>
+                </div>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        <Card className="mb-6" style={{ borderRadius: 16 }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold" style={{ color: "var(--text-color-1)" }}>家庭快捷入口</h3>
+          </div>
+          <Row gutter={16}>
+            {[
+              { icon: <IconEdit />, label: "记一笔", path: "/transactions?action=new", bg: "linear-gradient(135deg, #10b981 0%, #059669 100%)" },
+              { icon: <IconSwap />, label: "家庭收支", path: "/transactions", bg: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" },
+              { icon: <IconSafe />, label: "家庭账户", path: "/accounts", bg: "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)" },
+              { icon: <IconCalendar />, label: "家庭预算", path: "/budgets", bg: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)" },
+              { icon: <IconStorage />, label: "家庭报表", path: "/reports", bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" },
+              { icon: <IconCalendar />, label: "固定事项", path: "/recurring", bg: "linear-gradient(135deg, #14b8a6 0%, #0f766e 100%)" },
+            ].map((action, index) => (
+              <Col key={action.path} xs={12} sm={6}>
+                <div className="quick-action-btn mb-4 animate-fade-in" style={{ animationDelay: `${index * 80 + 160}ms` }} onClick={() => router.push(action.path)}>
+                  <div className="icon-wrapper text-2xl" style={{ background: action.bg }}>{action.icon}</div>
+                  <span className="text-sm font-medium" style={{ color: "var(--text-color-2)" }}>{action.label}</span>
+                </div>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+
+        <Row gutter={16}>
+          <Col xs={24} md={16}>
+            <Card
+              style={{ borderRadius: 16 }}
+              title={<div className="flex items-center gap-2"><IconStorage /><span>最近家庭收支</span></div>}
+              extra={<Button type="text" size="small" onClick={() => router.push("/transactions")} style={{ color: "var(--color-primary)" }}>查看更多 <IconRight /></Button>}
+            >
+              {loading ? (
+                <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 60 }} />)}</div>
+              ) : recentTx.length === 0 ? (
+                <div className="text-center py-12">
+                  <IconEmpty className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
+                  <p style={{ color: "var(--text-color-3)" }}>暂无家庭收支记录</p>
+                  <Button type="primary" className="mt-4" onClick={() => router.push("/transactions?action=new")}>记一笔</Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {recentTx.map((tx, index) => (
+                    <div key={tx.id} className="transaction-item animate-fade-in" style={{ animationDelay: `${index * 50 + 240}ms` }} onClick={() => router.push("/transactions")}>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ backgroundColor: tx.type === 1 ? "#10b98120" : "#ef444420" }}>
+                          {tx.categoryIcon || (tx.type === 1 ? "💰" : "💸")}
+                        </div>
+                        <div>
+                          <div className="font-medium text-sm" style={{ color: "var(--text-color-1)" }}>{tx.note || tx.categoryName || t("unnamed")}</div>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{tx.categoryName} · {formatDate(tx.date)}</div>
+                        </div>
+                      </div>
+                      <AmountDisplay amount={tx.amount} type={tx.type} showSign />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </Col>
+
+          <Col xs={24} md={8}>
+            <Card
+              style={{ borderRadius: 16 }}
+              title={<div className="flex items-center gap-2"><IconSwap /><span>公司/家庭往来</span></div>}
+            >
+              {loading ? (
+                <div className="space-y-4">{[1, 2].map((i) => <Skeleton key={i} style={{ height: 72 }} />)}</div>
+              ) : entityTransfers.length === 0 ? (
+                <div className="text-center py-12">
+                  <IconSwap className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
+                  <p className="font-medium" style={{ color: "var(--text-color-2)" }}>暂无主体往来</p>
+                  <p className="text-sm mt-1" style={{ color: "var(--text-color-3)" }}>家庭垫资、公司归还、报销付款会在这里汇总</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {entityTransfers.slice(0, 4).map((transfer) => {
+                    const isInbound = activeEntityId === transfer.toEntityId;
+                    const amountType: 1 | 2 = isInbound ? 1 : 2;
+                    const counterparty = isInbound ? transfer.fromEntityName || "来源主体" : transfer.toEntityName || "目标主体";
+                    return (
+                      <div key={transfer.id} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{counterparty}</span>
+                          <AmountDisplay amount={transfer.amount} type={amountType} showSign />
+                        </div>
+                        <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+                          {t(transferTypeLabelKeys[transfer.transferType] || "transferInterEntity")} · {formatDate(transfer.transferDate)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </Col>
+        </Row>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">

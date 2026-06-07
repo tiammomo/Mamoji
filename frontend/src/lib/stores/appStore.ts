@@ -2,22 +2,26 @@ import { create } from "zustand";
 
 type Theme = "light" | "dark";
 type Locale = "zh" | "en";
+export type SubjectType = "company" | "household";
 
 interface AppState {
   sidebarCollapsed: boolean;
   theme: Theme;
   locale: Locale;
   activeCompanyId: number | null;
+  activeSubjectType: SubjectType;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setTheme: (theme: Theme) => void;
   setLocale: (locale: Locale) => void;
   setActiveCompanyId: (companyId: number | null) => void;
+  setActiveSubjectType: (subjectType: SubjectType) => void;
   hydratePreferences: (serverLocale?: Locale) => void;
 }
 
 const isTheme = (value: string | null): value is Theme => value === "light" || value === "dark";
 const isLocale = (value: string | null): value is Locale => value === "zh" || value === "en";
+const isSubjectType = (value: string | null): value is SubjectType => value === "company" || value === "household";
 
 const applyTheme = (theme: Theme) => {
   if (typeof document === "undefined") return;
@@ -46,11 +50,18 @@ const readStoredCompanyId = () => {
   return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+const readStoredSubjectType = (): SubjectType => {
+  if (typeof window === "undefined") return "company";
+  const value = localStorage.getItem("activeSubjectType");
+  return isSubjectType(value) ? value : "company";
+};
+
 export const useAppStore = create<AppState>((set) => ({
   sidebarCollapsed: false,
   theme: readStoredTheme(),
   locale: readStoredLocale(),
   activeCompanyId: readStoredCompanyId(),
+  activeSubjectType: readStoredSubjectType(),
 
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
@@ -77,6 +88,12 @@ export const useAppStore = create<AppState>((set) => ({
       }
     }
     set({ activeCompanyId: companyId });
+  },
+  setActiveSubjectType: (subjectType) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("activeSubjectType", subjectType);
+    }
+    set({ activeSubjectType: subjectType });
   },
   hydratePreferences: (serverLocale) => {
     const theme = readStoredTheme();

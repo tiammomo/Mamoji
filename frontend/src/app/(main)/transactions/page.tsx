@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { accountApi } from "@/lib/api/accounts";
 import { transactionApi } from "@/lib/api/transactions";
+import { useAppStore } from "@/lib/stores/appStore";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
@@ -54,6 +55,8 @@ export default function TransactionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations("transaction");
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
+  const isHousehold = activeSubjectType === "household";
   const { categories, fetchCategories } = useCategoryStore();
   const initialKeyword = searchParams.get("keyword") || "";
   const initialType = normalizeTypeFilter(searchParams.get("type"));
@@ -529,8 +532,8 @@ export default function TransactionsPage() {
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
-        title={t("title")}
-        subtitle={t("ledgerSubtitle")}
+        title={isHousehold ? "家庭收支" : t("title")}
+        subtitle={isHousehold ? "家庭收入、支出、退款、账户与预算的生活台账" : t("ledgerSubtitle")}
         icon={<IconSwap />}
         extra={
           <div className="flex items-center gap-2">
@@ -540,7 +543,7 @@ export default function TransactionsPage() {
               icon={<IconPlus />}
               onClick={() => openForm("create")}
             >
-              {t("new")}
+              {isHousehold ? "记一笔" : t("new")}
             </Button>
           </div>
         }
@@ -669,9 +672,9 @@ export default function TransactionsPage() {
         <Card style={{ borderRadius: 12 }}>
           <EmptyState
             icon={<IconEmpty style={{ fontSize: 56, color: "var(--text-color-4)" }} />}
-            title="暂无经营流水"
-            description="点击上方按钮录入第一笔收入或成本"
-            actionText="录入流水"
+            title={isHousehold ? "暂无家庭收支" : "暂无经营流水"}
+            description={isHousehold ? "点击上方按钮记录第一笔家庭收入或支出" : "点击上方按钮录入第一笔收入或成本"}
+            actionText={isHousehold ? "记一笔" : "录入流水"}
             onAction={() => openForm("create")}
           />
         </Card>

@@ -15,6 +15,7 @@ import {
 } from "@arco-design/web-react/icon";
 import { useTranslations } from "next-intl";
 import { budgetApi } from "@/lib/api/budgets";
+import { useAppStore } from "@/lib/stores/appStore";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import PageHeader from "@/components/common/PageHeader";
 import BudgetProgress from "@/components/common/BudgetProgress";
@@ -148,6 +149,8 @@ function getPaceText(budget: Budget) {
 
 export default function BudgetsPage() {
   const t = useTranslations("budget");
+  const activeSubjectType = useAppStore((state) => state.activeSubjectType);
+  const isHousehold = activeSubjectType === "household";
   const { categories, fetchCategories } = useCategoryStore();
   const [allBudgets, setAllBudgets] = useState<Budget[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,6 +168,15 @@ export default function BudgetsPage() {
   const [quickView, setQuickView] = useState<QuickView>("all");
   const [form] = Form.useForm();
   const monthRange = useMemo(() => currentMonthRange(), []);
+  const visibleBudgetTypeOptions = useMemo(
+    () => isHousehold
+      ? budgetTypeOptions.filter((option) => option.value === "all" || option.value === "total" || option.value === "category")
+      : budgetTypeOptions,
+    [isHousehold]
+  );
+  const effectiveBudgetTypeFilter = visibleBudgetTypeOptions.some((option) => option.value === budgetTypeFilter)
+    ? budgetTypeFilter
+    : "all";
 
   const fetchData = async () => {
     setLoading(true);
@@ -216,7 +228,7 @@ export default function BudgetsPage() {
       if (!overlapsRange(budget, startDate, endDate)) return false;
       if (status !== "all" && budget.status !== Number(status)) return false;
       if (riskFilter !== "all" && budget.riskLevel !== riskFilter) return false;
-      if (budgetTypeFilter !== "all" && budgetType.key !== budgetTypeFilter) return false;
+      if (effectiveBudgetTypeFilter !== "all" && budgetType.key !== effectiveBudgetTypeFilter) return false;
       if (quickView === "active" && budget.status !== 1) return false;
       if (quickView === "warning" && !budget.warningReached && budget.riskLevel !== "high" && budget.riskLevel !== "critical") return false;
       if (quickView === "overrun" && budget.status !== 3 && budget.riskLevel !== "critical") return false;
@@ -224,7 +236,7 @@ export default function BudgetsPage() {
 
       return true;
     });
-  }, [allBudgets, budgetTypeFilter, endDate, keyword, monthRange.end, monthRange.start, quickView, riskFilter, startDate, status]);
+  }, [allBudgets, effectiveBudgetTypeFilter, endDate, keyword, monthRange.end, monthRange.start, quickView, riskFilter, startDate, status]);
 
   const maxPageIndex = Math.max(0, Math.ceil(filteredBudgets.length / pageSize) - 1);
   const effectivePageIndex = Math.min(pageIndex, maxPageIndex);
@@ -423,8 +435,8 @@ export default function BudgetsPage() {
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
-        title="经营预算"
-        subtitle="预算周期、执行进度和超支预警统一管理"
+        title={isHousehold ? "家庭预算" : "经营预算"}
+        subtitle={isHousehold ? "生活预算周期、执行进度、固定支出和超支预警统一管理" : "预算周期、执行进度和超支预警统一管理"}
         icon={<IconCalendar />}
         extra={
           <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
@@ -494,8 +506,8 @@ export default function BudgetsPage() {
               <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
             ))}
           </Select>
-          <Select value={budgetTypeFilter} onChange={(value) => setBudgetTypeFilter(value as BudgetTypeFilter)} style={{ width: "100%", borderRadius: 12 }}>
-            {budgetTypeOptions.map((item) => (
+          <Select value={effectiveBudgetTypeFilter} onChange={(value) => setBudgetTypeFilter(value as BudgetTypeFilter)} style={{ width: "100%", borderRadius: 12 }}>
+            {visibleBudgetTypeOptions.map((item) => (
               <Select.Option key={item.value} value={item.value}>{item.label}</Select.Option>
             ))}
           </Select>
