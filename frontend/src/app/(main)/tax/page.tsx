@@ -32,10 +32,11 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import { enterpriseApi } from "@/lib/api/enterprise";
+import { receiptApi } from "@/lib/api/receipts";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount } from "@/lib/utils/format";
-import type { EnterpriseSummary, TaxItem, TaxItemPayload } from "@/lib/types";
+import type { EnterpriseSummary, ReceiptSummary, ReceiptVoucher, TaxItem, TaxItemPayload } from "@/lib/types";
 
 const { Row, Col } = Grid;
 const FormItem = Form.Item;
@@ -139,6 +140,18 @@ const sourceLabels: Record<string, string> = {
   payroll: "薪酬代扣",
   policy: "政策规则",
 };
+
+function voucherTypeName(value: string) {
+  return ({
+    sales_invoice: "销项发票",
+    purchase_invoice: "进项发票",
+    receipt: "收据",
+    bank_slip: "银行回单",
+    contract: "合同付款",
+    reimbursement: "报销凭证",
+    tax_receipt: "税务回执",
+  } as Record<string, string>)[value] || value;
+}
 
 const severityLabels: Record<ComplianceIssue["severity"], { label: string; color: string; weight: number }> = {
   high: { label: "高风险", color: "red", weight: 3 },
@@ -293,6 +306,8 @@ export default function TaxPage() {
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [taxItems, setTaxItems] = useState<TaxItem[]>([]);
+  const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(null);
+  const [receiptVouchers, setReceiptVouchers] = useState<ReceiptVoucher[]>([]);
   const [filters, setFilters] = useState<TaxFilters>(initialFilters);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -308,12 +323,16 @@ export default function TaxPage() {
       setInitialLoading(true);
     }
     try {
-      const [summaryRes, taxRes] = await Promise.all([
+      const [summaryRes, taxRes, receiptSummaryRes, receiptListRes] = await Promise.all([
         enterpriseApi.summary(),
         enterpriseApi.taxItems(),
+        receiptApi.summary(),
+        receiptApi.list({ page: 0, size: 1000 }),
       ]);
       setSummary(summaryRes.data);
       setTaxItems(taxRes.data);
+      setReceiptSummary(receiptSummaryRes.data);
+      setReceiptVouchers(receiptListRes.data.content);
     } catch {
       Message.error("税务数据加载失败");
     } finally {
@@ -398,6 +417,88 @@ export default function TaxPage() {
       };
     });
   }, [taxItems]);
+
+  const vatItems = useMemo(() => taxItems.filter((item) => item.taxType === "vat"), [taxItems]);
+  const vatLedger = useMemo(() => {
+    const declaredTaxableAmount = vatItems.reduce((sum, item) => sum + Number(item.taxableAmount || 0), 0);
+    const declaredTaxAmount = vatItems.reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+    const paidVatAmount = vatItems.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+    const outputTaxAmount = Number(receiptSummary?.outputTaxAmount || 0);
+    const inputTaxAmount = Number(receiptSummary?.deductibleTaxAmount || 0);
+    const salesInvoiceAmount = Number(receiptSummary?.salesInvoiceAmount || 0);
+    const purchaseInvoiceAmount = Number(receiptSummary?.purchaseInvoiceAmount || 0);
+    const payableByReceipts = Math.max(0, outputTaxAmount - inputTaxAmount);
+    return {
+      declaredTaxableAmount,
+      declaredTaxAmount,
+      paidVatAmount,
+      unpaidVatAmount: Math.max(0, declaredTaxAmount - paidVatAmount),
+      outputTaxAmount,
+      inputTaxAmount,
+      salesInvoiceAmount,
+      purchaseInvoiceAmount,
+      payableByReceipts,
+    };
+  }, [receiptSummary, vatItems]);
+
+  const receiptComplianceIssues = useMemo(() => {
+    const issues: Array<{ title: string; description: string; severity: ComplianceIssue["severity"] }> = [];
+    if ((receiptSummary?.uncheckedInvoiceCount || 0) > 0) {
+      issues.push({
+        title: "发票待查验",
+        description: `${receiptSummary?.uncheckedInvoiceCount || 0} 张发票尚未完成查验，影响入账和税务归档。`,
+        severity: "high",
+      });
+    }
+    if ((receiptSummary?.pendingDeductionCount || 0) > 0) {
+      issues.push({
+        title: "进项抵扣未闭环",
+        description: `${receiptSummary?.pendingDeductionCount || 0} 张进项发票处于待确认或可抵扣状态。`,
+        severity: "medium",
+      });
+    }
+    if ((receiptSummary?.reimbursementPendingAmount || 0) > 0) {
+      issues.push({
+        title: "报销流程待处理",
+        description: `报销待审批/待付款 ${formatAmount(receiptSummary?.reimbursementPendingAmount || 0)}。`,
+        severity: "medium",
+      });
+    }
+    if ((receiptSummary?.missingTransactionCount || 0) > 0) {
+      issues.push({
+        title: "凭证未关联流水",
+        description: `${receiptSummary?.missingTransactionCount || 0} 张凭证未关联经营流水或资金流水。`,
+        severity: "medium",
+      });
+    }
+    if ((receiptSummary?.missingAttachmentCount || 0) > 0) {
+      issues.push({
+        title: "附件缺口",
+        description: `${receiptSummary?.missingAttachmentCount || 0} 张凭证缺少附件原件或扫描件。`,
+        severity: "low",
+      });
+    }
+    if ((receiptSummary?.missingTaxPeriodCount || 0) > 0) {
+      issues.push({
+        title: "税期缺失",
+        description: `${receiptSummary?.missingTaxPeriodCount || 0} 张税务凭证未设置税期。`,
+        severity: "low",
+      });
+    }
+    return issues;
+  }, [receiptSummary]);
+  const priorityVouchers = useMemo(() => {
+    return receiptVouchers
+      .filter((voucher) =>
+        voucher.riskLevel === "high"
+        || voucher.riskLevel === "critical"
+        || (voucher.invoiceCheckStatus !== "not_required" && voucher.invoiceCheckStatus !== "verified")
+        || voucher.deductionStatus === "pending"
+        || voucher.deductionStatus === "deductible"
+        || (voucher.voucherType === "reimbursement" && !["paid", "archived"].includes(voucher.reimbursementStatus))
+      )
+      .slice(0, 5);
+  }, [receiptVouchers]);
 
   const updateFilter = (field: keyof TaxFilters, value: string) => {
     setFilters((current) => ({ ...current, [field]: value || "" }));
@@ -613,6 +714,93 @@ export default function TaxPage() {
           </Col>
         ))}
       </Row>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.25fr_0.9fr_0.85fr]">
+        <Card style={{ borderRadius: 12 }} title="增值税与发票底账">
+          {initialLoading ? (
+            <Skeleton />
+          ) : (
+            <div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {[
+                  ["销项发票价税合计", formatAmount(vatLedger.salesInvoiceAmount), `销项税额 ${formatAmount(vatLedger.outputTaxAmount)}`],
+                  ["进项发票价税合计", formatAmount(vatLedger.purchaseInvoiceAmount), `进项税额 ${formatAmount(vatLedger.inputTaxAmount)}`],
+                  ["申报计税销售额", formatAmount(vatLedger.declaredTaxableAmount), `申报税额 ${formatAmount(vatLedger.declaredTaxAmount)}`],
+                  ["待缴增值税", formatAmount(vatLedger.unpaidVatAmount), `已缴 ${formatAmount(vatLedger.paidVatAmount)}`],
+                ].map(([label, value, hint]) => (
+                  <div
+                    key={label}
+                    className="min-h-[104px] rounded-lg border px-4 py-3"
+                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+                  >
+                    <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{label}</div>
+                    <div className="mt-3 text-lg font-semibold" style={{ color: "var(--text-color-1)" }}>{value}</div>
+                    <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>{hint}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 rounded-lg px-4 py-3 text-xs leading-5" style={{ backgroundColor: "var(--color-fill-1)", color: "var(--text-color-3)" }}>
+                {summary?.company?.taxpayerType?.includes("小规模")
+                  ? "当前主体为小规模纳税人口径：进项发票主要用于成本和所得税凭证归档，增值税抵扣逻辑需要按当期政策与电子税务局口径确认。"
+                  : "当前主体按一般纳税人思路展示销项、进项和抵扣状态，最终申报以电子税务局当期数据为准。"}
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="票据合规缺口">
+          {initialLoading ? (
+            <Skeleton />
+          ) : receiptComplianceIssues.length === 0 ? (
+            <Empty description="暂无票据缺口" />
+          ) : (
+            <div className="space-y-3">
+              {receiptComplianceIssues.map((issue) => {
+                const severity = severityLabels[issue.severity];
+                return (
+                  <div key={issue.title} className="flex items-start gap-3">
+                    <Tag color={severity.color}>{severity.label}</Tag>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium">{issue.title}</div>
+                      <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{issue.description}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <Button size="small" icon={<IconFile />} onClick={() => router.push("/receipts")}>
+                处理票据凭证
+              </Button>
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="待处理凭证">
+          {initialLoading ? (
+            <Skeleton />
+          ) : priorityVouchers.length === 0 ? (
+            <Empty description="暂无待处理凭证" />
+          ) : (
+            <div className="space-y-3">
+              {priorityVouchers.map((voucher) => {
+                const type = voucherTypeName(voucher.voucherType);
+                return (
+                  <div key={voucher.id} className="rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold">{voucher.title}</div>
+                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{type} · {voucher.taxPeriod || "税期待补"}</div>
+                      </div>
+                      <Tag color={voucher.riskLevel === "high" || voucher.riskLevel === "critical" ? "red" : "orange"}>
+                        {formatAmount(voucher.amount)}
+                      </Tag>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
 
       <div className="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.6fr)]">
         <Card style={{ borderRadius: 12 }} title="税务画像与申报节奏">

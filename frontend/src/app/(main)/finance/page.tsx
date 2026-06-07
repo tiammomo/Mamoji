@@ -114,6 +114,15 @@ const isPayable = (voucher: ReceiptVoucher) =>
   && isOpenVoucher(voucher)
   && (voucher.status === "pending_review" || !voucher.transactionId);
 
+const textOfTransaction = (transaction: Transaction) =>
+  `${transaction.note || ""} ${transaction.categoryName || ""}`.toLowerCase();
+
+const isCustomerRefund = (transaction: Transaction) =>
+  transaction.type === 2 && /客户退款|退款给客户|收入退款|订单退款|项目退款|退货退款|服务退款/.test(textOfTransaction(transaction));
+
+const isSeverancePayment = (transaction: Transaction) =>
+  transaction.type === 2 && /裁员|离职补偿|经济补偿|遣散|n\+1|n\+ 1|补偿金|解除劳动/.test(textOfTransaction(transaction));
+
 const riskColor = (riskLevel: string) => {
   if (riskLevel === "critical" || riskLevel === "high") return "red";
   if (riskLevel === "medium") return "orange";
@@ -135,7 +144,7 @@ const loadFinanceView = async (): Promise<FinanceView> => {
     receiptApi.summary(),
     receiptApi.list({ page: 0, size: 50 }),
     budgetApi.active(),
-    transactionApi.list({ page: 0, size: 8 }),
+    transactionApi.list({ page: 0, size: 1000 }),
     statsApi.overview(),
   ]);
 
@@ -206,6 +215,25 @@ export default function FinancePage() {
     const payableVouchers = view.vouchers.filter(isPayable);
     const receivableAmount = receivableVouchers.reduce((sum, voucher) => sum + (voucher.amount || 0), 0);
     const payableAmount = payableVouchers.reduce((sum, voucher) => sum + (voucher.amount || 0), 0);
+    const overdueReceivables = receivableVouchers.filter((voucher) => {
+      const days = daysUntil(voucher.dueDate);
+      return days !== null && days < 0;
+    });
+    const dueSoonReceivables = receivableVouchers.filter((voucher) => {
+      const days = daysUntil(voucher.dueDate);
+      return days !== null && days >= 0 && days <= 7;
+    });
+    const customerRefunds = view.transactions.filter(isCustomerRefund);
+    const customerRefundAmount = customerRefunds.reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+    const supplierRefundAmount = view.transactions
+      .filter((transaction) => transaction.type === 3)
+      .reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+    const severancePayments = view.transactions.filter(isSeverancePayment);
+    const severanceAmount = severancePayments.reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+    const grossIncome = view.transactions
+      .filter((transaction) => transaction.type === 1)
+      .reduce((sum, transaction) => sum + (transaction.amount || 0), 0);
+    const netCollectedIncome = grossIncome - customerRefundAmount;
     const overduePayables = payableVouchers.filter((voucher) => {
       const days = daysUntil(voucher.dueDate);
       return days !== null && days < 0;
@@ -282,6 +310,34 @@ export default function FinancePage() {
         icon: <IconSwap />,
       });
     }
+    if (receivableAmount > 0) {
+      const overdueText = overdueReceivables.length > 0 ? `，${overdueReceivables.length} 笔已逾期` : "";
+      actions.push({
+        title: "项目交付后待回款",
+        detail: `应收 ${formatAmount(receivableAmount, currency)}${overdueText}`,
+        path: "/receipts",
+        severity: overdueReceivables.length > 0 ? "danger" : "warning",
+        icon: <IconCalendar />,
+      });
+    }
+    if (customerRefundAmount > 0) {
+      actions.push({
+        title: "收入退款需要冲减",
+        detail: `客户退款 ${formatAmount(customerRefundAmount, currency)}，经营收入需按净额复盘`,
+        path: "/transactions",
+        severity: "warning",
+        icon: <IconRefresh />,
+      });
+    }
+    if (severanceAmount > 0) {
+      actions.push({
+        title: "离职补偿已发生",
+        detail: `裁员/离职补偿 ${formatAmount(severanceAmount, currency)}，应计入人力成本复盘`,
+        path: "/transactions",
+        severity: "notice",
+        icon: <IconExclamationCircle />,
+      });
+    }
     if (budgetRisks.length > 0) {
       actions.push({
         title: "预算执行接近上限",
@@ -350,6 +406,13 @@ export default function FinancePage() {
       payableAmount,
       receivableVouchers,
       payableVouchers,
+      overdueReceivables,
+      dueSoonReceivables,
+      customerRefundAmount,
+      supplierRefundAmount,
+      severanceAmount,
+      grossIncome,
+      netCollectedIncome,
       overduePayables,
       budgetRisks,
       accountRisks,
@@ -389,6 +452,20 @@ export default function FinancePage() {
       hint: statusMeta[financeModel.healthSeverity].label,
       icon: <IconDashboard />,
       color: financeModel.healthSeverity === "danger" ? "var(--color-danger)" : "var(--color-success)",
+    },
+    {
+      label: "待回款",
+      value: formatAmount(financeModel.receivableAmount, currency),
+      hint: `${financeModel.overdueReceivables.length} 笔逾期 · ${financeModel.dueSoonReceivables.length} 笔 7 天内`,
+      icon: <IconCalendar />,
+      color: financeModel.overdueReceivables.length > 0 ? "var(--color-danger)" : "var(--color-warning)",
+    },
+    {
+      label: "退款冲减",
+      value: formatAmount(financeModel.customerRefundAmount, currency),
+      hint: `供应商退款返还 ${formatAmount(financeModel.supplierRefundAmount, currency)}`,
+      icon: <IconRefresh />,
+      color: financeModel.customerRefundAmount > 0 ? "var(--color-warning)" : "var(--color-success)",
     },
   ];
 
@@ -581,17 +658,35 @@ export default function FinancePage() {
           )}
         </Card>
 
-        <Card style={{ borderRadius: 12 }} title="应收应付">
+        <Card style={{ borderRadius: 12 }} title="回款与应收应付">
           {loading ? (
             <Skeleton />
           ) : (
             <div className="space-y-4">
               <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>应收待闭环</span>
-                  <Tag color="green">{financeModel.receivableVouchers.length} 张</Tag>
+                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>已交付待回款</span>
+                  <Tag color={financeModel.overdueReceivables.length > 0 ? "red" : "green"}>
+                    {financeModel.receivableVouchers.length} 笔
+                  </Tag>
                 </div>
                 <div className="mt-2 text-2xl font-bold amount-income">{formatAmount(financeModel.receivableAmount, currency)}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                  <span>{financeModel.overdueReceivables.length} 笔逾期</span>
+                  <span>{financeModel.dueSoonReceivables.length} 笔 7 天内到期</span>
+                </div>
+              </div>
+              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>收入净回款</span>
+                  <Tag color={financeModel.customerRefundAmount > 0 ? "orange" : "green"}>扣除客户退款</Tag>
+                </div>
+                <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                  {formatAmount(financeModel.netCollectedIncome, currency)}
+                </div>
+                <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                  总收入 {formatAmount(financeModel.grossIncome, currency)} · 客户退款 {formatAmount(financeModel.customerRefundAmount, currency)}
+                </div>
               </div>
               <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
                 <div className="flex items-center justify-between">
@@ -608,7 +703,7 @@ export default function FinancePage() {
                       <div className="min-w-0">
                         <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{voucher.title}</div>
                         <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
-                          {voucherTypeLabels[voucher.voucherType] || voucher.voucherType} · {voucher.counterparty}
+                          {voucher.direction === "income" ? "回款" : "付款"} · {voucherTypeLabels[voucher.voucherType] || voucher.voucherType} · {voucher.counterparty}
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
@@ -621,7 +716,7 @@ export default function FinancePage() {
                   );
                 })}
                 {financeModel.receivableVouchers.length + financeModel.payableVouchers.length === 0 && (
-                  <Empty description="暂无应收应付待办" />
+                  <Empty description="暂无回款或应付待办" />
                 )}
               </div>
             </div>
@@ -728,7 +823,7 @@ export default function FinancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {view.transactions.map((transaction) => (
+                  {view.transactions.slice(0, 8).map((transaction) => (
                     <tr key={transaction.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
                       <td className="px-3 py-3 align-middle">
                         <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{transaction.note || "未命名流水"}</div>

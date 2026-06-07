@@ -3,6 +3,8 @@ import type {
   PaginatedResponse,
   ReceiptPayload,
   ReceiptQuery,
+  ReceiptAuditLog,
+  ReceiptFileLink,
   ReceiptSummary,
   ReceiptVoucher,
 } from "@/lib/types";
@@ -33,6 +35,10 @@ export const receiptApi = {
     client.post<ReceiptVoucher>("/receipts", withCompany(data)),
   update: (id: number, data: Partial<ReceiptPayload>) =>
     client.put<ReceiptVoucher>(`/receipts/${id}`, data),
+  auditLogs: (id: number) =>
+    client.get<ReceiptAuditLog[]>(`/receipts/${id}/audit-logs`),
+  fileLink: (id: number) =>
+    client.get<ReceiptFileLink>(`/receipts/${id}/file-link`),
   upload: (file: File, data: Partial<ReceiptPayload>) => {
     const form = new FormData();
     form.append("file", file);

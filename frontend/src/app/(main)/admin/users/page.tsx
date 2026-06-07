@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Card, Form, Grid, Input, Message, Modal, Select, Tag } from "@arco-design/web-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Button, Card, Drawer, Form, Grid, Input, Message, Modal, Select, Tag } from "@arco-design/web-react";
 import { IconEdit, IconPlus, IconSearch, IconUserGroup } from "@arco-design/web-react/icon";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
@@ -63,6 +63,37 @@ type EmployeeFormValues = EmployeePayload;
 
 const money = (value: unknown) => Number(value || 0);
 
+const formatCurrency = (value: unknown) => `¥${money(value).toLocaleString("zh-CN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})}`;
+
+const formatPercent = (value: unknown) => {
+  const normalized = money(value).toFixed(2);
+  return `${normalized.replace(/\.00$/, "")}%`;
+};
+
+function DetailItem({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{label}</div>
+      <div className="mt-1 text-sm font-medium break-words" style={{ color: "var(--text-color-1)" }}>{value || "--"}</div>
+    </div>
+  );
+}
+
+function DetailPanel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section
+      className="rounded-xl border p-4"
+      style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-bg-2)" }}
+    >
+      <div className="mb-4 font-medium" style={{ color: "var(--text-color-1)" }}>{title}</div>
+      {children}
+    </section>
+  );
+}
+
 export default function AdminUsersPage() {
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
@@ -74,6 +105,7 @@ export default function AdminUsersPage() {
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<string>("all");
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
   const employeesPagination = useClientPagination(employees, 10);
@@ -81,6 +113,10 @@ export default function AdminUsersPage() {
   const departmentMap = useMemo(
     () => new Map(departments.map((department) => [department.id, department.name])),
     [departments]
+  );
+  const permissionNameMap = useMemo(
+    () => new Map((permissionMatrix?.permissions || []).map((permission) => [permission.key, permission.name])),
+    [permissionMatrix]
   );
 
   const fetchData = useCallback(async (nextKeyword = "", nextStatus = "all") => {
@@ -143,6 +179,7 @@ export default function AdminUsersPage() {
   }, [activeCompanyId]);
 
   const openCreate = () => {
+    setSelectedEmployee(null);
     setEditingEmployee(null);
     form.resetFields();
     form.setFieldsValue({
@@ -160,6 +197,7 @@ export default function AdminUsersPage() {
   };
 
   const openEdit = (employee: Employee) => {
+    setSelectedEmployee(null);
     setEditingEmployee(employee);
     form.setFieldsValue({
       ...employee,
@@ -200,6 +238,21 @@ export default function AdminUsersPage() {
   };
 
   const pendingTaxes = taxItems.filter((item) => item.status !== "paid");
+  const selectedStatus = selectedEmployee
+    ? statusLabels[selectedEmployee.status] || { label: selectedEmployee.status, color: "gray" }
+    : null;
+  const selectedRole = selectedEmployee
+    ? accessRoleLabels[selectedEmployee.accessRole] || { label: selectedEmployee.accessRole, color: "gray" }
+    : null;
+  const selectedMatrix = selectedEmployee
+    ? permissionMatrix?.matrix.find((item) => item.role === selectedEmployee.accessRole)
+    : null;
+  const selectedRoleDefinition = selectedEmployee
+    ? permissionMatrix?.roles.find((item) => item.key === selectedEmployee.accessRole)
+    : null;
+  const selectedSeveranceEstimate = selectedEmployee && selectedEmployee.status === "departed"
+    ? money(selectedEmployee.salary)
+    : 0;
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
@@ -322,13 +375,13 @@ export default function AdminUsersPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>
+                      <td colSpan={employeeTableColumns.length} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>
                         加载中...
                       </td>
                     </tr>
                   ) : employees.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>
+                      <td colSpan={employeeTableColumns.length} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>
                         暂无员工信息
                       </td>
                     </tr>
@@ -336,7 +389,12 @@ export default function AdminUsersPage() {
                     const statusConfig = statusLabels[employee.status] || { label: employee.status, color: "gray" };
                     const role = accessRoleLabels[employee.accessRole] || { label: employee.accessRole, color: "gray" };
                     return (
-                      <tr key={employee.id} className="border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
+                      <tr
+                        key={employee.id}
+                        className="cursor-pointer border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
+                        style={{ borderColor: "var(--border-color-light)" }}
+                        onClick={() => setSelectedEmployee(employee)}
+                      >
                         <td className="px-5 py-5 align-middle">
                           <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{employee.name}</div>
                           <div className="text-xs break-all mt-1" style={{ color: "var(--text-color-3)" }}>{employee.email}</div>
@@ -365,7 +423,16 @@ export default function AdminUsersPage() {
                         </td>
                         <td className="px-4 py-5 align-middle whitespace-nowrap">
                           <div className="flex justify-center">
-                            <Button aria-label={`编辑 ${employee.name}`} type="text" size="mini" icon={<IconEdit />} onClick={() => openEdit(employee)} />
+                            <Button
+                              aria-label={`编辑 ${employee.name}`}
+                              type="text"
+                              size="mini"
+                              icon={<IconEdit />}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openEdit(employee);
+                              }}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -438,6 +505,187 @@ export default function AdminUsersPage() {
           </div>
         </Col>
       </Row>
+
+      <Drawer
+        title="员工详情"
+        visible={Boolean(selectedEmployee)}
+        width={720}
+        onCancel={() => setSelectedEmployee(null)}
+        footer={selectedEmployee ? (
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setSelectedEmployee(null)}>关闭</Button>
+            <Button type="primary" icon={<IconEdit />} onClick={() => openEdit(selectedEmployee)}>
+              编辑员工信息
+            </Button>
+          </div>
+        ) : null}
+      >
+        {selectedEmployee && (
+          <div className="space-y-4">
+            <div
+              className="rounded-2xl border p-5"
+              style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-xl font-semibold" style={{ color: "var(--text-color-1)" }}>{selectedEmployee.name}</div>
+                    {selectedStatus && <Tag color={selectedStatus.color}>{selectedStatus.label}</Tag>}
+                    {selectedRole && <Tag color={selectedRole.color}>{selectedRole.label}</Tag>}
+                  </div>
+                  <div className="mt-2 text-sm" style={{ color: "var(--text-color-3)" }}>
+                    {(selectedEmployee.departmentName || (selectedEmployee.departmentId ? departmentMap.get(selectedEmployee.departmentId) : "未分配部门") || "未分配部门")} · {selectedEmployee.position}
+                  </div>
+                  <div className="mt-1 break-all text-sm" style={{ color: "var(--text-color-3)" }}>{selectedEmployee.email}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月人力成本</div>
+                  <AmountDisplay amount={selectedEmployee.monthlyCost} type={2} size="large" />
+                </div>
+              </div>
+            </div>
+
+            <DetailPanel title="基础档案">
+              <div className="grid gap-4 md:grid-cols-3">
+                <DetailItem label="手机号" value={selectedEmployee.phone || "--"} />
+                <DetailItem label="用工类型" value={employmentTypeLabels[selectedEmployee.employmentType] || selectedEmployee.employmentType} />
+                <DetailItem label="员工状态" value={selectedStatus ? <Tag color={selectedStatus.color}>{selectedStatus.label}</Tag> : selectedEmployee.status} />
+                <DetailItem label="入职日期" value={selectedEmployee.hireDate} />
+                <DetailItem label="离职日期" value={selectedEmployee.leaveDate || "--"} />
+                <DetailItem label="紧急联系人" value={selectedEmployee.emergencyContact || "--"} />
+              </div>
+            </DetailPanel>
+
+            <DetailPanel title="组织与权限">
+              <div className="grid gap-4 md:grid-cols-3">
+                <DetailItem
+                  label="所属部门"
+                  value={selectedEmployee.departmentName || (selectedEmployee.departmentId ? departmentMap.get(selectedEmployee.departmentId) : "--")}
+                />
+                <DetailItem label="企业角色" value={selectedRole ? <Tag color={selectedRole.color}>{selectedRole.label}</Tag> : selectedEmployee.accessRole} />
+                <DetailItem label="数据范围" value={accessScopeLabels[selectedEmployee.accessScope] || selectedEmployee.accessScope} />
+              </div>
+              {selectedRoleDefinition && (
+                <div className="mt-4 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: "var(--color-fill-1)", color: "var(--text-color-3)" }}>
+                  {selectedRoleDefinition.description}
+                </div>
+              )}
+              {selectedMatrix && (
+                <div className="mt-4">
+                  <div className="mb-2 text-xs" style={{ color: "var(--text-color-3)" }}>权限项</div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedMatrix.permissions.slice(0, 12).map((permission) => (
+                      <Tag key={permission} color="arcoblue">{permissionNameMap.get(permission) || permission}</Tag>
+                    ))}
+                    {selectedMatrix.permissions.length > 12 && (
+                      <Tag color="gray">+{selectedMatrix.permissions.length - 12}</Tag>
+                    )}
+                  </div>
+                </div>
+              )}
+            </DetailPanel>
+
+            <DetailPanel title="薪酬与成本">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-lg p-3" style={{ backgroundColor: "rgba(239, 68, 68, 0.06)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月人力成本</div>
+                  <AmountDisplay amount={selectedEmployee.monthlyCost} type={2} size="medium" />
+                </div>
+                <div className="rounded-lg p-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>应发工资</div>
+                  <AmountDisplay amount={selectedEmployee.salary} size="medium" />
+                </div>
+                <div className="rounded-lg p-3" style={{ backgroundColor: "rgba(16, 185, 129, 0.06)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个人到账</div>
+                  <AmountDisplay amount={selectedEmployee.netPayEstimate} type={1} size="medium" />
+                </div>
+                <div className="rounded-lg p-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个税估算</div>
+                  <AmountDisplay amount={selectedEmployee.taxEstimate} type={2} size="medium" />
+                </div>
+              </div>
+              <div className="mt-4 rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">离职/裁员补偿</div>
+                    <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                      一次性人力成本，和固定月薪分开复盘
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <AmountDisplay amount={selectedSeveranceEstimate} type={2} size="medium" />
+                    <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                      {selectedEmployee.status === "departed" ? "按 1 个月工资占位估算" : "暂无离职补偿"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <DetailItem label="社保个人/公司" value={`${formatCurrency(selectedEmployee.socialInsurancePersonalAmount)} / ${formatCurrency(selectedEmployee.socialInsuranceCompanyAmount || selectedEmployee.socialInsurance)}`} />
+                <DetailItem label="公积金个人/公司" value={`${formatCurrency(selectedEmployee.housingFundPersonalAmount)} / ${formatCurrency(selectedEmployee.housingFundCompanyAmount || selectedEmployee.housingFund)}`} />
+                <DetailItem label="其他个人扣减" value={formatCurrency(selectedEmployee.personalDeduction)} />
+                <DetailItem label="公司承担缴费" value={formatCurrency(money(selectedEmployee.socialInsuranceCompanyAmount || selectedEmployee.socialInsurance) + money(selectedEmployee.housingFundCompanyAmount || selectedEmployee.housingFund))} />
+              </div>
+            </DetailPanel>
+
+            <DetailPanel title="社保与公积金">
+              <div className="grid gap-4 md:grid-cols-3">
+                <DetailItem label="参保地区" value={selectedEmployee.socialInsuranceRegion || "--"} />
+                <DetailItem label="户籍类型" value={selectedEmployee.hukouType === "local" ? "深户" : "非深户"} />
+                <DetailItem label="医保档次" value={selectedEmployee.medicalTier === "tier2" ? "医保二档" : "医保一档"} />
+                <DetailItem label="养老基数" value={formatCurrency(selectedEmployee.pensionBase || selectedEmployee.socialInsuranceBase)} />
+                <DetailItem label="医疗基数" value={formatCurrency(selectedEmployee.medicalBase)} />
+                <DetailItem label="失业基数" value={formatCurrency(selectedEmployee.unemploymentBase)} />
+                <DetailItem label="工伤基数" value={formatCurrency(selectedEmployee.workInjuryBase)} />
+                <DetailItem label="公积金基数" value={formatCurrency(selectedEmployee.housingFundBase)} />
+                <DetailItem
+                  label="公积金比例"
+                  value={`个人 ${formatPercent(selectedEmployee.housingFundPersonalRate)} / 公司 ${formatPercent(selectedEmployee.housingFundCompanyRate)}`}
+                />
+              </div>
+              {selectedEmployee.socialInsuranceItems && selectedEmployee.socialInsuranceItems.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {selectedEmployee.socialInsuranceItems.map((item) => (
+                    <div
+                      key={item.key}
+                      className="grid grid-cols-[88px_1fr_1fr] gap-3 rounded-lg px-3 py-2 text-xs"
+                      style={{ backgroundColor: "var(--color-fill-1)", color: "var(--text-color-3)" }}
+                    >
+                      <span className="font-medium" style={{ color: "var(--text-color-2)" }}>{item.name}</span>
+                      <span>基数 {formatCurrency(item.base)}</span>
+                      <span>个人 {formatCurrency(item.personalAmount)} / 公司 {formatCurrency(item.companyAmount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DetailPanel>
+
+            <DetailPanel title="合同、考勤与绩效">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg p-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                  <div className="text-sm font-medium">劳动合同</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    起始 {selectedEmployee.hireDate} · 到期 未录入
+                  </div>
+                  <Tag className="mt-3" color={selectedEmployee.status === "departed" ? "gray" : "green"}>
+                    {selectedEmployee.status === "departed" ? "已终止" : "有效"}
+                  </Tag>
+                </div>
+                <div className="rounded-lg p-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                  <div className="text-sm font-medium">考勤打卡</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>本月全勤测算 · 异常 0 次</div>
+                  <Tag className="mt-3" color="green">正常</Tag>
+                </div>
+                <div className="rounded-lg p-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                  <div className="text-sm font-medium">绩效记录</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>最近评级 未录入 · 绩效奖金 未录入</div>
+                  <Tag className="mt-3" color="gray">待维护</Tag>
+                </div>
+              </div>
+            </DetailPanel>
+          </div>
+        )}
+      </Drawer>
 
       <Modal
         title={editingEmployee ? "编辑员工信息" : "新增员工信息"}

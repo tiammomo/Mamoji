@@ -87,6 +87,11 @@ export default function TransactionFormModal({
   const isRefund = mode === "refund";
 
   const title = mode === "refund" ? "发起退款" : mode === "edit" ? "编辑流水" : "录入流水";
+  const quickNotes = isRefund
+    ? ["供应商退款：原成本支出返还", "订阅退款：未使用服务退回", "采购退款：退货返款"]
+    : type === 1
+      ? ["项目交付待回款：预计 YYYY-MM-DD 到账", "分期回款：第 1/3 期", "尾款待回款：验收后支付"]
+      : ["客户退款：冲减收入", "离职补偿：N+1 经济补偿", "裁员补偿：解除劳动关系补偿"];
 
   const changeType = (nextType: 1 | 2) => {
     setType(nextType);
@@ -269,6 +274,18 @@ export default function TransactionFormModal({
         <FormItem label="备注" field="note">
           <Input.TextArea placeholder="添加备注（可选）" maxLength={200} showWordLimit style={{ borderRadius: 12 }} />
         </FormItem>
+        <div className="-mt-3 mb-5 flex flex-wrap gap-2">
+          {quickNotes.map((note) => (
+            <Button
+              key={note}
+              size="mini"
+              type="outline"
+              onClick={() => form.setFieldValue("note", note)}
+            >
+              {note}
+            </Button>
+          ))}
+        </div>
 
         <div className="flex gap-3">
           <Button

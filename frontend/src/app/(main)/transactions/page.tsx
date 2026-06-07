@@ -51,6 +51,17 @@ const normalizeAmountFilter = (value: string | null) => (
 
 const toNumber = (value: string) => (value ? Number(value) : undefined);
 
+const transactionText = (tx: Transaction) => `${tx.note || ""} ${tx.categoryName || ""}`.toLowerCase();
+
+const isPendingCollection = (tx: Transaction) =>
+  tx.type === 1 && /待回款|应收|未回款|尾款|分期|验收后|交付后|回款中/.test(transactionText(tx));
+
+const isCustomerRefund = (tx: Transaction) =>
+  tx.type === 2 && /客户退款|退款给客户|收入退款|订单退款|项目退款|退货退款|服务退款/.test(transactionText(tx));
+
+const isSeverancePayment = (tx: Transaction) =>
+  tx.type === 2 && /裁员|离职补偿|经济补偿|遣散|n\+1|n\+ 1|补偿金|解除劳动/.test(transactionText(tx));
+
 export default function TransactionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -259,10 +270,20 @@ export default function TransactionsPage() {
     const income = summaryData.filter((tx) => tx.type === 1).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const expense = summaryData.filter((tx) => tx.type === 2).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const refund = summaryData.filter((tx) => tx.type === 3).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const pendingCollection = summaryData.filter(isPendingCollection).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const customerRefund = summaryData.filter(isCustomerRefund).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const severance = summaryData.filter(isSeverancePayment).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const largeCount = summaryData.filter((tx) => Number(tx.amount || 0) >= largeTransactionThreshold).length;
     const reviewIds = new Set<number>();
     summaryData.forEach((tx) => {
-      if (Number(tx.amount || 0) >= largeTransactionThreshold || (tx.type === 2 && tx.isRefundable) || !tx.note?.trim()) {
+      if (
+        Number(tx.amount || 0) >= largeTransactionThreshold
+        || (tx.type === 2 && tx.isRefundable)
+        || isPendingCollection(tx)
+        || isCustomerRefund(tx)
+        || isSeverancePayment(tx)
+        || !tx.note?.trim()
+      ) {
         reviewIds.add(tx.id);
       }
     });
@@ -271,6 +292,10 @@ export default function TransactionsPage() {
       income,
       expense,
       refund,
+      pendingCollection,
+      customerRefund,
+      severance,
+      netCollectedIncome: income - customerRefund,
       net: income + refund - expense,
       rows: summaryData.length,
       largeCount,
@@ -433,6 +458,15 @@ export default function TransactionsPage() {
     if (tx.type === 2 && tx.isRefundable) {
       flags.push({ key: "refundable", label: t("refundableTag"), color: "orange" });
     }
+    if (isPendingCollection(tx)) {
+      flags.push({ key: "pending-collection", label: "待回款", color: "arcoblue" });
+    }
+    if (isCustomerRefund(tx)) {
+      flags.push({ key: "customer-refund", label: "冲减收入", color: "red" });
+    }
+    if (isSeverancePayment(tx)) {
+      flags.push({ key: "severance", label: "离职补偿", color: "purple" });
+    }
     if (tx.refundedAmount > 0) {
       flags.push({ key: "refunded", label: t("refundedTag"), color: "gold" });
     }
@@ -517,6 +551,29 @@ export default function TransactionsPage() {
     { label: t("summaryReview"), value: <span className="text-lg font-semibold" style={{ color: "var(--color-warning)" }}>{summary.reviewCount}</span> },
   ];
 
+  const operatingCards = [
+    {
+      label: "实收收入净额",
+      value: <AmountDisplay amount={summary.netCollectedIncome} type={summary.netCollectedIncome >= 0 ? 1 : 2} showSign size="medium" />,
+      hint: `收入 ${formatAmount(summary.income)} - 客户退款 ${formatAmount(summary.customerRefund)}`,
+    },
+    {
+      label: "交付后待回款",
+      value: <AmountDisplay amount={summary.pendingCollection} type={1} size="medium" />,
+      hint: "按备注中的待回款、应收、尾款、分期识别",
+    },
+    {
+      label: "退款冲减收入",
+      value: <AmountDisplay amount={summary.customerRefund} type={2} size="medium" />,
+      hint: "客户退款、订单退款、项目退款需要扣减收入",
+    },
+    {
+      label: "裁员/离职补偿",
+      value: <AmountDisplay amount={summary.severance} type={2} size="medium" />,
+      hint: "计入人力成本复盘，不并入固定薪酬",
+    },
+  ];
+
   const renderFlagTags = (tx: Transaction) => {
     const flags = transactionFlags(tx);
     if (flags.length === 0) {
@@ -557,6 +614,18 @@ export default function TransactionsPage() {
           </Card>
         ))}
       </div>
+
+      {!isHousehold && (
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {operatingCards.map((item) => (
+            <Card key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
+              <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
+              <div className="mt-2">{item.value}</div>
+              <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{item.hint}</div>
+            </Card>
+          ))}
+        </div>
+      )}
 
       <Card className="mb-4" style={{ borderRadius: 12 }}>
         <div className="mb-3 flex flex-wrap gap-2">
