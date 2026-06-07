@@ -4,6 +4,8 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.AuditLog;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.domain.Models.EmployeeCertificate;
+import com.mamoji.domain.Models.EmployeeExperience;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.ReceiptVoucher;
@@ -16,16 +18,17 @@ import java.math.RoundingMode;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -43,6 +46,9 @@ public class EnterpriseStore {
     public final Map<Long, AuditLog> auditLogs = new ConcurrentHashMap<>();
 
     private static final String DEFAULT_SOCIAL_INSURANCE_REGION = "深圳";
+    private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
+    private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
+    private static final String SHENZHEN_STARTUP_POLICY_PROFILE = "CN-GD-SZ-STARTUP-LITE";
     private static final String DEFAULT_HUKOU_TYPE = "non_local";
     private static final String DEFAULT_MEDICAL_TIER = "tier1";
     private static final BigDecimal SHENZHEN_PENSION_MIN_BASE = new BigDecimal("4775");
@@ -67,24 +73,52 @@ public class EnterpriseStore {
 
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
+    private final boolean schemaCompatibilityEnabled;
+    private final String bootstrapMode;
+    private final String bootstrapCompanyName;
+    private final String bootstrapCompanyCreditCode;
+    private final String bootstrapCompanyIndustry;
+    private final String bootstrapCompanyTaxpayerType;
+    private final String bootstrapCompanyCurrency;
 
-    public EnterpriseStore(JdbcTemplate jdbc, InMemoryStore coreStore) {
+    public EnterpriseStore(
+        JdbcTemplate jdbc,
+        InMemoryStore coreStore,
+        @Value("${mamoji.schema.compatibility-enabled:false}") boolean schemaCompatibilityEnabled,
+        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
+        @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
+        @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
+        @Value("${mamoji.bootstrap.company-industry:未设置}") String bootstrapCompanyIndustry,
+        @Value("${mamoji.bootstrap.company-taxpayer-type:未设置}") String bootstrapCompanyTaxpayerType,
+        @Value("${mamoji.bootstrap.company-currency:CNY}") String bootstrapCompanyCurrency
+    ) {
         this.jdbc = jdbc;
         this.coreStore = coreStore;
+        this.schemaCompatibilityEnabled = schemaCompatibilityEnabled;
+        this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
+        this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
+        this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
+        this.bootstrapCompanyIndustry = defaultIfBlank(bootstrapCompanyIndustry, "未设置");
+        this.bootstrapCompanyTaxpayerType = defaultIfBlank(bootstrapCompanyTaxpayerType, "未设置");
+        this.bootstrapCompanyCurrency = defaultIfBlank(bootstrapCompanyCurrency, "CNY");
     }
 
     @PostConstruct
     void initialize() {
         createSchema();
         loadAll();
-        ensureSeedData();
+        ensureInitialEnterpriseData();
         ensureCompanyPolicyDefaults();
         ensureTaxItemDefaults();
-        ensureHouseholdSubject();
-        ensureEntityTransferSeed();
-        ensureReceiptVoucherSeed();
+        if (!isBootstrapMode()) {
+            ensureHouseholdSubject();
+            ensureEntityTransferSeed();
+            ensureReceiptVoucherSeed();
+        }
         ensureReceiptVoucherDefaults();
-        ensureReceiptAuditLogSeed();
+        if (!isBootstrapMode()) {
+            ensureReceiptAuditLogSeed();
+        }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
         attachDepartmentNames();
@@ -93,7 +127,7 @@ public class EnterpriseStore {
     private void createSchema() {
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS companies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 entity_type TEXT NOT NULL DEFAULT 'company',
                 credit_code TEXT,
@@ -126,7 +160,7 @@ public class EnterpriseStore {
         ensureColumn("companies", "fiscal_year_start_month", "INTEGER NOT NULL DEFAULT 1");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS departments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 cost_center TEXT NOT NULL,
@@ -139,20 +173,43 @@ public class EnterpriseStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS employees (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 user_id INTEGER,
                 department_id INTEGER,
+                employee_no TEXT,
                 name TEXT NOT NULL,
+                legal_name TEXT,
+                preferred_name TEXT,
                 email TEXT NOT NULL,
                 phone TEXT,
                 position TEXT NOT NULL,
+                direct_manager_employee_id INTEGER,
+                job_level TEXT,
+                work_location TEXT,
                 employment_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 access_role TEXT NOT NULL DEFAULT 'employee',
                 access_scope TEXT NOT NULL DEFAULT 'self',
                 hire_date TEXT NOT NULL,
                 leave_date TEXT,
+                probation_start_date TEXT,
+                probation_end_date TEXT,
+                contract_start_date TEXT,
+                contract_end_date TEXT,
+                contract_type TEXT,
+                contract_status TEXT,
+                education_level TEXT,
+                graduation_school TEXT,
+                major TEXT,
+                graduation_date TEXT,
+                graduation_year INTEGER,
+                graduate_status TEXT,
+                skill_tags TEXT,
+                resume_summary TEXT,
+                material_status TEXT,
+                profile_verified_at TEXT,
+                profile_verified_by INTEGER,
                 salary TEXT NOT NULL,
                 social_insurance TEXT NOT NULL,
                 housing_fund TEXT NOT NULL,
@@ -187,6 +244,29 @@ public class EnterpriseStore {
             """);
         ensureColumn("employees", "access_role", "TEXT NOT NULL DEFAULT 'employee'");
         ensureColumn("employees", "access_scope", "TEXT NOT NULL DEFAULT 'self'");
+        ensureColumn("employees", "employee_no", "TEXT");
+        ensureColumn("employees", "legal_name", "TEXT");
+        ensureColumn("employees", "preferred_name", "TEXT");
+        ensureColumn("employees", "direct_manager_employee_id", "INTEGER");
+        ensureColumn("employees", "job_level", "TEXT");
+        ensureColumn("employees", "work_location", "TEXT");
+        ensureColumn("employees", "probation_start_date", "TEXT");
+        ensureColumn("employees", "probation_end_date", "TEXT");
+        ensureColumn("employees", "contract_start_date", "TEXT");
+        ensureColumn("employees", "contract_end_date", "TEXT");
+        ensureColumn("employees", "contract_type", "TEXT");
+        ensureColumn("employees", "contract_status", "TEXT");
+        ensureColumn("employees", "education_level", "TEXT");
+        ensureColumn("employees", "graduation_school", "TEXT");
+        ensureColumn("employees", "major", "TEXT");
+        ensureColumn("employees", "graduation_date", "TEXT");
+        ensureColumn("employees", "graduation_year", "INTEGER");
+        ensureColumn("employees", "graduate_status", "TEXT");
+        ensureColumn("employees", "skill_tags", "TEXT");
+        ensureColumn("employees", "resume_summary", "TEXT");
+        ensureColumn("employees", "material_status", "TEXT");
+        ensureColumn("employees", "profile_verified_at", "TEXT");
+        ensureColumn("employees", "profile_verified_by", "INTEGER");
         ensureColumn("employees", "social_insurance_base", "TEXT NOT NULL DEFAULT '0'");
         ensureColumn("employees", "social_insurance_personal_rate", "TEXT NOT NULL DEFAULT '0'");
         ensureColumn("employees", "social_insurance_company_rate", "TEXT NOT NULL DEFAULT '0'");
@@ -210,8 +290,42 @@ public class EnterpriseStore {
         ensureColumn("employees", "work_injury_company_rate", "TEXT NOT NULL DEFAULT '0.2'");
         ensureColumn("employees", "social_insurance_policy_note", "TEXT");
         jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS employee_certificates (
+                id BIGSERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                category TEXT,
+                level TEXT,
+                issuer TEXT,
+                certificate_no TEXT,
+                issue_date TEXT,
+                expiry_date TEXT,
+                verification_status TEXT NOT NULL DEFAULT 'unverified',
+                material_status TEXT NOT NULL DEFAULT 'missing',
+                note TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS employee_experiences (
+                id BIGSERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                type TEXT NOT NULL DEFAULT 'work',
+                organization TEXT NOT NULL,
+                title TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                description TEXT,
+                achievements TEXT,
+                skills TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
             CREATE TABLE IF NOT EXISTS employment_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 employee_id INTEGER NOT NULL,
                 type TEXT NOT NULL,
@@ -223,7 +337,7 @@ public class EnterpriseStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS tax_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 period TEXT NOT NULL,
@@ -262,7 +376,7 @@ public class EnterpriseStore {
         ensureColumn("tax_items", "source_type", "TEXT NOT NULL DEFAULT 'manual'");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS entity_transfers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 from_entity_id INTEGER NOT NULL,
                 to_entity_id INTEGER NOT NULL,
                 transfer_type TEXT NOT NULL,
@@ -278,7 +392,7 @@ public class EnterpriseStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS receipt_vouchers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 transaction_id INTEGER,
                 voucher_no TEXT NOT NULL,
@@ -339,7 +453,7 @@ public class EnterpriseStore {
         ensureColumn("receipt_vouchers", "file_url", "TEXT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
                 entity_type TEXT NOT NULL,
                 entity_id INTEGER NOT NULL,
@@ -347,6 +461,53 @@ public class EnterpriseStore {
                 summary TEXT NOT NULL,
                 actor_user_id INTEGER NOT NULL,
                 actor_name TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_runs (
+                id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                period TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                employee_count INTEGER NOT NULL,
+                salary_total TEXT NOT NULL,
+                social_personal_total TEXT NOT NULL,
+                social_company_total TEXT NOT NULL,
+                housing_personal_total TEXT NOT NULL,
+                housing_company_total TEXT NOT NULL,
+                tax_total TEXT NOT NULL,
+                personal_deduction_total TEXT NOT NULL,
+                net_pay_total TEXT NOT NULL,
+                company_cost_total TEXT NOT NULL,
+                created_by_user_id INTEGER NOT NULL,
+                closed_by_user_id INTEGER,
+                closed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_run_items (
+                id BIGSERIAL PRIMARY KEY,
+                run_id INTEGER NOT NULL,
+                company_id INTEGER NOT NULL,
+                employee_id INTEGER NOT NULL,
+                employee_name TEXT NOT NULL,
+                department_name TEXT,
+                period TEXT NOT NULL,
+                salary TEXT NOT NULL,
+                payable_salary TEXT NOT NULL,
+                social_personal_amount TEXT NOT NULL,
+                social_company_amount TEXT NOT NULL,
+                housing_personal_amount TEXT NOT NULL,
+                housing_company_amount TEXT NOT NULL,
+                tax_amount TEXT NOT NULL,
+                personal_deduction TEXT NOT NULL,
+                net_pay TEXT NOT NULL,
+                company_cost TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             """);
@@ -360,6 +521,10 @@ public class EnterpriseStore {
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_company_status ON employees(company_id, status)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_user ON employees(user_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employees_graduation_year ON employees(company_id, graduation_year)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employee_certificates_employee ON employee_certificates(employee_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employee_certificates_expiry ON employee_certificates(employee_id, expiry_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employee_experiences_employee ON employee_experiences(employee_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_employment_events_company_date ON employment_events(company_id, effective_date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_due_status ON tax_items(company_id, due_date, status)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_type_period ON tax_items(company_id, tax_type, period)");
@@ -374,6 +539,12 @@ public class EnterpriseStore {
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_accounting ON receipt_vouchers(company_id, accounting_status)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_file_object ON receipt_vouchers(file_storage_provider, file_object_key)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(company_id, entity_type, entity_id, id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at, id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at)");
+        jdbc.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_payroll_runs_company_period ON payroll_runs(company_id, period)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_payroll_runs_company_status ON payroll_runs(company_id, status, period)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_payroll_run_items_run ON payroll_run_items(run_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_payroll_run_items_employee_period ON payroll_run_items(employee_id, period)");
     }
 
     private void loadAll() {
@@ -397,18 +568,79 @@ public class EnterpriseStore {
     }
 
     private void ensureColumn(String tableName, String columnName, String definition) {
-        Boolean exists = jdbc.query("PRAGMA table_info(" + tableName + ")", rs -> {
-            while (rs.next()) {
-                if (columnName.equals(rs.getString("name"))) {
-                    return true;
-                }
-            }
-            return false;
-        });
-        if (Boolean.TRUE.equals(exists)) {
+        if (!schemaCompatibilityEnabled) {
+            return;
+        }
+        boolean exists = !jdbc.queryForList("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = ?
+              AND column_name = ?
+            """, tableName, columnName).isEmpty();
+        if (exists) {
             return;
         }
         jdbc.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
+    }
+
+    private void ensureInitialEnterpriseData() {
+        if (!companies.isEmpty()) {
+            return;
+        }
+        if (isBootstrapMode()) {
+            ensureBootstrapEnterpriseData();
+            return;
+        }
+        ensureSeedData();
+    }
+
+    private void ensureBootstrapEnterpriseData() {
+        User owner = coreStore.users.values().stream()
+            .filter(user -> user.role == 1)
+            .min(Comparator.comparing(user -> user.id))
+            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
+            .orElse(null);
+        if (owner == null) {
+            return;
+        }
+        Company company = company(
+            owner.id,
+            bootstrapCompanyName,
+            bootstrapCompanyCreditCode,
+            bootstrapCompanyIndustry,
+            bootstrapCompanyTaxpayerType,
+            bootstrapCompanyCurrency
+        );
+        company.country = "中国";
+        company.operatingRegion = regionLabel(company);
+        company.policyProfileKey = defaultPolicyProfileKey(company);
+        saveCompany(company);
+
+        Department management = department(company.id, "管理层", "MGMT", "0");
+        Employee founder = employee(
+            company.id,
+            owner.id,
+            management.id,
+            owner.nickname,
+            owner.email,
+            null,
+            "系统管理员",
+            "full_time",
+            "active",
+            "founder",
+            "company",
+            LocalDate.now().toString(),
+            null,
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            null
+        );
+        event(company.id, founder.id, "onboard", founder.hireDate, "生产环境初始化管理员员工档案", owner.id);
+        auditLog(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id, owner.nickname);
     }
 
     private void ensureSeedData() {
@@ -463,10 +695,10 @@ public class EnterpriseStore {
             .filter(employee -> employee.companyId == company.id && "departed".equals(employee.status))
             .forEach(employee -> event(company.id, employee.id, "offboard", employee.leaveDate, "演示员工离职交接完成", owner.id));
 
-        taxItem(company.id, "2026-06 增值税预估", "2026-06", "vat", "17800", "534", "0", "2026-07-15", "estimated", "按本月收入简化估算");
+        taxItem(company.id, "2026-Q2 增值税申报", "2026-Q2", "vat", "17800", "0", "0", "2026-07-15", "estimated", "深圳小规模创业团队季度零税款申报口径");
         taxItem(company.id, "2026-Q2 企业所得税预缴", "2026-Q2", "corporate_income_tax", "45200", "2260", "0", "2026-07-15", "pending", "按季度利润估算");
         taxItem(company.id, "2026-06 个税代扣代缴", "2026-06", "personal_income_tax", "74000", "6800", "1200", "2026-07-15", "pending", "按当前员工薪资样例估算");
-        taxItem(company.id, "2026-06 附加税", "2026-06", "surcharge", "534", "64.08", "0", "2026-07-15", "estimated", "增值税附加简化估算");
+        taxItem(company.id, "2026-Q2 附加税费确认", "2026-Q2", "surcharge", "0", "0", "0", "2026-07-15", "estimated", "增值税为零时附加税费同步为零");
     }
 
     private void ensureHouseholdSubject() {
@@ -622,13 +854,12 @@ public class EnterpriseStore {
                 company.operatingRegion = regionLabel(company);
                 updated = true;
             }
-            if (company.city != null && company.city.contains("深圳") && "CN-DEFAULT-DEMO-POLICY".equals(company.policyProfileKey)) {
-                company.policyProfileKey = "CN-GD-SZ-DEMO-POLICY";
+            if (company.city != null && company.city.contains("深圳")
+                && (DEFAULT_POLICY_PROFILE.equals(company.policyProfileKey) || LEGACY_SHENZHEN_POLICY_PROFILE.equals(company.policyProfileKey))) {
+                company.policyProfileKey = SHENZHEN_STARTUP_POLICY_PROFILE;
                 updated = true;
             } else if (isBlank(company.policyProfileKey)) {
-                company.policyProfileKey = company.city != null && company.city.contains("深圳")
-                    ? "CN-GD-SZ-DEMO-POLICY"
-                    : "CN-DEFAULT-DEMO-POLICY";
+                company.policyProfileKey = defaultPolicyProfileKey(company);
                 updated = true;
             }
             if (company.fiscalYearStartMonth < 1 || company.fiscalYearStartMonth > 12) {
@@ -686,6 +917,7 @@ public class EnterpriseStore {
     private void ensureTaxItemDefaults() {
         taxItems.values().forEach(item -> {
             boolean updated = hydrateTaxItemDefaults(item);
+            updated = applyShenzhenStartupTaxDefaults(item) || updated;
             String riskLevel = riskLevelFor(item);
             if (!riskLevel.equals(item.riskLevel)) {
                 item.riskLevel = riskLevel;
@@ -779,14 +1011,127 @@ public class EnterpriseStore {
             item.riskLevel = riskLevelFor(item);
             updated = true;
         }
-        if (isBlank(item.policyBasis)) {
-            item.policyBasis = Optional.ofNullable(companies.get(item.companyId))
-                .map(company -> company.policyProfileKey)
-                .orElse("CN-DEFAULT-DEMO-POLICY");
+        String expectedPolicyBasis = Optional.ofNullable(companies.get(item.companyId))
+            .map(this::defaultPolicyProfileKey)
+            .orElse(DEFAULT_POLICY_PROFILE);
+        if (isBlank(item.policyBasis)
+            || (SHENZHEN_STARTUP_POLICY_PROFILE.equals(expectedPolicyBasis)
+                && (DEFAULT_POLICY_PROFILE.equals(item.policyBasis) || LEGACY_SHENZHEN_POLICY_PROFILE.equals(item.policyBasis)))) {
+            item.policyBasis = expectedPolicyBasis;
             updated = true;
         }
         if (isBlank(item.sourceType)) {
             item.sourceType = "manual";
+            updated = true;
+        }
+        return updated;
+    }
+
+    private boolean applyShenzhenStartupTaxDefaults(TaxItem item) {
+        Company company = companies.get(item.companyId);
+        if (company == null
+            || company.city == null
+            || !company.city.contains("深圳")
+            || company.taxpayerType == null
+            || !company.taxpayerType.contains("小规模")
+            || !"demo_estimate".equals(item.sourceType)) {
+            return false;
+        }
+        boolean updated = false;
+        if (!sameText(item.responsiblePerson, "代理记账/财务负责人")) {
+            item.responsiblePerson = "代理记账/财务负责人";
+            updated = true;
+        }
+        if ("vat".equals(item.taxType)) {
+            updated = setStartupTaxValues(
+                item,
+                "2026-Q2 增值税申报",
+                "2026-Q2",
+                new BigDecimal("17800"),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                "2026-07-15",
+                "estimated",
+                "深圳小规模创业团队季度零税款申报口径"
+            ) || updated;
+        } else if ("surcharge".equals(item.taxType)) {
+            updated = setStartupTaxValues(
+                item,
+                "2026-Q2 附加税费确认",
+                "2026-Q2",
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                "2026-07-15",
+                "estimated",
+                "增值税为零时附加税费同步为零"
+            ) || updated;
+        }
+        return updated;
+    }
+
+    private boolean setStartupTaxValues(
+        TaxItem item,
+        String name,
+        String period,
+        BigDecimal taxableAmount,
+        BigDecimal taxAmount,
+        BigDecimal paidAmount,
+        String dueDate,
+        String status,
+        String note
+    ) {
+        boolean updated = false;
+        if (!sameText(item.name, name)) {
+            item.name = name;
+            updated = true;
+        }
+        if (!sameText(item.period, period)) {
+            item.period = period;
+            updated = true;
+        }
+        if (!sameMoney(item.taxableAmount, taxableAmount)) {
+            item.taxableAmount = taxableAmount;
+            updated = true;
+        }
+        if (!sameMoney(item.taxAmount, taxAmount)) {
+            item.taxAmount = taxAmount;
+            updated = true;
+        }
+        if (!sameMoney(item.paidAmount, paidAmount)) {
+            item.paidAmount = paidAmount;
+            updated = true;
+        }
+        BigDecimal taxRate = inferredTaxRate(item);
+        if (!sameMoney(item.taxRate, taxRate)) {
+            item.taxRate = taxRate;
+            updated = true;
+        }
+        if (!sameText(item.dueDate, dueDate)) {
+            item.dueDate = dueDate;
+            updated = true;
+        }
+        if (!sameText(item.status, status)) {
+            item.status = status;
+            updated = true;
+        }
+        String filingStatus = filingStatusFor(item.status);
+        if (!sameText(item.filingStatus, filingStatus)) {
+            item.filingStatus = filingStatus;
+            updated = true;
+        }
+        String paymentStatus = paymentStatusFor(item);
+        if (!sameText(item.paymentStatus, paymentStatus)) {
+            item.paymentStatus = paymentStatus;
+            updated = true;
+        }
+        String frequency = frequencyFor(item.period);
+        if (!sameText(item.frequency, frequency)) {
+            item.frequency = frequency;
+            updated = true;
+        }
+        if (!sameText(item.note, note)) {
+            item.note = note;
             updated = true;
         }
         return updated;
@@ -869,6 +1214,7 @@ public class EnterpriseStore {
             .filter(employee -> employee.companyId == companyId)
             .sorted(Comparator.comparing((Employee employee) -> employee.status.equals("departed")).thenComparing(employee -> employee.id))
             .peek(this::attachDepartmentName)
+            .peek(this::attachEmployeeProfileDetails)
             .toList();
     }
 
@@ -919,6 +1265,13 @@ public class EnterpriseStore {
             .toList();
     }
 
+    public List<AuditLog> sortedAuditLogs() {
+        return auditLogs.values().stream()
+            .sorted(Comparator.comparing((AuditLog log) -> log.createdAt).reversed()
+                .thenComparing(Comparator.comparingLong((AuditLog log) -> log.id).reversed()))
+            .toList();
+    }
+
     public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
         return company(ownerId, name, "company", creditCode, industry, taxpayerType, currency);
     }
@@ -939,7 +1292,7 @@ public class EnterpriseStore {
         company.registeredAddress = null;
         company.operatingRegion = regionLabel(company);
         company.taxAuthority = null;
-        company.policyProfileKey = company.city.contains("深圳") ? "CN-GD-SZ-DEMO-POLICY" : "CN-DEFAULT-DEMO-POLICY";
+        company.policyProfileKey = defaultPolicyProfileKey(company);
         company.fiscalYearStartMonth = 1;
         stamp(company);
         company.id = insert("""
@@ -1096,8 +1449,13 @@ public class EnterpriseStore {
         hydrateEmployeePayroll(employee);
         employees.put(employee.id, employee);
         jdbc.update("""
-            UPDATE employees SET company_id = ?, user_id = ?, department_id = ?, name = ?, email = ?, phone = ?,
-                position = ?, employment_type = ?, status = ?, access_role = ?, access_scope = ?, hire_date = ?, leave_date = ?, salary = ?,
+            UPDATE employees SET company_id = ?, user_id = ?, department_id = ?, employee_no = ?, name = ?, legal_name = ?,
+                preferred_name = ?, email = ?, phone = ?, position = ?, direct_manager_employee_id = ?, job_level = ?,
+                work_location = ?, employment_type = ?, status = ?, access_role = ?, access_scope = ?, hire_date = ?, leave_date = ?,
+                probation_start_date = ?, probation_end_date = ?, contract_start_date = ?, contract_end_date = ?, contract_type = ?,
+                contract_status = ?, education_level = ?, graduation_school = ?, major = ?, graduation_date = ?, graduation_year = ?,
+                graduate_status = ?, skill_tags = ?, resume_summary = ?, material_status = ?, profile_verified_at = ?, profile_verified_by = ?,
+                salary = ?,
                 social_insurance = ?, housing_fund = ?, tax_estimate = ?, social_insurance_base = ?, social_insurance_personal_rate = ?,
                 social_insurance_company_rate = ?, social_insurance_personal_amount = ?, social_insurance_company_amount = ?,
                 housing_fund_base = ?, housing_fund_personal_rate = ?, housing_fund_company_rate = ?, housing_fund_personal_amount = ?,
@@ -1106,8 +1464,12 @@ public class EnterpriseStore {
                 maternity_base = ?, work_injury_company_rate = ?, social_insurance_policy_note = ?, monthly_cost = ?, emergency_contact = ?,
                 updated_at = ?
             WHERE id = ?
-            """, employee.companyId, employee.userId, employee.departmentId, employee.name, employee.email, employee.phone,
-            employee.position, employee.employmentType, employee.status, employee.accessRole, employee.accessScope, employee.hireDate, employee.leaveDate,
+            """, employee.companyId, employee.userId, employee.departmentId, employee.employeeNo, employee.name, employee.legalName,
+            employee.preferredName, employee.email, employee.phone, employee.position, employee.directManagerEmployeeId, employee.jobLevel,
+            employee.workLocation, employee.employmentType, employee.status, employee.accessRole, employee.accessScope, employee.hireDate, employee.leaveDate,
+            employee.probationStartDate, employee.probationEndDate, employee.contractStartDate, employee.contractEndDate, employee.contractType,
+            employee.contractStatus, employee.educationLevel, employee.graduationSchool, employee.major, employee.graduationDate, employee.graduationYear,
+            employee.graduateStatus, employee.skillTags, employee.resumeSummary, employee.materialStatus, employee.profileVerifiedAt, employee.profileVerifiedBy,
             moneyText(employee.salary), moneyText(employee.socialInsurance), moneyText(employee.housingFund),
             moneyText(employee.taxEstimate), moneyText(employee.socialInsuranceBase), moneyText(employee.socialInsurancePersonalRate),
             moneyText(employee.socialInsuranceCompanyRate), moneyText(employee.socialInsurancePersonalAmount),
@@ -1120,6 +1482,56 @@ public class EnterpriseStore {
             moneyText(employee.workInjuryCompanyRate), employee.socialInsurancePolicyNote, moneyText(employee.monthlyCost), employee.emergencyContact,
             employee.updatedAt, employee.id);
         attachDepartmentNames();
+    }
+
+    public void replaceEmployeeCertificates(long employeeId, List<EmployeeCertificate> certificates) {
+        jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", employeeId);
+        List<EmployeeCertificate> saved = new ArrayList<>();
+        for (EmployeeCertificate certificate : certificates) {
+            if (certificate == null || isBlank(certificate.name)) {
+                continue;
+            }
+            certificate.employeeId = employeeId;
+            certificate.verificationStatus = blankToDefault(certificate.verificationStatus, "unverified");
+            certificate.materialStatus = blankToDefault(certificate.materialStatus, "missing");
+            stamp(certificate);
+            certificate.id = insert("""
+                INSERT INTO employee_certificates (
+                    employee_id, name, category, level, issuer, certificate_no, issue_date, expiry_date,
+                    verification_status, material_status, note, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, ps -> bindEmployeeCertificate(ps, certificate));
+            saved.add(certificate);
+        }
+        Employee employee = employees.get(employeeId);
+        if (employee != null) {
+            employee.certificates = saved;
+        }
+    }
+
+    public void replaceEmployeeExperiences(long employeeId, List<EmployeeExperience> experiences) {
+        jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", employeeId);
+        List<EmployeeExperience> saved = new ArrayList<>();
+        for (EmployeeExperience experience : experiences) {
+            if (experience == null || (isBlank(experience.organization) && isBlank(experience.title) && isBlank(experience.description))) {
+                continue;
+            }
+            experience.employeeId = employeeId;
+            experience.type = blankToDefault(experience.type, "work");
+            experience.organization = blankToDefault(experience.organization, "未填写");
+            stamp(experience);
+            experience.id = insert("""
+                INSERT INTO employee_experiences (
+                    employee_id, type, organization, title, start_date, end_date, description, achievements,
+                    skills, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, ps -> bindEmployeeExperience(ps, experience));
+            saved.add(experience);
+        }
+        Employee employee = employees.get(employeeId);
+        if (employee != null) {
+            employee.experiences = saved;
+        }
     }
 
     public EmploymentEvent event(long companyId, long employeeId, String type, String effectiveDate, String note, long operatorUserId) {
@@ -1407,6 +1819,27 @@ public class EnterpriseStore {
             .orElse(null);
     }
 
+    private void attachEmployeeProfileDetails(Employee employee) {
+        employee.certificates = employeeCertificates(employee.id);
+        employee.experiences = employeeExperiences(employee.id);
+    }
+
+    private List<EmployeeCertificate> employeeCertificates(long employeeId) {
+        return jdbc.query("""
+            SELECT * FROM employee_certificates
+            WHERE employee_id = ?
+            ORDER BY COALESCE(expiry_date, '9999-12-31'), id
+            """, (rs, rowNum) -> mapEmployeeCertificate(rs), employeeId);
+    }
+
+    private List<EmployeeExperience> employeeExperiences(long employeeId) {
+        return jdbc.query("""
+            SELECT * FROM employee_experiences
+            WHERE employee_id = ?
+            ORDER BY COALESCE(start_date, '0000-01-01') DESC, id DESC
+            """, (rs, rowNum) -> mapEmployeeExperience(rs), employeeId);
+    }
+
     private void attachEntityTransferNames(EntityTransfer transfer) {
         transfer.fromEntityName = Optional.ofNullable(companies.get(transfer.fromEntityId)).map(company -> company.name).orElse(null);
         transfer.toEntityName = Optional.ofNullable(companies.get(transfer.toEntityId)).map(company -> company.name).orElse(null);
@@ -1443,8 +1876,26 @@ public class EnterpriseStore {
             .orElse("中国");
     }
 
+    private String defaultPolicyProfileKey(Company company) {
+        return company != null && company.city != null && company.city.contains("深圳")
+            ? SHENZHEN_STARTUP_POLICY_PROFILE
+            : DEFAULT_POLICY_PROFILE;
+    }
+
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String defaultIfBlank(String value, String fallback) {
+        return isBlank(value) ? fallback : value;
+    }
+
+    private String blankToNull(String value) {
+        return isBlank(value) ? null : value;
+    }
+
+    private boolean isBootstrapMode() {
+        return "bootstrap".equals(bootstrapMode);
     }
 
     private BigDecimal inferredTaxRate(TaxItem item) {
@@ -1643,16 +2094,40 @@ public class EnterpriseStore {
         employee.companyId = rs.getLong("company_id");
         employee.userId = nullableLong(rs, "user_id");
         employee.departmentId = nullableLong(rs, "department_id");
+        employee.employeeNo = rs.getString("employee_no");
         employee.name = rs.getString("name");
+        employee.legalName = rs.getString("legal_name");
+        employee.preferredName = rs.getString("preferred_name");
         employee.email = rs.getString("email");
         employee.phone = rs.getString("phone");
         employee.position = rs.getString("position");
+        employee.directManagerEmployeeId = nullableLong(rs, "direct_manager_employee_id");
+        employee.jobLevel = rs.getString("job_level");
+        employee.workLocation = rs.getString("work_location");
         employee.employmentType = rs.getString("employment_type");
         employee.status = rs.getString("status");
         employee.accessRole = rs.getString("access_role");
         employee.accessScope = rs.getString("access_scope");
         employee.hireDate = rs.getString("hire_date");
         employee.leaveDate = rs.getString("leave_date");
+        employee.probationStartDate = rs.getString("probation_start_date");
+        employee.probationEndDate = rs.getString("probation_end_date");
+        employee.contractStartDate = rs.getString("contract_start_date");
+        employee.contractEndDate = rs.getString("contract_end_date");
+        employee.contractType = rs.getString("contract_type");
+        employee.contractStatus = rs.getString("contract_status");
+        employee.educationLevel = rs.getString("education_level");
+        employee.graduationSchool = rs.getString("graduation_school");
+        employee.major = rs.getString("major");
+        employee.graduationDate = rs.getString("graduation_date");
+        int graduationYear = rs.getInt("graduation_year");
+        employee.graduationYear = rs.wasNull() ? null : graduationYear;
+        employee.graduateStatus = rs.getString("graduate_status");
+        employee.skillTags = rs.getString("skill_tags");
+        employee.resumeSummary = rs.getString("resume_summary");
+        employee.materialStatus = rs.getString("material_status");
+        employee.profileVerifiedAt = rs.getString("profile_verified_at");
+        employee.profileVerifiedBy = nullableLong(rs, "profile_verified_by");
         employee.salary = money(rs.getString("salary"));
         employee.socialInsurance = money(rs.getString("social_insurance"));
         employee.housingFund = money(rs.getString("housing_fund"));
@@ -1685,6 +2160,42 @@ public class EnterpriseStore {
         employee.updatedAt = rs.getString("updated_at");
         hydrateEmployeePayroll(employee);
         return employee;
+    }
+
+    private EmployeeCertificate mapEmployeeCertificate(ResultSet rs) throws SQLException {
+        EmployeeCertificate certificate = new EmployeeCertificate();
+        certificate.id = rs.getLong("id");
+        certificate.employeeId = rs.getLong("employee_id");
+        certificate.name = rs.getString("name");
+        certificate.category = rs.getString("category");
+        certificate.level = rs.getString("level");
+        certificate.issuer = rs.getString("issuer");
+        certificate.certificateNo = rs.getString("certificate_no");
+        certificate.issueDate = rs.getString("issue_date");
+        certificate.expiryDate = rs.getString("expiry_date");
+        certificate.verificationStatus = rs.getString("verification_status");
+        certificate.materialStatus = rs.getString("material_status");
+        certificate.note = rs.getString("note");
+        certificate.createdAt = rs.getString("created_at");
+        certificate.updatedAt = rs.getString("updated_at");
+        return certificate;
+    }
+
+    private EmployeeExperience mapEmployeeExperience(ResultSet rs) throws SQLException {
+        EmployeeExperience experience = new EmployeeExperience();
+        experience.id = rs.getLong("id");
+        experience.employeeId = rs.getLong("employee_id");
+        experience.type = rs.getString("type");
+        experience.organization = rs.getString("organization");
+        experience.title = rs.getString("title");
+        experience.startDate = rs.getString("start_date");
+        experience.endDate = rs.getString("end_date");
+        experience.description = rs.getString("description");
+        experience.achievements = rs.getString("achievements");
+        experience.skills = rs.getString("skills");
+        experience.createdAt = rs.getString("created_at");
+        experience.updatedAt = rs.getString("updated_at");
+        return experience;
     }
 
     private EmploymentEvent mapEmploymentEvent(ResultSet rs) throws SQLException {
@@ -1864,6 +2375,36 @@ public class EnterpriseStore {
         ps.setString(43, employee.updatedAt);
     }
 
+    private void bindEmployeeCertificate(PreparedStatement ps, EmployeeCertificate certificate) throws SQLException {
+        ps.setLong(1, certificate.employeeId);
+        ps.setString(2, certificate.name);
+        ps.setString(3, certificate.category);
+        ps.setString(4, certificate.level);
+        ps.setString(5, certificate.issuer);
+        ps.setString(6, certificate.certificateNo);
+        ps.setString(7, certificate.issueDate);
+        ps.setString(8, certificate.expiryDate);
+        ps.setString(9, certificate.verificationStatus);
+        ps.setString(10, certificate.materialStatus);
+        ps.setString(11, certificate.note);
+        ps.setString(12, certificate.createdAt);
+        ps.setString(13, certificate.updatedAt);
+    }
+
+    private void bindEmployeeExperience(PreparedStatement ps, EmployeeExperience experience) throws SQLException {
+        ps.setLong(1, experience.employeeId);
+        ps.setString(2, experience.type);
+        ps.setString(3, experience.organization);
+        ps.setString(4, experience.title);
+        ps.setString(5, experience.startDate);
+        ps.setString(6, experience.endDate);
+        ps.setString(7, experience.description);
+        ps.setString(8, experience.achievements);
+        ps.setString(9, experience.skills);
+        ps.setString(10, experience.createdAt);
+        ps.setString(11, experience.updatedAt);
+    }
+
     private void bindTaxItem(PreparedStatement ps, TaxItem item) throws SQLException {
         ps.setLong(1, item.companyId);
         ps.setString(2, item.name);
@@ -1948,13 +2489,13 @@ public class EnterpriseStore {
     private long insert(String sql, SqlBinder binder) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps = connection.prepareStatement(sql, new String[] { "id" });
             binder.bind(ps);
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
         if (key == null) {
-            throw new IllegalStateException("SQLite did not return a generated key");
+            throw new IllegalStateException("Database did not return a generated key");
         }
         return key.longValue();
     }

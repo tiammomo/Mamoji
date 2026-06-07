@@ -2,9 +2,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Grid, Input, InputNumber, Message, Modal, Select, Tag } from "@arco-design/web-react";
 import {
+  IconCheckCircle,
   IconDownload,
   IconEdit,
   IconIdcard,
+  IconPlus,
   IconSearch,
 } from "@arco-design/web-react/icon";
 import PageHeader from "@/components/common/PageHeader";
@@ -13,7 +15,7 @@ import AppPagination from "@/components/common/AppPagination";
 import { enterpriseApi } from "@/lib/api/enterprise";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
-import type { Department, Employee, EnterpriseSummary, SocialInsuranceItem } from "@/lib/types";
+import type { Department, Employee, EnterpriseSummary, PayrollRun, SocialInsuranceItem } from "@/lib/types";
 
 const { Row, Col } = Grid;
 
@@ -25,12 +27,12 @@ const statusLabels: Record<string, { label: string; color: string }> = {
 };
 
 const tableColumns = [
-  { label: "员工", width: "15%", align: "text-left" },
-  { label: "个人银行卡到账", width: "16%", align: "text-left" },
-  { label: "公司总成本", width: "16%", align: "text-left" },
-  { label: "考勤/个税", width: "17%", align: "text-left" },
-  { label: "五险明细", width: "24%", align: "text-left" },
-  { label: "公积金", width: "12%", align: "text-left" },
+  { label: "员工档案", description: "部门、岗位、状态", width: "230px", accent: "var(--color-info)" },
+  { label: "个人到账", description: "银行卡实发金额", width: "260px", accent: "var(--color-success)" },
+  { label: "公司成本", description: "工资加公司缴费", width: "260px", accent: "var(--color-danger)" },
+  { label: "考勤与个税", description: "计薪天数、预扣税", width: "240px", accent: "var(--color-warning)" },
+  { label: "五险明细", description: "基数、个人、公司", width: "380px", accent: "var(--color-primary)" },
+  { label: "公积金", description: "基数与双边比例", width: "190px", accent: "var(--text-color-3)" },
 ] as const;
 
 const SHENZHEN_POLICY = {
@@ -54,6 +56,11 @@ const policyRows = [
 const PAYROLL_STANDARD_DAYS = 21.75;
 const STANDARD_MONTHLY_DEDUCTION = 5000;
 const CURRENT_PAYROLL_MONTH = new Date().getMonth() + 1;
+const currentPayrollPeriod = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+};
+const CURRENT_PAYROLL_PERIOD = currentPayrollPeriod();
 
 const cumulativeTaxBrackets = [
   { limit: 36000, rate: 3, quickDeduction: 0 },
@@ -566,10 +573,12 @@ export default function CompensationPage() {
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("active");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [payrollBusy, setPayrollBusy] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [compensationForm, setCompensationForm] = useState<CompensationFormValues>(zeroForm);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
@@ -578,17 +587,19 @@ export default function CompensationPage() {
   const fetchData = useCallback(async (nextKeyword = keyword, nextStatus = status) => {
     try {
       setLoading(true);
-      const [summaryRes, departmentsRes, employeesRes] = await Promise.all([
+      const [summaryRes, departmentsRes, employeesRes, payrollRunsRes] = await Promise.all([
         enterpriseApi.summary(),
         enterpriseApi.departments(),
         enterpriseApi.employees({
           keyword: nextKeyword || undefined,
           status: nextStatus === "all" ? undefined : nextStatus,
         }),
+        enterpriseApi.payrollRuns({ period: CURRENT_PAYROLL_PERIOD }),
       ]);
       setSummary(summaryRes.data);
       setDepartments(departmentsRes.data);
       setEmployees(employeesRes.data);
+      setPayrollRuns(payrollRunsRes.data);
     } catch {
       Message.error("薪酬数据加载失败");
     } finally {
@@ -602,15 +613,17 @@ export default function CompensationPage() {
     const loadInitialData = async () => {
       try {
         setLoading(true);
-        const [summaryRes, departmentsRes, employeesRes] = await Promise.all([
+        const [summaryRes, departmentsRes, employeesRes, payrollRunsRes] = await Promise.all([
           enterpriseApi.summary(),
           enterpriseApi.departments(),
           enterpriseApi.employees({ status: "active" }),
+          enterpriseApi.payrollRuns({ period: CURRENT_PAYROLL_PERIOD }),
         ]);
         if (cancelled) return;
         setSummary(summaryRes.data);
         setDepartments(departmentsRes.data);
         setEmployees(employeesRes.data);
+        setPayrollRuns(payrollRunsRes.data);
       } catch {
         Message.error("薪酬数据加载失败");
       } finally {
@@ -674,6 +687,7 @@ export default function CompensationPage() {
 
   const maxDepartmentCost = Math.max(...departmentCostRows.map((row) => row.monthlyCost), 1);
   const projectedPayroll = useMemo(() => payrollFromForm(compensationForm), [compensationForm]);
+  const currentPayrollRun = payrollRuns[0] || null;
 
   const handleSearch = () => {
     employeesPagination.resetPage();
@@ -724,6 +738,34 @@ export default function CompensationPage() {
       Message.error("薪酬档案保存失败");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCreatePayrollRun = async () => {
+    try {
+      setPayrollBusy(true);
+      const res = await enterpriseApi.createPayrollRun({ period: CURRENT_PAYROLL_PERIOD });
+      setPayrollRuns([res.data]);
+      Message.success("薪酬月结批次已生成");
+      await fetchData(keyword, status);
+    } catch {
+      Message.error("薪酬月结批次生成失败，可能当前月份已有批次");
+    } finally {
+      setPayrollBusy(false);
+    }
+  };
+
+  const handleClosePayrollRun = async () => {
+    if (!currentPayrollRun) return;
+    try {
+      setPayrollBusy(true);
+      const res = await enterpriseApi.closePayrollRun(currentPayrollRun.id);
+      setPayrollRuns([res.data]);
+      Message.success("薪酬月结批次已锁定");
+    } catch {
+      Message.error("薪酬月结批次锁定失败");
+    } finally {
+      setPayrollBusy(false);
     }
   };
 
@@ -780,6 +822,59 @@ export default function CompensationPage() {
         </Col>
       </Row>
 
+      <Card className="mb-6" style={{ borderRadius: 12 }}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-medium">薪酬月结批次</div>
+              <Tag color={currentPayrollRun?.status === "closed" ? "green" : currentPayrollRun ? "arcoblue" : "gray"}>
+                {currentPayrollRun?.status === "closed" ? "已锁定" : currentPayrollRun ? "待复核" : "未生成"}
+              </Tag>
+            </div>
+            <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+              {CURRENT_PAYROLL_PERIOD} · 生成后保存当前员工薪酬快照，锁定后作为当月发薪与审计依据
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              icon={<IconPlus />}
+              disabled={Boolean(currentPayrollRun)}
+              loading={payrollBusy && !currentPayrollRun}
+              onClick={handleCreatePayrollRun}
+            >
+              生成批次
+            </Button>
+            <Button
+              type="primary"
+              icon={<IconCheckCircle />}
+              disabled={!currentPayrollRun || currentPayrollRun.status === "closed"}
+              loading={payrollBusy && Boolean(currentPayrollRun)}
+              onClick={handleClosePayrollRun}
+            >
+              锁定月结
+            </Button>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+            <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月结人数</div>
+            <div className="mt-1 font-semibold">{currentPayrollRun?.employeeCount ?? employees.length} 人</div>
+          </div>
+          <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+            <div className="text-xs" style={{ color: "var(--text-color-3)" }}>银行实发</div>
+            <AmountDisplay amount={currentPayrollRun?.netPayTotal ?? compensationSummary.netPayEstimate} type={1} size="small" />
+          </div>
+          <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+            <div className="text-xs" style={{ color: "var(--text-color-3)" }}>个税预扣</div>
+            <AmountDisplay amount={currentPayrollRun?.taxTotal ?? compensationSummary.taxEstimate} type={2} size="small" />
+          </div>
+          <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+            <div className="text-xs" style={{ color: "var(--text-color-3)" }}>公司总成本</div>
+            <AmountDisplay amount={currentPayrollRun?.companyCostTotal ?? compensationSummary.monthlyCost} type={2} size="small" />
+          </div>
+        </div>
+      </Card>
+
       <Row gutter={[16, 16]}>
         <Col xs={24}>
           <Card style={{ borderRadius: 12 }}>
@@ -819,18 +914,48 @@ export default function CompensationPage() {
               </div>
             </div>
 
-            <div ref={tableScrollRef} className="overflow-x-auto">
-              <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm">
+            <div
+              ref={tableScrollRef}
+              className="overflow-x-auto rounded-lg border"
+              style={{ borderColor: "var(--border-color)" }}
+            >
+              <table className="w-full min-w-[1560px] table-fixed border-collapse text-sm">
                 <colgroup>
                   {tableColumns.map((column) => (
                     <col key={column.label} style={{ width: column.width }} />
                   ))}
                 </colgroup>
                 <thead>
-                  <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
+                  <tr
+                    style={{
+                      background: "linear-gradient(180deg, var(--color-bg-2) 0%, var(--color-bg-3) 100%)",
+                    }}
+                  >
                     {tableColumns.map((column) => (
-                      <th key={column.label} className={`px-4 py-3 font-medium whitespace-nowrap ${column.align}`} style={{ color: "var(--text-color-2)" }}>
-                        {column.label}
+                      <th
+                        key={column.label}
+                        scope="col"
+                        className="border-b px-4 py-3.5 text-left align-top"
+                        style={{
+                          borderColor: "var(--border-color)",
+                          color: "var(--text-color-2)",
+                        }}
+                      >
+                        <div className="flex min-w-0 items-start gap-2.5">
+                          <span
+                            className="mt-0.5 h-8 w-1.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: column.accent }}
+                            aria-hidden="true"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-semibold leading-5" style={{ color: "var(--text-color-1)" }}>
+                              {column.label}
+                            </div>
+                            <div className="truncate text-xs font-normal leading-5" style={{ color: "var(--text-color-3)" }}>
+                              {column.description}
+                            </div>
+                          </div>
+                        </div>
                       </th>
                     ))}
                   </tr>

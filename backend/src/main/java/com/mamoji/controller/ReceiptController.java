@@ -4,8 +4,13 @@ import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.AuditLog;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.service.ReceiptService;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -58,6 +63,21 @@ public class ReceiptController {
         return service.fileLink(authorization, id);
     }
 
+    @GetMapping("/{id}/file-download")
+    public ResponseEntity<byte[]> fileDownload(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id
+    ) {
+        ReceiptService.FileDownload file = service.fileDownload(authorization, id);
+        return ResponseEntity.ok()
+            .contentType(mediaType(file.contentType()))
+            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                .filename(file.fileName(), StandardCharsets.UTF_8)
+                .build()
+                .toString())
+            .body(file.content());
+    }
+
     @PostMapping
     public ReceiptVoucher create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -82,5 +102,13 @@ public class ReceiptController {
         @RequestParam("file") MultipartFile file
     ) {
         return service.upload(authorization, file, params);
+    }
+
+    private MediaType mediaType(String value) {
+        try {
+            return MediaType.parseMediaType(value);
+        } catch (RuntimeException ignored) {
+            return MediaType.APPLICATION_OCTET_STREAM;
+        }
     }
 }

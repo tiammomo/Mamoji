@@ -7,6 +7,7 @@ import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.service.EnterpriseManagementService;
+import com.mamoji.service.TaxComplianceService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -24,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/enterprise")
 public class EnterpriseController {
     private final EnterpriseManagementService service;
+    private final TaxComplianceService taxComplianceService;
 
-    public EnterpriseController(EnterpriseManagementService service) {
+    public EnterpriseController(EnterpriseManagementService service, TaxComplianceService taxComplianceService) {
         this.service = service;
+        this.taxComplianceService = taxComplianceService;
     }
 
     @GetMapping("/summary")
@@ -136,6 +139,14 @@ public class EnterpriseController {
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
         return service.listTaxItems(authorization, companyId);
+    }
+
+    @GetMapping("/tax-compliance")
+    public Map<String, Object> taxCompliance(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return taxComplianceService.report(authorization, companyId);
     }
 
     @PostMapping("/tax-items")

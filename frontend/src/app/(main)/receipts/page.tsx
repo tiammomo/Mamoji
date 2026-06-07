@@ -351,10 +351,13 @@ export default function ReceiptsPage() {
     }
     try {
       setAttachmentOpeningId(voucher.id);
-      const res = await receiptApi.fileLink(voucher.id);
-      window.open(res.data.url, "_blank", "noopener,noreferrer");
+      const res = await receiptApi.downloadFile(voucher.id);
+      const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: voucher.fileType || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch {
-      Message.error("附件访问链接生成失败");
+      Message.error("附件下载失败");
     } finally {
       setAttachmentOpeningId(null);
     }

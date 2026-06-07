@@ -39,6 +39,8 @@ export const receiptApi = {
     client.get<ReceiptAuditLog[]>(`/receipts/${id}/audit-logs`),
   fileLink: (id: number) =>
     client.get<ReceiptFileLink>(`/receipts/${id}/file-link`),
+  downloadFile: (id: number) =>
+    client.get<Blob>(`/receipts/${id}/file-download`, { responseType: "blob" }),
   upload: (file: File, data: Partial<ReceiptPayload>) => {
     const form = new FormData();
     form.append("file", file);

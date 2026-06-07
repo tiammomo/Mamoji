@@ -11,12 +11,18 @@ spring:
   application:
     name: mamoji-backend
   datasource:
-    url: jdbc:sqlite:${MAMOJI_SQLITE_PATH:data/mamoji.db}
-    driver-class-name: org.sqlite.JDBC
+    url: ${MAMOJI_DATASOURCE_URL:jdbc:postgresql://localhost:5432/mamoji}
+    username: ${MAMOJI_DATASOURCE_USERNAME:mamoji}
+    password: ${MAMOJI_DATASOURCE_PASSWORD:mamoji}
+    driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 1
-      minimum-idle: 1
-      initialization-fail-timeout: -1
+      maximum-pool-size: ${MAMOJI_DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${MAMOJI_DB_POOL_MIN_IDLE:2}
+      initialization-fail-timeout: 30000
+  flyway:
+    enabled: ${MAMOJI_FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    baseline-version: 0
   servlet:
     multipart:
       max-file-size: 10MB
@@ -26,9 +32,21 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 mamoji:
+  bootstrap:
+    mode: ${MAMOJI_BOOTSTRAP_MODE:demo}
+    admin-email: ${MAMOJI_BOOTSTRAP_ADMIN_EMAIL:test@mamoji.com}
+    admin-password: ${MAMOJI_BOOTSTRAP_ADMIN_PASSWORD:123456}
+    admin-nickname: ${MAMOJI_BOOTSTRAP_ADMIN_NICKNAME:Mamoji 公司管理员}
+    company-name: ${MAMOJI_BOOTSTRAP_COMPANY_NAME:我的公司}
+    company-credit-code: ${MAMOJI_BOOTSTRAP_COMPANY_CREDIT_CODE:}
+    company-industry: ${MAMOJI_BOOTSTRAP_COMPANY_INDUSTRY:未设置}
+    company-taxpayer-type: ${MAMOJI_BOOTSTRAP_COMPANY_TAXPAYER_TYPE:未设置}
+    company-currency: ${MAMOJI_BOOTSTRAP_COMPANY_CURRENCY:CNY}
+  registration:
+    mode: ${MAMOJI_REGISTRATION_MODE:open}
   object-storage:
     enabled: ${MAMOJI_OBJECT_STORAGE_ENABLED:false}
     provider: minio

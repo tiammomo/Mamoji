@@ -1,7 +1,9 @@
 package com.mamoji.controller;
 
+import com.mamoji.domain.Models.RegistrationInvite;
 import com.mamoji.domain.Models.User;
 import com.mamoji.service.AuthService;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,6 +30,24 @@ public class AuthController {
     @PostMapping("/register")
     public Map<String, Object> register(@RequestBody Map<String, Object> body) {
         return service.register(body);
+    }
+
+    @GetMapping("/invitations")
+    public List<RegistrationInvite> invitations(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.listInvitations(authorization);
+    }
+
+    @PostMapping("/invitations")
+    public RegistrationInvite createInvitation(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestBody Map<String, Object> body
+    ) {
+        return service.createInvitation(authorization, body);
+    }
+
+    @PostMapping("/logout")
+    public Map<String, Object> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.logout(authorization);
     }
 
     @GetMapping("/me")

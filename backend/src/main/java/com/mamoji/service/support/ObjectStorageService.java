@@ -1,6 +1,7 @@
 package com.mamoji.service.support;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.Http.Method;
 import io.minio.MakeBucketArgs;
@@ -76,12 +77,13 @@ public class ObjectStorageService {
             }
             String targetBucket = isBlank(storedBucket) ? bucket : storedBucket;
             try {
-                return Optional.of(client().getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                String signedUrl = client().getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(targetBucket)
                     .object(objectKey)
                     .expiry(presignedUrlExpirySeconds, TimeUnit.SECONDS)
-                    .build()));
+                    .build());
+                return Optional.of(externalizeObjectUrl(signedUrl));
             } catch (Exception ex) {
                 throw new IllegalStateException("MinIO presigned URL failed", ex);
             }
@@ -90,6 +92,21 @@ public class ObjectStorageService {
             return Optional.of(storedUrl);
         }
         return Optional.empty();
+    }
+
+    public Optional<byte[]> downloadObject(String provider, String storedBucket, String objectKey) {
+        if (!"minio".equals(provider) || isBlank(objectKey) || !enabled) {
+            return Optional.empty();
+        }
+        String targetBucket = isBlank(storedBucket) ? bucket : storedBucket;
+        try (InputStream stream = client().getObject(GetObjectArgs.builder()
+            .bucket(targetBucket)
+            .object(objectKey)
+            .build())) {
+            return Optional.of(stream.readAllBytes());
+        } catch (Exception ex) {
+            throw new IllegalStateException("MinIO download failed", ex);
+        }
     }
 
     public int presignedUrlExpirySeconds() {
@@ -135,6 +152,16 @@ public class ObjectStorageService {
         }
         String base = externalUrl.endsWith("/") ? externalUrl.substring(0, externalUrl.length() - 1) : externalUrl;
         return base + "/" + bucket + "/" + encodePath(objectKey);
+    }
+
+    private String externalizeObjectUrl(String signedUrl) {
+        if (externalUrl.isBlank()) {
+            return signedUrl;
+        }
+        int pathStart = signedUrl.indexOf('/', signedUrl.indexOf("://") + 3);
+        String pathAndQuery = pathStart >= 0 ? signedUrl.substring(pathStart) : "";
+        String base = externalUrl.endsWith("/") ? externalUrl.substring(0, externalUrl.length() - 1) : externalUrl;
+        return base + pathAndQuery;
     }
 
     private boolean isBlank(String value) {

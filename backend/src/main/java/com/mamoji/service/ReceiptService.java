@@ -38,6 +38,8 @@ import static com.mamoji.service.support.DomainSupport.touch;
 @Service
 public class ReceiptService {
     private static final BigDecimal LARGE_AMOUNT = new BigDecimal("10000");
+    private static final String DEFAULT_FILE_NAME = "receipt-attachment";
+    private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
     private static final BigDecimal CRITICAL_AMOUNT = new BigDecimal("50000");
 
     private final AccessControlService accessControl;
@@ -298,6 +300,26 @@ public class ReceiptService {
             return result;
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage link failed");
+        }
+    }
+
+    public FileDownload fileDownload(String authorization, long id) {
+        User user = accessControl.requireUser(authorization);
+        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        if (!accessControl.canAccessCompany(user, voucher.companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
+        }
+        try {
+            byte[] content = objectStorageService
+                .downloadObject(voucher.fileStorageProvider, voucher.fileBucket, voucher.fileObjectKey)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt file is not stored in object storage"));
+            return new FileDownload(
+                content,
+                isBlank(voucher.fileName) ? DEFAULT_FILE_NAME : voucher.fileName,
+                isBlank(voucher.fileType) ? DEFAULT_CONTENT_TYPE : voucher.fileType
+            );
+        } catch (IllegalStateException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage download failed");
         }
     }
 
@@ -616,5 +638,8 @@ public class ReceiptService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    public record FileDownload(byte[] content, String fileName, String contentType) {
     }
 }

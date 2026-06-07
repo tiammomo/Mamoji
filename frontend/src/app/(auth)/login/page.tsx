@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 
 const FormItem = Form.Item;
+const showDemoCredentials = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS !== "false";
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -156,19 +157,20 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          {/* Test account hint */}
-          <div
-            className="mt-8 p-4 rounded-xl text-center text-sm"
-            style={{
-              backgroundColor: "var(--bg-color-card-hover)",
-              color: "var(--text-color-3)",
-            }}
-          >
-            <div className="font-medium mb-1" style={{ color: "var(--text-color-2)" }}>
-              测试账号
+          {showDemoCredentials && (
+            <div
+              className="mt-8 p-4 rounded-xl text-center text-sm"
+              style={{
+                backgroundColor: "var(--bg-color-card-hover)",
+                color: "var(--text-color-3)",
+              }}
+            >
+              <div className="font-medium mb-1" style={{ color: "var(--text-color-2)" }}>
+                测试账号
+              </div>
+              <div>test@mamoji.com / 123456</div>
             </div>
-            <div>test@mamoji.com / 123456</div>
-          </div>
+          )}
         </div>
       </div>
     </div>

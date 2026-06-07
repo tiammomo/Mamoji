@@ -1,6 +1,5 @@
 package com.mamoji.service.support;
 
-import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Employee;
@@ -48,7 +47,7 @@ public class AccessControlService {
         boolean peopleRole = employee
             .map(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("hr_admin"))
             .orElse(false);
-        if (user.role == Roles.ADMIN || peopleRole || (user.permissions & Permissions.USER) != 0) {
+        if (user.role == Roles.ADMIN || peopleRole) {
             return user;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "People management permission required");
@@ -62,10 +61,65 @@ public class AccessControlService {
         boolean financeRole = employee
             .map(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("finance_admin"))
             .orElse(false);
-        if (user.role == Roles.ADMIN || financeRole || (user.permissions & Permissions.ACCOUNT) != 0) {
+        if (user.role == Roles.ADMIN || financeRole) {
             return user;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Finance management permission required");
+    }
+
+    public void requirePeopleManager(User user, long companyId) {
+        if (!hasPeopleManagerRole(user, companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "People management permission required");
+        }
+    }
+
+    public void requireFinanceManager(User user, long companyId) {
+        if (!hasFinanceManagerRole(user, companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Finance management permission required");
+        }
+    }
+
+    public void requirePayrollManager(User user, long companyId) {
+        if (!hasPayrollManagerRole(user, companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Payroll management permission required");
+        }
+    }
+
+    public boolean hasPeopleManagerRole(User user, long companyId) {
+        return hasCompanyRole(user, companyId, "founder", "hr_admin");
+    }
+
+    public boolean hasFinanceManagerRole(User user, long companyId) {
+        return hasCompanyRole(user, companyId, "founder", "finance_admin");
+    }
+
+    public boolean hasPayrollManagerRole(User user, long companyId) {
+        return hasCompanyRole(user, companyId, "founder", "hr_admin", "finance_admin");
+    }
+
+    public boolean canReadPeopleDirectory(User user, long companyId) {
+        return hasCompanyRole(user, companyId, "founder", "hr_admin", "finance_admin", "department_manager", "viewer");
+    }
+
+    public boolean hasCompanyRole(User user, long companyId, String... roles) {
+        if (user.role == Roles.ADMIN) {
+            return true;
+        }
+        Set<String> roleSet = Set.of(roles);
+        Company company = enterpriseStore.companies.get(companyId);
+        if (company != null && company.ownerId == user.id && roleSet.contains("founder")) {
+            return true;
+        }
+        return employeeForUser(user, companyId)
+            .map(employee -> roleSet.contains(employee.accessRole))
+            .orElse(false);
+    }
+
+    public Optional<Employee> employeeForUser(User user, long companyId) {
+        return enterpriseStore.employees.values().stream()
+            .filter(employee -> employee.companyId == companyId)
+            .filter(employee -> Objects.equals(employee.userId, user.id))
+            .findFirst();
     }
 
     public Company resolveCompany(User user, Long companyId) {
@@ -101,6 +155,9 @@ public class AccessControlService {
         List<Company> companies = accessibleCompanies(user);
         if (!companies.isEmpty()) {
             return companies.get(0);
+        }
+        if (user.role != Roles.ADMIN) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No company access");
         }
         return enterpriseStore.sortedCompanies().stream()
             .min(Comparator.comparing(company -> company.id))

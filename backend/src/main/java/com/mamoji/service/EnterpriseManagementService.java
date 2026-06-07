@@ -3,6 +3,8 @@ package com.mamoji.service;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.domain.Models.EmployeeCertificate;
+import com.mamoji.domain.Models.EmployeeExperience;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
@@ -14,6 +16,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +109,7 @@ public class EnterpriseManagementService {
         applyCompanyFields(company, body);
         touch(company);
         enterpriseStore.saveCompany(company);
+        audit(company.id, "company", company.id, "create", "创建公司主体: " + company.name, user);
         return company;
     }
 
@@ -114,11 +118,13 @@ public class EnterpriseManagementService {
     }
 
     public Company updateCompanyProfile(String authorization, Long companyId, Map<String, Object> body) {
-        User user = accessControl.requirePeopleManager(authorization);
+        User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
+        accessControl.requirePeopleManager(user, company.id);
         applyCompanyFields(company, body);
         touch(company);
         enterpriseStore.saveCompany(company);
+        audit(company.id, "company", company.id, "update", "更新公司主体: " + company.name, user);
         return company;
     }
 
@@ -128,8 +134,9 @@ public class EnterpriseManagementService {
     }
 
     public Department createDepartment(String authorization, Map<String, Object> body) {
-        User user = accessControl.requirePeopleManager(authorization);
+        User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        accessControl.requirePeopleManager(user, company.id);
         Department department = enterpriseStore.department(
             company.id,
             textOr(body.get("name"), "新部门"),
@@ -139,31 +146,46 @@ public class EnterpriseManagementService {
         applyDepartmentFields(department, body);
         touch(department);
         enterpriseStore.saveDepartment(department);
+        audit(company.id, "department", department.id, "create", "创建部门: " + department.name, user);
         return department;
     }
 
     public Department updateDepartment(String authorization, long id, Map<String, Object> body) {
-        User user = accessControl.requirePeopleManager(authorization);
+        User user = accessControl.requireUser(authorization);
         Department department = require(enterpriseStore.departments.get(id), "Department not found");
         if (!accessControl.canAccessCompany(user, department.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
+        accessControl.requirePeopleManager(user, department.companyId);
         applyDepartmentFields(department, body);
         touch(department);
         enterpriseStore.saveDepartment(department);
+        audit(department.companyId, "department", department.id, "update", "更新部门: " + department.name, user);
         return department;
     }
 
     public List<Employee> listEmployees(String authorization, Map<String, String> params) {
-        Company company = accessControl.resolveCompany(accessControl.requireUser(authorization), optionalLong(params.get("companyId")).orElse(null));
+        User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
+        boolean directoryReadable = accessControl.canReadPeopleDirectory(user, company.id);
         String keyword = params.getOrDefault("keyword", "").toLowerCase();
         String status = params.getOrDefault("status", "");
         long departmentId = longParam(params, "departmentId", 0);
         return enterpriseStore.sortedEmployees(company.id).stream()
+            .filter(employee -> directoryReadable || (employee.userId != null && employee.userId == user.id))
             .filter(employee -> keyword.isBlank()
                 || employee.name.toLowerCase().contains(keyword)
                 || employee.email.toLowerCase().contains(keyword)
                 || employee.position.toLowerCase().contains(keyword)
+                || contains(employee.employeeNo, keyword)
+                || contains(employee.legalName, keyword)
+                || contains(employee.preferredName, keyword)
+                || contains(employee.jobLevel, keyword)
+                || contains(employee.workLocation, keyword)
+                || contains(employee.educationLevel, keyword)
+                || contains(employee.graduationSchool, keyword)
+                || contains(employee.major, keyword)
+                || contains(employee.skillTags, keyword)
                 || (employee.departmentName != null && employee.departmentName.toLowerCase().contains(keyword)))
             .filter(employee -> status.isBlank() || employee.status.equals(status))
             .filter(employee -> departmentId == 0 || (employee.departmentId != null && employee.departmentId == departmentId))
@@ -171,8 +193,9 @@ public class EnterpriseManagementService {
     }
 
     public Employee createEmployee(String authorization, Map<String, Object> body) {
-        User operator = accessControl.requirePeopleManager(authorization);
+        User operator = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(operator, optionalLong(body.get("companyId")).orElse(null));
+        accessControl.requirePeopleManager(operator, company.id);
         Employee employee = enterpriseStore.employee(
             company.id,
             optionalLong(body.get("userId")).orElse(null),
@@ -197,25 +220,30 @@ public class EnterpriseManagementService {
         applyEmployeeFields(employee, body);
         touch(employee);
         enterpriseStore.saveEmployee(employee);
+        syncEmployeeProfileLists(employee, body);
         enterpriseStore.event(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
+        audit(company.id, "employee", employee.id, "create", "创建员工档案: " + employee.name, operator);
         return employee;
     }
 
     public Employee updateEmployee(String authorization, long id, Map<String, Object> body) {
-        User operator = accessControl.requirePeopleManager(authorization);
+        User operator = accessControl.requireUser(authorization);
         Employee employee = require(enterpriseStore.employees.get(id), "Employee not found");
         if (!accessControl.canAccessCompany(operator, employee.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
+        requireEmployeeUpdatePermission(operator, employee.companyId, body);
         String oldStatus = employee.status;
         applyEmployeeFields(employee, body);
         touch(employee);
         enterpriseStore.saveEmployee(employee);
+        syncEmployeeProfileLists(employee, body);
         if (!oldStatus.equals(employee.status)) {
             String eventType = employee.status.equals("departed") ? "offboard" : "status_change";
             String effectiveDate = employee.status.equals("departed") && employee.leaveDate != null ? employee.leaveDate : LocalDate.now().toString();
             enterpriseStore.event(employee.companyId, employee.id, eventType, effectiveDate, "员工状态从 " + oldStatus + " 更新为 " + employee.status, operator.id);
         }
+        audit(employee.companyId, "employee", employee.id, "update", "更新员工档案: " + employee.name, operator);
         return employee;
     }
 
@@ -248,6 +276,7 @@ public class EnterpriseManagementService {
         syncTaxItemDerivedFields(item, !body.containsKey("status"));
         touch(item);
         enterpriseStore.saveTaxItem(item);
+        audit(company.id, "tax_item", item.id, "create", "创建税费事项: " + item.name, user);
         return item;
     }
 
@@ -261,6 +290,7 @@ public class EnterpriseManagementService {
         syncTaxItemDerivedFields(item, !body.containsKey("status"));
         touch(item);
         enterpriseStore.saveTaxItem(item);
+        audit(item.companyId, "tax_item", item.id, "update", "更新税费事项: " + item.name, user);
         return item;
     }
 
@@ -270,6 +300,7 @@ public class EnterpriseManagementService {
         if (!accessControl.canAccessCompany(user, item.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
+        audit(item.companyId, "tax_item", item.id, "delete", "删除税费事项: " + item.name, user);
         enterpriseStore.deleteTaxItem(id);
     }
 
@@ -300,7 +331,7 @@ public class EnterpriseManagementService {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must be positive");
         }
-        return enterpriseStore.entityTransfer(
+        EntityTransfer transfer = enterpriseStore.entityTransfer(
             fromEntity.id,
             toEntity.id,
             textOr(body.get("transferType"), "inter_entity_transfer"),
@@ -311,6 +342,12 @@ public class EnterpriseManagementService {
             textOr(body.get("status"), "recorded"),
             user.id
         );
+        audit(fromEntity.id, "entity_transfer", transfer.id, "create", "创建主体间资金划转: " + fromEntity.name + " -> " + toEntity.name, user);
+        return transfer;
+    }
+
+    private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
+        enterpriseStore.auditLog(companyId, entityType, entityId, action, summary, user.id, user.nickname);
     }
 
     private void applyTaxItemFields(TaxItem item, Map<String, Object> body) {
@@ -486,6 +523,48 @@ public class EnterpriseManagementService {
         }
     }
 
+    private void requireEmployeeUpdatePermission(User operator, long companyId, Map<String, Object> body) {
+        boolean payrollChange = body.keySet().stream().anyMatch(this::isPayrollField);
+        boolean peopleChange = body.keySet().stream().anyMatch(field -> !isPayrollField(field));
+        if (peopleChange) {
+            accessControl.requirePeopleManager(operator, companyId);
+        }
+        if (payrollChange) {
+            accessControl.requirePayrollManager(operator, companyId);
+        }
+        if (body.containsKey("accessRole") || body.containsKey("accessScope")) {
+            if (!accessControl.hasCompanyRole(operator, companyId, "founder")) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Founder permission required");
+            }
+        }
+    }
+
+    private boolean isPayrollField(String field) {
+        return List.of(
+            "salary",
+            "socialInsurance",
+            "housingFund",
+            "taxEstimate",
+            "socialInsuranceBase",
+            "socialInsurancePersonalRate",
+            "socialInsuranceCompanyRate",
+            "socialInsuranceRegion",
+            "hukouType",
+            "medicalTier",
+            "pensionBase",
+            "medicalBase",
+            "unemploymentBase",
+            "workInjuryBase",
+            "maternityBase",
+            "workInjuryCompanyRate",
+            "socialInsurancePolicyNote",
+            "housingFundBase",
+            "housingFundPersonalRate",
+            "housingFundCompanyRate",
+            "personalDeduction"
+        ).contains(field);
+    }
+
     private void applyEmployeeFields(Employee employee, Map<String, Object> body) {
         if (body.containsKey("userId")) {
             employee.userId = optionalLong(body.get("userId")).orElse(null);
@@ -493,8 +572,17 @@ public class EnterpriseManagementService {
         if (body.containsKey("departmentId")) {
             employee.departmentId = optionalLong(body.get("departmentId")).orElse(null);
         }
+        if (body.containsKey("employeeNo")) {
+            employee.employeeNo = nullableText(body.get("employeeNo"));
+        }
         if (body.containsKey("name")) {
             employee.name = text(body.get("name"));
+        }
+        if (body.containsKey("legalName")) {
+            employee.legalName = nullableText(body.get("legalName"));
+        }
+        if (body.containsKey("preferredName")) {
+            employee.preferredName = nullableText(body.get("preferredName"));
         }
         if (body.containsKey("email")) {
             employee.email = text(body.get("email"));
@@ -504,6 +592,15 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("position")) {
             employee.position = text(body.get("position"));
+        }
+        if (body.containsKey("directManagerEmployeeId")) {
+            employee.directManagerEmployeeId = optionalLong(body.get("directManagerEmployeeId")).orElse(null);
+        }
+        if (body.containsKey("jobLevel")) {
+            employee.jobLevel = nullableText(body.get("jobLevel"));
+        }
+        if (body.containsKey("workLocation")) {
+            employee.workLocation = nullableText(body.get("workLocation"));
         }
         if (body.containsKey("employmentType")) {
             employee.employmentType = text(body.get("employmentType"));
@@ -522,6 +619,58 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("leaveDate")) {
             employee.leaveDate = nullableText(body.get("leaveDate"));
+        }
+        if (body.containsKey("probationStartDate")) {
+            employee.probationStartDate = nullableText(body.get("probationStartDate"));
+        }
+        if (body.containsKey("probationEndDate")) {
+            employee.probationEndDate = nullableText(body.get("probationEndDate"));
+        }
+        if (body.containsKey("contractStartDate")) {
+            employee.contractStartDate = nullableText(body.get("contractStartDate"));
+        }
+        if (body.containsKey("contractEndDate")) {
+            employee.contractEndDate = nullableText(body.get("contractEndDate"));
+        }
+        if (body.containsKey("contractType")) {
+            employee.contractType = nullableText(body.get("contractType"));
+        }
+        if (body.containsKey("contractStatus")) {
+            employee.contractStatus = nullableText(body.get("contractStatus"));
+        }
+        if (body.containsKey("educationLevel")) {
+            employee.educationLevel = nullableText(body.get("educationLevel"));
+        }
+        if (body.containsKey("graduationSchool")) {
+            employee.graduationSchool = nullableText(body.get("graduationSchool"));
+        }
+        if (body.containsKey("major")) {
+            employee.major = nullableText(body.get("major"));
+        }
+        if (body.containsKey("graduationDate")) {
+            employee.graduationDate = nullableText(body.get("graduationDate"));
+        }
+        if (body.containsKey("graduationYear")) {
+            int year = intValue(body.get("graduationYear"), 0);
+            employee.graduationYear = year <= 0 ? null : year;
+        }
+        if (body.containsKey("graduateStatus")) {
+            employee.graduateStatus = nullableText(body.get("graduateStatus"));
+        }
+        if (body.containsKey("skillTags")) {
+            employee.skillTags = nullableText(body.get("skillTags"));
+        }
+        if (body.containsKey("resumeSummary")) {
+            employee.resumeSummary = nullableText(body.get("resumeSummary"));
+        }
+        if (body.containsKey("materialStatus")) {
+            employee.materialStatus = nullableText(body.get("materialStatus"));
+        }
+        if (body.containsKey("profileVerifiedAt")) {
+            employee.profileVerifiedAt = nullableText(body.get("profileVerifiedAt"));
+        }
+        if (body.containsKey("profileVerifiedBy")) {
+            employee.profileVerifiedBy = optionalLong(body.get("profileVerifiedBy")).orElse(null);
         }
         if (body.containsKey("salary")) {
             employee.salary = number(body.get("salary"), employee.salary);
@@ -595,6 +744,67 @@ public class EnterpriseManagementService {
         if (body.containsKey("emergencyContact")) {
             employee.emergencyContact = nullableText(body.get("emergencyContact"));
         }
+    }
+
+    private void syncEmployeeProfileLists(Employee employee, Map<String, Object> body) {
+        if (body.containsKey("certificates")) {
+            enterpriseStore.replaceEmployeeCertificates(employee.id, employeeCertificatesFrom(body.get("certificates")));
+        }
+        if (body.containsKey("experiences")) {
+            enterpriseStore.replaceEmployeeExperiences(employee.id, employeeExperiencesFrom(body.get("experiences")));
+        }
+    }
+
+    private List<EmployeeCertificate> employeeCertificatesFrom(Object payload) {
+        if (!(payload instanceof List<?> rows)) {
+            return List.of();
+        }
+        List<EmployeeCertificate> certificates = new ArrayList<>();
+        for (Object row : rows) {
+            if (!(row instanceof Map<?, ?> values)) {
+                continue;
+            }
+            EmployeeCertificate certificate = new EmployeeCertificate();
+            certificate.name = nullableText(values.get("name"));
+            certificate.category = nullableText(values.get("category"));
+            certificate.level = nullableText(values.get("level"));
+            certificate.issuer = nullableText(values.get("issuer"));
+            certificate.certificateNo = nullableText(values.get("certificateNo"));
+            certificate.issueDate = nullableText(values.get("issueDate"));
+            certificate.expiryDate = nullableText(values.get("expiryDate"));
+            certificate.verificationStatus = textOr(values.get("verificationStatus"), "unverified");
+            certificate.materialStatus = textOr(values.get("materialStatus"), "missing");
+            certificate.note = nullableText(values.get("note"));
+            certificates.add(certificate);
+        }
+        return certificates;
+    }
+
+    private List<EmployeeExperience> employeeExperiencesFrom(Object payload) {
+        if (!(payload instanceof List<?> rows)) {
+            return List.of();
+        }
+        List<EmployeeExperience> experiences = new ArrayList<>();
+        for (Object row : rows) {
+            if (!(row instanceof Map<?, ?> values)) {
+                continue;
+            }
+            EmployeeExperience experience = new EmployeeExperience();
+            experience.type = textOr(values.get("type"), "work");
+            experience.organization = nullableText(values.get("organization"));
+            experience.title = nullableText(values.get("title"));
+            experience.startDate = nullableText(values.get("startDate"));
+            experience.endDate = nullableText(values.get("endDate"));
+            experience.description = nullableText(values.get("description"));
+            experience.achievements = nullableText(values.get("achievements"));
+            experience.skills = nullableText(values.get("skills"));
+            experiences.add(experience);
+        }
+        return experiences;
+    }
+
+    private static boolean contains(String value, String keyword) {
+        return value != null && value.toLowerCase().contains(keyword);
     }
 
     private static BigDecimal rateFromAmount(BigDecimal amount, BigDecimal base, BigDecimal fallbackBase, BigDecimal fallbackRate) {

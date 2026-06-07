@@ -25,6 +25,13 @@ const AVATAR_PRESETS = [
 export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0]);
+  const [inviteToken] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    const params = new URLSearchParams(window.location.search);
+    return params.get("invite") || params.get("inviteToken") || "";
+  });
   const router = useRouter();
   const { register } = useAuthStore();
   const t = useTranslations("auth");
@@ -35,11 +42,12 @@ export default function RegisterPage() {
       await register({
         ...values,
         avatar: `${selectedAvatar.emoji}|${selectedAvatar.color}`,
+        inviteToken: inviteToken || undefined,
       });
       Message.success("注册成功");
       router.push("/dashboard");
     } catch {
-      Message.error("注册失败，邮箱可能已被使用");
+      Message.error(inviteToken ? "注册失败，请确认邀请链接和邮箱是否匹配" : "注册失败，邮箱可能已被使用");
     } finally {
       setLoading(false);
     }
@@ -98,7 +106,7 @@ export default function RegisterPage() {
               {t("registerTitle")}
             </h2>
             <p style={{ color: "var(--text-color-3)" }}>
-              创建公司账户开始管理经营数据
+              {inviteToken ? "使用邀请链接创建团队账户" : "创建公司账户开始管理经营数据"}
             </p>
           </div>
 
@@ -157,7 +165,7 @@ export default function RegisterPage() {
               field="password"
               rules={[
                 { required: true, message: "请输入密码" },
-                { minLength: 6, message: "密码至少6位" },
+                { minLength: 8, message: "密码至少8位" },
               ]}
             >
               <Input.Password

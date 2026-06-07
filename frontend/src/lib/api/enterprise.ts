@@ -8,6 +8,8 @@ import type {
   EmploymentEvent,
   EnterpriseSummary,
   PermissionMatrix,
+  PayrollRun,
+  TaxComplianceReport,
   TaxItem,
   TaxItemPayload,
 } from "@/lib/types";
@@ -64,6 +66,7 @@ export const enterpriseApi = {
     client.put<Employee>(`/enterprise/employees/${id}`, data),
   employmentEvents: (params?: { companyId?: number }) => client.get<EmploymentEvent[]>("/enterprise/employment-events", { params: withCompany(params) }),
   taxItems: (params?: { companyId?: number }) => client.get<TaxItem[]>("/enterprise/tax-items", { params: withCompany(params) }),
+  taxCompliance: (params?: { companyId?: number }) => client.get<TaxComplianceReport>("/enterprise/tax-compliance", { params: withCompany(params) }),
   createTaxItem: (data: TaxItemPayload) => client.post<TaxItem>("/enterprise/tax-items", withCompanyBody(data)),
   updateTaxItem: (id: number, data: Partial<TaxItemPayload>) =>
     client.put<TaxItem>(`/enterprise/tax-items/${id}`, data),
@@ -79,4 +82,9 @@ export const enterpriseApi = {
     transferDate?: string;
     note?: string | null;
   }) => client.post<EntityTransfer>("/enterprise/entity-transfers", data),
+  payrollRuns: (params?: { companyId?: number; period?: string }) =>
+    client.get<PayrollRun[]>("/payroll-runs", { params: withCompany(params) }),
+  createPayrollRun: (data: { companyId?: number; period?: string }) =>
+    client.post<PayrollRun>("/payroll-runs", withCompanyBody(data)),
+  closePayrollRun: (id: number) => client.post<PayrollRun>(`/payroll-runs/${id}/close`),
 };

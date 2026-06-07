@@ -20,6 +20,21 @@ export interface RegisterDTO {
   password: string;
   nickname: string;
   avatar?: string;
+  inviteToken?: string;
+}
+
+export interface RegistrationInvite {
+  id: number;
+  token: string;
+  email: string;
+  role: number;
+  permissions: number;
+  expiresAt: string;
+  acceptedAt?: string | null;
+  acceptedUserId?: number | null;
+  invitedByUserId: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UpdateProfileDTO {
@@ -30,4 +45,10 @@ export interface UpdateProfileDTO {
 export interface ChangePasswordDTO {
   oldPassword: string;
   newPassword: string;
+}
+
+export interface AuthSession {
+  token: string;
+  tokenExpiresAt: string;
+  user: User;
 }

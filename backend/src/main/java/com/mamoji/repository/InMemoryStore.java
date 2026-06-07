@@ -7,29 +7,28 @@ import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.LedgerMember;
+import com.mamoji.domain.Models.RegistrationInvite;
 import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.service.support.PasswordHasher;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -45,57 +44,51 @@ public class InMemoryStore {
     public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
+    public final Map<Long, RegistrationInvite> registrationInvites = new ConcurrentHashMap<>();
     public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
-    public final Map<String, Long> tokens = new ConcurrentHashMap<>();
+    private final Map<String, AuthSession> tokens = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
-    private final String datasourceUrl;
+    private final PasswordHasher passwordHasher;
+    private final boolean schemaCompatibilityEnabled;
+    private final String bootstrapMode;
+    private final String bootstrapAdminEmail;
+    private final String bootstrapAdminPassword;
+    private final String bootstrapAdminNickname;
 
-    public InMemoryStore(JdbcTemplate jdbc, DataSource dataSource, @Value("${spring.datasource.url}") String datasourceUrl) {
+    public InMemoryStore(
+        JdbcTemplate jdbc,
+        PasswordHasher passwordHasher,
+        @Value("${mamoji.schema.compatibility-enabled:false}") boolean schemaCompatibilityEnabled,
+        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
+        @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
+        @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
+        @Value("${mamoji.bootstrap.admin-nickname:Mamoji 公司管理员}") String bootstrapAdminNickname
+    ) {
         this.jdbc = jdbc;
-        this.datasourceUrl = datasourceUrl;
+        this.passwordHasher = passwordHasher;
+        this.schemaCompatibilityEnabled = schemaCompatibilityEnabled;
+        this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
+        this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
+        this.bootstrapAdminPassword = defaultIfBlank(bootstrapAdminPassword, "123456");
+        this.bootstrapAdminNickname = defaultIfBlank(bootstrapAdminNickname, "Mamoji 公司管理员");
     }
 
     @PostConstruct
     void initialize() {
-        ensureDatabaseDirectory();
         createSchema();
         loadAll();
         if (users.isEmpty()) {
-            seed();
+            seedInitialData();
         } else {
             refreshBudgetData();
         }
     }
 
-    private void ensureDatabaseDirectory() {
-        String prefix = "jdbc:sqlite:";
-        if (!datasourceUrl.startsWith(prefix)) {
-            return;
-        }
-        String rawPath = datasourceUrl.substring(prefix.length());
-        if (rawPath.isBlank() || rawPath.equals(":memory:") || rawPath.startsWith("file:")) {
-            return;
-        }
-        Path parent = Path.of(rawPath).toAbsolutePath().getParent();
-        if (parent == null) {
-            return;
-        }
-        try {
-            Files.createDirectories(parent);
-        } catch (Exception exception) {
-            throw new IllegalStateException("Unable to create SQLite directory: " + parent, exception);
-        }
-    }
-
     private void createSchema() {
-        jdbc.execute("PRAGMA foreign_keys = ON");
-        jdbc.execute("PRAGMA journal_mode = WAL");
-        jdbc.execute("PRAGMA synchronous = NORMAL");
-        jdbc.execute("PRAGMA busy_timeout = 5000");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
                 nickname TEXT NOT NULL,
                 avatar TEXT NOT NULL,
@@ -109,7 +102,7 @@ public class InMemoryStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
                 sub_type TEXT,
@@ -149,7 +142,7 @@ public class InMemoryStore {
         ensureColumn("accounts", "risk_level", "TEXT NOT NULL DEFAULT 'low'");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 icon TEXT NOT NULL,
                 color TEXT NOT NULL,
@@ -162,7 +155,7 @@ public class InMemoryStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS budgets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 amount TEXT NOT NULL,
                 start_date TEXT NOT NULL,
@@ -184,7 +177,7 @@ public class InMemoryStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 family_id INTEGER,
                 type INTEGER NOT NULL,
@@ -203,7 +196,7 @@ public class InMemoryStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS ledgers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 currency TEXT NOT NULL,
@@ -216,7 +209,7 @@ public class InMemoryStore {
             """);
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS ledger_members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 ledger_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 role TEXT NOT NULL,
@@ -250,22 +243,40 @@ public class InMemoryStore {
             CREATE TABLE IF NOT EXISTS auth_tokens (
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """);
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS registration_invites (
+                id BIGSERIAL PRIMARY KEY,
+                token TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL,
+                role INTEGER NOT NULL DEFAULT 2,
+                permissions INTEGER NOT NULL DEFAULT 15,
+                expires_at TEXT NOT NULL,
+                accepted_at TEXT,
+                accepted_user_id INTEGER,
+                invited_by_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """);
         createIndexes();
     }
 
     private void ensureColumn(String tableName, String columnName, String definition) {
-        Boolean exists = jdbc.query("PRAGMA table_info(" + tableName + ")", rs -> {
-            while (rs.next()) {
-                if (columnName.equals(rs.getString("name"))) {
-                    return true;
-                }
-            }
-            return false;
-        });
-        if (Boolean.TRUE.equals(exists)) {
+        if (!schemaCompatibilityEnabled) {
+            return;
+        }
+        boolean exists = !jdbc.queryForList("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = ?
+              AND column_name = ?
+            """, tableName, columnName).isEmpty();
+        if (exists) {
             return;
         }
         jdbc.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
@@ -288,6 +299,9 @@ public class InMemoryStore {
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledger_members_ledger_user ON ledger_members(ledger_id, user_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_user_status_next ON recurring_items(user_id, status, next_execution)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_registration_invites_email ON registration_invites(email, accepted_at, expires_at)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_registration_invites_inviter ON registration_invites(invited_by_user_id, created_at)");
     }
 
     private void loadAll() {
@@ -298,6 +312,7 @@ public class InMemoryStore {
         transactions.clear();
         ledgers.clear();
         ledgerMembers.clear();
+        registrationInvites.clear();
         recurringItems.clear();
         tokens.clear();
 
@@ -308,15 +323,48 @@ public class InMemoryStore {
         forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
+        forEachRow("SELECT * FROM registration_invites", rs -> registrationInvites.put(rs.getLong("id"), mapRegistrationInvite(rs)));
         forEachRow("SELECT * FROM recurring_items", rs -> recurringItems.put(rs.getString("id"), mapRecurringItem(rs)));
-        forEachRow("SELECT * FROM auth_tokens", rs -> tokens.put(rs.getString("token"), rs.getLong("user_id")));
+        jdbc.query("SELECT * FROM auth_tokens WHERE expires_at > ?", (org.springframework.jdbc.core.RowCallbackHandler) rs -> tokens.put(
+            rs.getString("token"),
+            new AuthSession(rs.getLong("user_id"), rs.getString("expires_at"))
+        ), now());
 
         budgets.values().forEach(this::attachCategory);
         transactions.values().forEach(this::attachTransactionRelations);
     }
 
-    void seed() {
-        User testUser = user("test@mamoji.com", "Mamoji 公司管理员", "😊|#3370ff", "123456", Roles.ADMIN, Permissions.ALL);
+    private void seedInitialData() {
+        if ("bootstrap".equals(bootstrapMode)) {
+            bootstrapAdmin();
+            return;
+        }
+        seedDemoData();
+    }
+
+    private void bootstrapAdmin() {
+        validateBootstrapAdmin();
+        User admin = user(
+            bootstrapAdminEmail,
+            bootstrapAdminNickname,
+            "😊|#3370ff",
+            passwordHasher.hash(bootstrapAdminPassword),
+            Roles.ADMIN,
+            Permissions.ALL
+        );
+        Ledger defaultLedger = ledger(admin.id, "公司经营账本", "生产环境默认经营账本", "CNY", true);
+        member(defaultLedger.id, admin.id, "owner");
+    }
+
+    void seedDemoData() {
+        User testUser = user(
+            bootstrapAdminEmail,
+            bootstrapAdminNickname,
+            "😊|#3370ff",
+            passwordHasher.hash(bootstrapAdminPassword),
+            Roles.ADMIN,
+            Permissions.ALL
+        );
         Ledger defaultLedger = ledger(testUser.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
         member(defaultLedger.id, testUser.id, "owner");
 
@@ -364,6 +412,22 @@ public class InMemoryStore {
         officeRent.note = "每月办公室租金";
         recurringItems.put(officeRent.id, officeRent);
         saveRecurring(officeRent);
+    }
+
+    private void validateBootstrapAdmin() {
+        if (bootstrapAdminEmail == null || bootstrapAdminEmail.isBlank() || !bootstrapAdminEmail.contains("@")) {
+            throw new IllegalStateException("MAMOJI_BOOTSTRAP_ADMIN_EMAIL must be a valid email in bootstrap mode");
+        }
+        if (bootstrapAdminPassword == null
+            || bootstrapAdminPassword.length() < 12
+            || "123456".equals(bootstrapAdminPassword)
+            || bootstrapAdminPassword.toLowerCase(Locale.ROOT).contains("replace-with")) {
+            throw new IllegalStateException("MAMOJI_BOOTSTRAP_ADMIN_PASSWORD must be replaced with a strong password in bootstrap mode");
+        }
+    }
+
+    private String defaultIfBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     public User user(String email, String nickname, String avatar, String password, int role, int permissions) {
@@ -519,6 +583,58 @@ public class InMemoryStore {
         return member;
     }
 
+    public RegistrationInvite registrationInvite(
+        String token,
+        String email,
+        int role,
+        int permissions,
+        String expiresAt,
+        long invitedByUserId
+    ) {
+        RegistrationInvite invite = new RegistrationInvite();
+        invite.token = token;
+        invite.email = email == null ? "" : email.toLowerCase(Locale.ROOT);
+        invite.role = role;
+        invite.permissions = permissions;
+        invite.expiresAt = expiresAt;
+        invite.invitedByUserId = invitedByUserId;
+        stamp(invite);
+        invite.id = insert("""
+            INSERT INTO registration_invites (
+                token, email, role, permissions, expires_at, accepted_at, accepted_user_id, invited_by_user_id,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ps -> bindRegistrationInvite(ps, invite));
+        registrationInvites.put(invite.id, invite);
+        return invite;
+    }
+
+    public Optional<RegistrationInvite> findRegistrationInviteByToken(String token) {
+        if (token == null || token.isBlank()) {
+            return Optional.empty();
+        }
+        return registrationInvites.values().stream()
+            .filter(invite -> invite.token.equals(token))
+            .findFirst();
+    }
+
+    public List<RegistrationInvite> sortedRegistrationInvites() {
+        return registrationInvites.values().stream()
+            .sorted(Comparator.comparing((RegistrationInvite invite) -> invite.createdAt).reversed()
+                .thenComparing(Comparator.comparingLong((RegistrationInvite invite) -> invite.id).reversed()))
+            .toList();
+    }
+
+    public void saveRegistrationInvite(RegistrationInvite invite) {
+        registrationInvites.put(invite.id, invite);
+        jdbc.update("""
+            UPDATE registration_invites SET token = ?, email = ?, role = ?, permissions = ?, expires_at = ?,
+                accepted_at = ?, accepted_user_id = ?, invited_by_user_id = ?, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """, invite.token, invite.email, invite.role, invite.permissions, invite.expiresAt, invite.acceptedAt,
+            invite.acceptedUserId, invite.invitedByUserId, invite.createdAt, invite.updatedAt, invite.id);
+    }
+
     public void saveUser(User user) {
         users.put(user.id, user);
         jdbc.update("""
@@ -590,12 +706,21 @@ public class InMemoryStore {
             item.nextExecution, item.status, item.executionCount, item.note);
     }
 
-    public void rememberToken(String token, long userId) {
-        tokens.put(token, userId);
+    public void rememberToken(String token, long userId, String expiresAt) {
+        tokens.put(token, new AuthSession(userId, expiresAt));
         jdbc.update("""
-            INSERT INTO auth_tokens (token, user_id, created_at) VALUES (?, ?, ?)
-            ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at
-            """, token, userId, now());
+            INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
+            """, token, userId, now(), expiresAt);
+    }
+
+    public void revokeToken(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return;
+        }
+        String token = authorizationHeader.substring(7);
+        tokens.remove(token);
+        jdbc.update("DELETE FROM auth_tokens WHERE token = ?", token);
     }
 
     public void deleteAccount(long id) {
@@ -637,8 +762,14 @@ public class InMemoryStore {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return Optional.empty();
         }
-        Long userId = tokens.get(authorizationHeader.substring(7));
-        return userId == null ? Optional.empty() : Optional.ofNullable(users.get(userId));
+        String token = authorizationHeader.substring(7);
+        AuthSession session = tokens.get(token);
+        if (session == null || session.expired()) {
+            tokens.remove(token);
+            jdbc.update("DELETE FROM auth_tokens WHERE token = ?", token);
+            return Optional.empty();
+        }
+        return Optional.ofNullable(users.get(session.userId()));
     }
 
     public Optional<User> findUserByEmail(String email) {
@@ -925,6 +1056,22 @@ public class InMemoryStore {
         return member;
     }
 
+    private RegistrationInvite mapRegistrationInvite(ResultSet rs) throws SQLException {
+        RegistrationInvite invite = new RegistrationInvite();
+        invite.id = rs.getLong("id");
+        invite.token = rs.getString("token");
+        invite.email = rs.getString("email");
+        invite.role = rs.getInt("role");
+        invite.permissions = rs.getInt("permissions");
+        invite.expiresAt = rs.getString("expires_at");
+        invite.acceptedAt = rs.getString("accepted_at");
+        invite.acceptedUserId = nullableLong(rs, "accepted_user_id");
+        invite.invitedByUserId = rs.getLong("invited_by_user_id");
+        invite.createdAt = rs.getString("created_at");
+        invite.updatedAt = rs.getString("updated_at");
+        return invite;
+    }
+
     private RecurringItem mapRecurringItem(ResultSet rs) throws SQLException {
         RecurringItem item = new RecurringItem();
         item.id = rs.getString("id");
@@ -1089,16 +1236,29 @@ public class InMemoryStore {
         ps.setString(6, member.joinedAt);
     }
 
+    private void bindRegistrationInvite(PreparedStatement ps, RegistrationInvite invite) throws SQLException {
+        ps.setString(1, invite.token);
+        ps.setString(2, invite.email);
+        ps.setInt(3, invite.role);
+        ps.setInt(4, invite.permissions);
+        ps.setString(5, invite.expiresAt);
+        ps.setString(6, invite.acceptedAt);
+        setLongOrNull(ps, 7, invite.acceptedUserId);
+        ps.setLong(8, invite.invitedByUserId);
+        ps.setString(9, invite.createdAt);
+        ps.setString(10, invite.updatedAt);
+    }
+
     private long insert(String sql, SqlBinder binder) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps = connection.prepareStatement(sql, new String[] { "id" });
             binder.bind(ps);
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
         if (key == null) {
-            throw new IllegalStateException("SQLite did not return a generated key");
+            throw new IllegalStateException("Database did not return a generated key");
         }
         return key.longValue();
     }
@@ -1176,5 +1336,15 @@ public class InMemoryStore {
     @FunctionalInterface
     private interface SqlRowConsumer {
         void accept(ResultSet rs) throws SQLException;
+    }
+
+    private record AuthSession(long userId, String expiresAt) {
+        boolean expired() {
+            try {
+                return expiresAt == null || !OffsetDateTime.parse(expiresAt).isAfter(OffsetDateTime.now());
+            } catch (RuntimeException ignored) {
+                return true;
+            }
+        }
     }
 }

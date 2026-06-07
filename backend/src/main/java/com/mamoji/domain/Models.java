@@ -23,6 +23,20 @@ public final class Models {
         public String passwordHash;
     }
 
+    public static class RegistrationInvite {
+        public long id;
+        public String token;
+        public String email;
+        public int role;
+        public int permissions;
+        public String expiresAt;
+        public String acceptedAt;
+        public Long acceptedUserId;
+        public long invitedByUserId;
+        public String createdAt;
+        public String updatedAt;
+    }
+
     public static class Account {
         public long id;
         public String name;
@@ -196,16 +210,39 @@ public final class Models {
         public Long userId;
         public Long departmentId;
         public String departmentName;
+        public String employeeNo;
         public String name;
+        public String legalName;
+        public String preferredName;
         public String email;
         public String phone;
         public String position;
+        public Long directManagerEmployeeId;
+        public String jobLevel;
+        public String workLocation;
         public String employmentType;
         public String status;
         public String accessRole;
         public String accessScope;
         public String hireDate;
         public String leaveDate;
+        public String probationStartDate;
+        public String probationEndDate;
+        public String contractStartDate;
+        public String contractEndDate;
+        public String contractType;
+        public String contractStatus;
+        public String educationLevel;
+        public String graduationSchool;
+        public String major;
+        public String graduationDate;
+        public Integer graduationYear;
+        public String graduateStatus;
+        public String skillTags;
+        public String resumeSummary;
+        public String materialStatus;
+        public String profileVerifiedAt;
+        public Long profileVerifiedBy;
         public BigDecimal salary;
         public BigDecimal socialInsurance;
         public BigDecimal housingFund;
@@ -235,7 +272,41 @@ public final class Models {
         public String socialInsurancePolicyNote;
         public List<SocialInsuranceItem> socialInsuranceItems;
         public List<String> socialInsuranceWarnings;
+        public List<EmployeeCertificate> certificates;
+        public List<EmployeeExperience> experiences;
         public String emergencyContact;
+        public String createdAt;
+        public String updatedAt;
+    }
+
+    public static class EmployeeCertificate {
+        public long id;
+        public long employeeId;
+        public String name;
+        public String category;
+        public String level;
+        public String issuer;
+        public String certificateNo;
+        public String issueDate;
+        public String expiryDate;
+        public String verificationStatus;
+        public String materialStatus;
+        public String note;
+        public String createdAt;
+        public String updatedAt;
+    }
+
+    public static class EmployeeExperience {
+        public long id;
+        public long employeeId;
+        public String type;
+        public String organization;
+        public String title;
+        public String startDate;
+        public String endDate;
+        public String description;
+        public String achievements;
+        public String skills;
         public String createdAt;
         public String updatedAt;
     }
@@ -351,6 +422,52 @@ public final class Models {
         public long operatorUserId;
         public String createdAt;
         public String updatedAt;
+    }
+
+    public static class PayrollRun {
+        public long id;
+        public long companyId;
+        public String period;
+        public String name;
+        public String status;
+        public int employeeCount;
+        public BigDecimal salaryTotal;
+        public BigDecimal socialPersonalTotal;
+        public BigDecimal socialCompanyTotal;
+        public BigDecimal housingPersonalTotal;
+        public BigDecimal housingCompanyTotal;
+        public BigDecimal taxTotal;
+        public BigDecimal personalDeductionTotal;
+        public BigDecimal netPayTotal;
+        public BigDecimal companyCostTotal;
+        public long createdByUserId;
+        public Long closedByUserId;
+        public String closedAt;
+        public String createdAt;
+        public String updatedAt;
+        public List<PayrollRunItem> items;
+    }
+
+    public static class PayrollRunItem {
+        public long id;
+        public long runId;
+        public long companyId;
+        public long employeeId;
+        public String employeeName;
+        public String departmentName;
+        public String period;
+        public BigDecimal salary;
+        public BigDecimal payableSalary;
+        public BigDecimal socialPersonalAmount;
+        public BigDecimal socialCompanyAmount;
+        public BigDecimal housingPersonalAmount;
+        public BigDecimal housingCompanyAmount;
+        public BigDecimal taxAmount;
+        public BigDecimal personalDeduction;
+        public BigDecimal netPay;
+        public BigDecimal companyCost;
+        public String snapshotJson;
+        public String createdAt;
     }
 
     public static class AuditLog {

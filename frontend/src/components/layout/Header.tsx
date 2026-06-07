@@ -28,8 +28,8 @@ export default function Header() {
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 

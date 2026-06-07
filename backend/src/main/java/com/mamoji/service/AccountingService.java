@@ -8,6 +8,7 @@ import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -31,13 +32,16 @@ public class AccountingService {
         Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
 
     private final InMemoryStore store;
+    private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
 
     public AccountingService(
         InMemoryStore store,
+        EnterpriseStore enterpriseStore,
         AccessControlService accessControl
     ) {
         this.store = store;
+        this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
     }
 
@@ -72,12 +76,14 @@ public class AccountingService {
         account.includeInNetWorth = bool(body.get("includeInNetWorth"), true);
         applyAccountFields(account, body);
         store.saveAccount(account);
+        audit(0, "account", account.id, "create", "创建资金账户: " + account.name, user);
         attachAccountMetrics(account);
         return account;
     }
 
     public Account updateAccount(String authorization, long id, Map<String, Object> body) {
         Account account = getAccount(authorization, id);
+        User user = requireUser(authorization);
         if (body.containsKey("name")) {
             account.name = text(body.get("name"));
         }
@@ -99,17 +105,20 @@ public class AccountingService {
         applyAccountFields(account, body);
         touch(account);
         store.saveAccount(account);
+        audit(0, "account", account.id, "update", "更新资金账户: " + account.name, user);
         attachAccountMetrics(account);
         return account;
     }
 
     public void deleteAccount(String authorization, long id) {
         Account account = getAccount(authorization, id);
+        User user = requireUser(authorization);
         boolean used = store.transactions.values().stream().anyMatch(tx -> tx.accountId == account.id);
         if (used) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Account has transactions");
         }
         store.deleteAccount(id);
+        audit(0, "account", account.id, "delete", "删除资金账户: " + account.name, user);
     }
 
     public Map<String, Object> accountSummary(String authorization) {
@@ -735,6 +744,10 @@ public class AccountingService {
         } catch (ReflectiveOperationException ignored) {
             // Models without updatedAt do not need mutation timestamps.
         }
+    }
+
+    private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
+        enterpriseStore.auditLog(companyId, entityType, entityId, action, summary, user.id, user.nickname);
     }
 
     private static boolean sameMonth(String date, YearMonth month) {

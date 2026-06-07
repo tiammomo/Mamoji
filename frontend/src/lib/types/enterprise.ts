@@ -53,22 +53,77 @@ export interface SocialInsuranceItem {
   status: string;
 }
 
+export interface EmployeeCertificate {
+  id?: number;
+  employeeId?: number;
+  name: string;
+  category?: string | null;
+  level?: string | null;
+  issuer?: string | null;
+  certificateNo?: string | null;
+  issueDate?: string | null;
+  expiryDate?: string | null;
+  verificationStatus?: string;
+  materialStatus?: string;
+  note?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EmployeeExperience {
+  id?: number;
+  employeeId?: number;
+  type: string;
+  organization: string;
+  title?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  description?: string | null;
+  achievements?: string | null;
+  skills?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Employee {
   id: number;
   companyId: number;
   userId: number | null;
   departmentId: number | null;
   departmentName?: string | null;
+  employeeNo?: string | null;
   name: string;
+  legalName?: string | null;
+  preferredName?: string | null;
   email: string;
   phone?: string | null;
   position: string;
+  directManagerEmployeeId?: number | null;
+  jobLevel?: string | null;
+  workLocation?: string | null;
   employmentType: EmploymentType | string;
   status: EmployeeStatus | string;
   accessRole: AccessRole | string;
   accessScope: AccessScope | string;
   hireDate: string;
   leaveDate?: string | null;
+  probationStartDate?: string | null;
+  probationEndDate?: string | null;
+  contractStartDate?: string | null;
+  contractEndDate?: string | null;
+  contractType?: string | null;
+  contractStatus?: string | null;
+  educationLevel?: string | null;
+  graduationSchool?: string | null;
+  major?: string | null;
+  graduationDate?: string | null;
+  graduationYear?: number | null;
+  graduateStatus?: string | null;
+  skillTags?: string | null;
+  resumeSummary?: string | null;
+  materialStatus?: string | null;
+  profileVerifiedAt?: string | null;
+  profileVerifiedBy?: number | null;
   salary: number;
   socialInsurance: number;
   housingFund: number;
@@ -98,6 +153,8 @@ export interface Employee {
   socialInsurancePolicyNote?: string | null;
   socialInsuranceItems?: SocialInsuranceItem[];
   socialInsuranceWarnings?: string[];
+  certificates?: EmployeeCertificate[];
+  experiences?: EmployeeExperience[];
   emergencyContact?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -165,6 +222,80 @@ export interface TaxItemPayload {
   note?: string | null;
 }
 
+export interface TaxPolicySource {
+  name: string;
+  url: string;
+}
+
+export interface TaxPolicyProfile {
+  key: string;
+  name: string;
+  region: string;
+  taxAuthority: string;
+  taxpayerType: string;
+  vatFrequency: string;
+  vatMode: string;
+  inputDeductionEnabled: boolean;
+  fiscalYearStartMonth: number;
+  smallScaleMonthlyVatExemption: number;
+  smallScaleQuarterlyVatExemption: number;
+  smallScaleVatPolicyValidTo: string;
+  generalTaxpayerSalesThreshold: number;
+  coreTaxes: string[];
+  policySources: TaxPolicySource[];
+}
+
+export interface TaxFilingCalendarItem {
+  key: string;
+  taxType: string;
+  taxTypeName: string;
+  period: string;
+  frequency: string;
+  dueDate: string;
+  required: boolean;
+  zeroDeclarationRequired: boolean;
+  matchedTaxItemId?: number | null;
+  status: string;
+  filingStatus: string;
+  paymentStatus: string;
+  riskLevel: string;
+  policyBasis: string;
+  note: string;
+}
+
+export interface TaxComplianceRiskItem {
+  key: string;
+  severity: "high" | "medium" | "low" | string;
+  title: string;
+  description: string;
+  taxType: string;
+  taxTypeName: string;
+  period: string;
+  dueDate?: string | null;
+  taxItemId?: number | null;
+  action: string;
+  policyBasis: string;
+}
+
+export interface TaxComplianceMetrics {
+  riskCount: number;
+  highRiskCount: number;
+  mediumRiskCount: number;
+  missingPeriodCount: number;
+  zeroDeclarationOpenCount: number;
+  dueSoonCount: number;
+  filingCompletionRate: number;
+  receiptGapCount: number;
+}
+
+export interface TaxComplianceReport {
+  policyProfile: TaxPolicyProfile;
+  filingCalendar: TaxFilingCalendarItem[];
+  riskItems: TaxComplianceRiskItem[];
+  metrics: TaxComplianceMetrics;
+  assumptions: string[];
+}
+
 export interface EntityTransfer {
   id: number;
   fromEntityId: number;
@@ -180,6 +311,52 @@ export interface EntityTransfer {
   operatorUserId: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PayrollRunItem {
+  id: number;
+  runId: number;
+  companyId: number;
+  employeeId: number;
+  employeeName: string;
+  departmentName?: string | null;
+  period: string;
+  salary: number;
+  payableSalary: number;
+  socialPersonalAmount: number;
+  socialCompanyAmount: number;
+  housingPersonalAmount: number;
+  housingCompanyAmount: number;
+  taxAmount: number;
+  personalDeduction: number;
+  netPay: number;
+  companyCost: number;
+  snapshotJson: string;
+  createdAt: string;
+}
+
+export interface PayrollRun {
+  id: number;
+  companyId: number;
+  period: string;
+  name: string;
+  status: "draft" | "closed" | string;
+  employeeCount: number;
+  salaryTotal: number;
+  socialPersonalTotal: number;
+  socialCompanyTotal: number;
+  housingPersonalTotal: number;
+  housingCompanyTotal: number;
+  taxTotal: number;
+  personalDeductionTotal: number;
+  netPayTotal: number;
+  companyCostTotal: number;
+  createdByUserId: number;
+  closedByUserId?: number | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items?: PayrollRunItem[];
 }
 
 export interface EnterpriseSummary {
@@ -200,16 +377,39 @@ export interface EmployeePayload {
   companyId?: number;
   userId?: number | null;
   departmentId?: number | null;
+  employeeNo?: string | null;
   name: string;
+  legalName?: string | null;
+  preferredName?: string | null;
   email: string;
   phone?: string | null;
   position: string;
+  directManagerEmployeeId?: number | null;
+  jobLevel?: string | null;
+  workLocation?: string | null;
   employmentType: string;
   status: string;
   accessRole: string;
   accessScope: string;
   hireDate: string;
   leaveDate?: string | null;
+  probationStartDate?: string | null;
+  probationEndDate?: string | null;
+  contractStartDate?: string | null;
+  contractEndDate?: string | null;
+  contractType?: string | null;
+  contractStatus?: string | null;
+  educationLevel?: string | null;
+  graduationSchool?: string | null;
+  major?: string | null;
+  graduationDate?: string | null;
+  graduationYear?: number | null;
+  graduateStatus?: string | null;
+  skillTags?: string | null;
+  resumeSummary?: string | null;
+  materialStatus?: string | null;
+  profileVerifiedAt?: string | null;
+  profileVerifiedBy?: number | null;
   salary: number;
   socialInsurance: number;
   housingFund: number;
@@ -232,6 +432,8 @@ export interface EmployeePayload {
   housingFundCompanyRate?: number;
   personalDeduction?: number;
   emergencyContact?: string | null;
+  certificates?: EmployeeCertificate[];
+  experiences?: EmployeeExperience[];
 }
 
 export interface PermissionMatrix {
