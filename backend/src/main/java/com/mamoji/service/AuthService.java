@@ -6,6 +6,7 @@ import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.User;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
+import com.mamoji.service.support.PasswordHasher;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -20,18 +21,25 @@ import static com.mamoji.service.support.DomainSupport.touch;
 public class AuthService {
     private final InMemoryStore store;
     private final AccessControlService accessControl;
+    private final PasswordHasher passwordHasher;
 
-    public AuthService(InMemoryStore store, AccessControlService accessControl) {
+    public AuthService(InMemoryStore store, AccessControlService accessControl, PasswordHasher passwordHasher) {
         this.store = store;
         this.accessControl = accessControl;
+        this.passwordHasher = passwordHasher;
     }
 
     public Map<String, Object> login(Map<String, Object> body) {
         String email = text(body.get("email"));
         String password = text(body.get("password"));
         User user = store.findUserByEmail(email)
-            .filter(candidate -> candidate.passwordHash.equals(password))
+            .filter(candidate -> passwordHasher.matches(password, candidate.passwordHash))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password"));
+        if (passwordHasher.needsUpgrade(user.passwordHash)) {
+            user.passwordHash = passwordHasher.hash(password);
+            touch(user);
+            store.saveUser(user);
+        }
         return authenticated(user);
     }
 
@@ -47,7 +55,7 @@ public class AuthService {
             email,
             textOr(body.get("nickname"), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
             textOr(body.get("avatar"), "😊|#3370ff"),
-            text(body.get("password")),
+            passwordHasher.hash(text(body.get("password"))),
             Roles.USER,
             Permissions.ALL
         );
@@ -75,14 +83,14 @@ public class AuthService {
 
     public Map<String, Object> changePassword(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
-        if (!user.passwordHash.equals(text(body.get("oldPassword")))) {
+        if (!passwordHasher.matches(text(body.get("oldPassword")), user.passwordHash)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Old password is incorrect");
         }
         String newPassword = text(body.get("newPassword"));
         if (newPassword.length() < 6) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters");
         }
-        user.passwordHash = newPassword;
+        user.passwordHash = passwordHasher.hash(newPassword);
         touch(user);
         store.saveUser(user);
         return Map.of("success", true);

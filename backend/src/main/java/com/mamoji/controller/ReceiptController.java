@@ -1,8 +1,10 @@
 package com.mamoji.controller;
 
 import com.mamoji.common.PagedResponse;
+import com.mamoji.domain.Models.AuditLog;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.service.ReceiptService;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,6 +40,22 @@ public class ReceiptController {
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
         return service.summary(authorization, companyId);
+    }
+
+    @GetMapping("/{id}/audit-logs")
+    public List<AuditLog> auditLogs(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id
+    ) {
+        return service.auditLogs(authorization, id);
+    }
+
+    @GetMapping("/{id}/file-link")
+    public Map<String, Object> fileLink(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id
+    ) {
+        return service.fileLink(authorization, id);
     }
 
     @PostMapping

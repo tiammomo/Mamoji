@@ -324,6 +324,8 @@ public class InMemoryStore {
         Category teamMeal = category(testUser.id, "团队餐饮", "🍜", "#f97316", "expense");
         Category travel = category(testUser.id, "差旅交通", "🚇", "#0ea5e9", "expense");
         Category procurement = category(testUser.id, "办公采购", "🛍️", "#a855f7", "expense");
+        Category customerRefund = category(testUser.id, "客户退款", "↩", "#f43f5e", "expense");
+        Category severance = category(testUser.id, "离职补偿", "HR", "#8b5cf6", "expense");
         category(testUser.id, "办公租赁", "🏢", "#6366f1", "expense");
         category(testUser.id, "税费", "🧾", "#ef4444", "expense");
 
@@ -335,9 +337,12 @@ public class InMemoryStore {
             LocalDate.now().withDayOfMonth(1).toString(), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString(), 85);
 
         transaction(testUser.id, defaultLedger.id, 1, "15000", revenue.id, bank.id, LocalDate.now().minusDays(4).toString(), "客户项目回款");
+        transaction(testUser.id, defaultLedger.id, 1, "22000", revenue.id, bank.id, LocalDate.now().minusDays(5).toString(), "项目交付待回款：ERP 二期验收，预计下月到账");
         transaction(testUser.id, defaultLedger.id, 2, "68.5", teamMeal.id, cash.id, LocalDate.now().minusDays(1).toString(), "团队工作餐");
         transaction(testUser.id, defaultLedger.id, 2, "25", travel.id, cash.id, LocalDate.now().minusDays(2).toString(), "市内交通");
         transaction(testUser.id, defaultLedger.id, 2, "899", procurement.id, bank.id, LocalDate.now().minusDays(3).toString(), "办公键盘和配件");
+        transaction(testUser.id, defaultLedger.id, 2, "1200", customerRefund.id, bank.id, LocalDate.now().minusDays(2).toString(), "客户退款：交付范围调整，冲减收入");
+        transaction(testUser.id, defaultLedger.id, 2, "18000", severance.id, bank.id, LocalDate.now().minusDays(6).toString(), "离职补偿：N+1 经济补偿");
 
         monthlyBudget.spent = new BigDecimal("992.5");
         recalculateBudget(monthlyBudget);
