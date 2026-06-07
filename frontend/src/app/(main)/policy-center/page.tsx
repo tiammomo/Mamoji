@@ -19,6 +19,28 @@ import PageHeader from "@/components/common/PageHeader";
 
 type PolicyScope = "all" | "social-insurance" | "housing-fund" | "talent" | "tax" | "employment";
 type PolicyStatus = "active" | "watch" | "expired" | "draft";
+type ConclusionTone = "primary" | "success" | "warning" | "danger" | "neutral";
+
+type PolicyConclusion = {
+  label: string;
+  value: string;
+  helper: string;
+  tone: ConclusionTone;
+};
+
+type PolicyRule = {
+  item: string;
+  baseRange: string;
+  companyRate: string;
+  personalRate: string;
+  effectivePeriod: string;
+  note: string;
+};
+
+type PolicySource = {
+  name: string;
+  url: string;
+};
 
 type PolicyRecord = {
   key: string;
@@ -35,6 +57,9 @@ type PolicyRecord = {
   checklist: string[];
   sourceName: string;
   sourceUrl: string;
+  sourceLinks?: PolicySource[];
+  conclusions?: PolicyConclusion[];
+  rules?: PolicyRule[];
 };
 
 const scopeLabels: Record<PolicyScope, string> = {
@@ -53,6 +78,14 @@ const statusMeta: Record<PolicyStatus, { label: string; color: string }> = {
   draft: { label: "待核验", color: "arcoblue" },
 };
 
+const conclusionToneMeta: Record<ConclusionTone, { color: string; background: string; border: string }> = {
+  primary: { color: "var(--color-primary)", background: "rgba(99, 102, 241, 0.08)", border: "rgba(99, 102, 241, 0.26)" },
+  success: { color: "var(--color-success)", background: "rgba(16, 185, 129, 0.08)", border: "rgba(16, 185, 129, 0.24)" },
+  warning: { color: "var(--color-warning)", background: "rgba(245, 158, 11, 0.1)", border: "rgba(245, 158, 11, 0.28)" },
+  danger: { color: "rgb(var(--red-6))", background: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.24)" },
+  neutral: { color: "var(--text-color-2)", background: "var(--color-fill-1)", border: "var(--border-color-light)" },
+};
+
 const policies: PolicyRecord[] = [
   {
     key: "sz-social-base-2026",
@@ -69,6 +102,88 @@ const policies: PolicyRecord[] = [
     checklist: ["员工参保地区", "户籍类型", "医保档次", "各险种基数", "单位/个人比例"],
     sourceName: "深圳市社会保险基金管理局",
     sourceUrl: "https://hrss.sz.gov.cn/szsi/zxbs/zdyw/ywjs/",
+    sourceLinks: [
+      { name: "广东人社：2025 职工养老基数上下限", url: "https://hrss.gd.gov.cn/gkmlpt/content/4/4789/post_4789618.html" },
+      { name: "广东人社/税务：2025 企业养老单位费率", url: "https://hrss.gd.gov.cn/zwgk/gsgg/content/post_4640645.html" },
+      { name: "深圳医保局：2026 医保/生育基数与一档费率", url: "https://hsa.sz.gov.cn/fzlm/znts/cnyc/content/post_12568243.html" },
+      { name: "深圳社保业务办理", url: "https://hrss.sz.gov.cn/szsi/zxbs/zdyw/ywjs/" },
+    ],
+    conclusions: [
+      {
+        label: "养老保险基数",
+        value: "¥4,775 - ¥27,549",
+        helper: "2025-07 至 2026-06；单位 16%，个人 8%；深户另有地方补充养老单位 1%。",
+        tone: "primary",
+      },
+      {
+        label: "医保/生育基数",
+        value: "¥6,727 - ¥33,633",
+        helper: "2026 年；一档医保单位 6%、个人 2%；生育单位 0.5%、个人不缴。",
+        tone: "success",
+      },
+      {
+        label: "失业保险基数",
+        value: "¥2,520 - ¥44,265",
+        helper: "2025-07 至 2026-06；单位 0.8%，个人 0.2%。",
+        tone: "warning",
+      },
+      {
+        label: "工伤保险费率",
+        value: "0.2% - 1.4%",
+        helper: "按行业类别和浮动费率核定，单位承担，个人不缴。",
+        tone: "danger",
+      },
+    ],
+    rules: [
+      {
+        item: "养老保险",
+        baseRange: "¥4,775 - ¥27,549",
+        companyRate: "16%（深户地方补充养老另加 1%）",
+        personalRate: "8%",
+        effectivePeriod: "2025-07-01 至 2026-06-30",
+        note: "深圳按广东企业职工养老“其他地区”下限口径维护，员工以本人月工资核定。",
+      },
+      {
+        item: "医疗保险一档",
+        baseRange: "¥6,727 - ¥33,633",
+        companyRate: "6%",
+        personalRate: "2%",
+        effectivePeriod: "2026-01-01 至 2026-12-31",
+        note: "2026 年起企业职工基本医疗保险一档单位缴费费率恢复为 6%。",
+      },
+      {
+        item: "医疗保险二档",
+        baseRange: "¥6,727 - ¥33,633",
+        companyRate: "1.5%",
+        personalRate: "0.5%",
+        effectivePeriod: "2026-01-01 至 2026-12-31",
+        note: "人员薪酬模块按员工医保档次分别测算。",
+      },
+      {
+        item: "生育保险",
+        baseRange: "¥6,727 - ¥33,633",
+        companyRate: "0.5%",
+        personalRate: "0%",
+        effectivePeriod: "2026-01-01 至 2026-12-31",
+        note: "随职工基本医疗保险基数维护，由单位承担。",
+      },
+      {
+        item: "失业保险",
+        baseRange: "¥2,520 - ¥44,265",
+        companyRate: "0.8%",
+        personalRate: "0.2%",
+        effectivePeriod: "2025-07-01 至 2026-06-30",
+        note: "上下限随深圳最低工资和上年度平均工资口径调整。",
+      },
+      {
+        item: "工伤保险",
+        baseRange: "不低于 ¥2,520；按申报工资和行业核定",
+        companyRate: "0.2% - 1.4%",
+        personalRate: "0%",
+        effectivePeriod: "2024-07-01 起",
+        note: "八类行业基准费率，实际以单位行业类别和浮动费率为准。",
+      },
+    ],
   },
   {
     key: "sz-social-backpay-2026",
@@ -85,6 +200,26 @@ const policies: PolicyRecord[] = [
     checklist: ["补缴所属期", "劳动合同", "工资流水", "个税记录", "补缴/补登记申请表", "经办人证件"],
     sourceName: "深圳市社会保险基金管理局",
     sourceUrl: "https://hrss.sz.gov.cn/szsi/zxbs/zdyw/gpywcj/qyzgdjbjsb/",
+    conclusions: [
+      {
+        label: "办理顺序",
+        value: "先社保核定，再税务缴费",
+        helper: "补缴或补差通常先由社保经办核定金额，再进入税务申报缴费环节。",
+        tone: "primary",
+      },
+      {
+        label: "核心场景",
+        value: "漏参保/补差/补登记",
+        helper: "覆盖入职漏参保、历史基数补差、2024-07 后未参保补登记等场景。",
+        tone: "warning",
+      },
+      {
+        label: "关键证据",
+        value: "劳动关系 + 工资依据",
+        helper: "合同、工资流水、个税记录、就业登记和申请表需要成套归档。",
+        tone: "success",
+      },
+    ],
   },
   {
     key: "sz-housing-fund-ratio-2026",
@@ -101,6 +236,55 @@ const policies: PolicyRecord[] = [
     checklist: ["公积金基数", "个人比例", "单位比例", "缴存年月", "员工确认"],
     sourceName: "深圳政府在线",
     sourceUrl: "https://www.sz.gov.cn/hdjl/ywzsk/jsj/zfgjj/content/post_12703676.html",
+    sourceLinks: [
+      { name: "深圳政府在线：2025-07 至 2026-06 缴存基数规则", url: "https://www.sz.gov.cn/ztfw/zfly/wyw_184911/ywzsk_184570/content/post_12526734.html" },
+      { name: "深圳政府在线：比例调整范围", url: "https://www.sz.gov.cn/hdjl/ywzsk/jsj/zfgjj/content/post_12562346.html" },
+      { name: "深圳住建局：个人比例调整注意事项", url: "https://zjj.sz.gov.cn/szszfhjsjwzgkml/szszfhjsjwzgkml/seztfw/zfly/wyw/ywzsk/content/post_12752447.html" },
+    ],
+    conclusions: [
+      {
+        label: "缴存基数",
+        value: "¥2,520 - ¥44,265",
+        helper: "2025-07 至 2026-06 演示口径；下限为深圳最低工资，上限为 2024 年全市在岗职工月平均工资 3 倍。",
+        tone: "primary",
+      },
+      {
+        label: "单位比例",
+        value: "5% - 12%",
+        helper: "在一个公积金年度内通常只能调整一次，取 1% 的整数倍。",
+        tone: "success",
+      },
+      {
+        label: "个人比例",
+        value: "5% - 12%",
+        helper: "个人比例不得低于单位比例，且不得高于 12%。",
+        tone: "success",
+      },
+      {
+        label: "调整年度",
+        value: "7/1 - 次年 6/30",
+        helper: "基数和比例都按住房公积金年度管理，需要保留员工确认记录。",
+        tone: "warning",
+      },
+    ],
+    rules: [
+      {
+        item: "住房公积金基数",
+        baseRange: "¥2,520 - ¥44,265",
+        companyRate: "按单位选定比例 5% - 12%",
+        personalRate: "5% - 12%，个人不低于单位",
+        effectivePeriod: "2025-07-01 至 2026-06-30",
+        note: "缴存基数为职工本人上一年度月平均工资；新入职/调入员工按官方规则沿用当前基数。",
+      },
+      {
+        item: "比例调整",
+        baseRange: "不涉及基数",
+        companyRate: "5% - 12%，取 1% 整数倍",
+        personalRate: "5% - 12%，个人可按规则高于单位",
+        effectivePeriod: "每个公积金年度一次",
+        note: "单位下调比例时需同步确认个人比例是否调整，系统应保留员工确认记录。",
+      },
+    ],
   },
   {
     key: "sz-skill-training-2026",
@@ -117,6 +301,14 @@ const policies: PolicyRecord[] = [
     checklist: ["培训计划", "参训人员", "培训项目", "证书/评价证明", "申请材料"],
     sourceName: "深圳市人力资源和社会保障局",
     sourceUrl: "https://hrss.sz.gov.cn/zmhd/cjwt/cjwt/rsrc/content/post_12647175.html",
+    conclusions: [
+      {
+        label: "适用重点",
+        value: "培训项目 + 证书材料",
+        helper: "需要将培训计划、人员清单、证书或评价证明和补贴申请材料闭环归档。",
+        tone: "primary",
+      },
+    ],
   },
   {
     key: "sz-graduate-employment-2025",
@@ -133,6 +325,14 @@ const policies: PolicyRecord[] = [
     checklist: ["毕业年份", "学历/院校", "社保缴纳记录", "工商登记信息", "就业登记信息"],
     sourceName: "深圳市人力资源和社会保障局",
     sourceUrl: "https://hrss.sz.gov.cn/ztfw/yshj/jyzcyjd/content/post_12317950.html",
+    conclusions: [
+      {
+        label: "匹配维度",
+        value: "毕业年份 + 社保记录",
+        helper: "需要先做员工政策画像，再判断是否进入就业补贴、社保补贴或创业扶持流程。",
+        tone: "warning",
+      },
+    ],
   },
   {
     key: "sz-startup-incubation-2026",
@@ -149,6 +349,14 @@ const policies: PolicyRecord[] = [
     checklist: ["孵化基地资质", "入孵协议", "工商登记", "孵化服务记录", "申请期限"],
     sourceName: "深圳市人力资源和社会保障局",
     sourceUrl: "https://hrss.sz.gov.cn/ztfw/cjjy/cyfw/cybt/content/post_10278721.html",
+    conclusions: [
+      {
+        label: "补贴口径",
+        value: "¥3,000/户/年",
+        helper: "最长不超过 2 年，重点核验孵化关系、园区资质和服务记录。",
+        tone: "success",
+      },
+    ],
   },
 ];
 
@@ -164,26 +372,36 @@ const scopeIcon: Record<PolicyScope, React.ReactNode> = {
 export default function PolicyCenterPage() {
   const searchParams = useSearchParams();
   const initialScope = (searchParams.get("scope") || "all") as PolicyScope;
+  const initialPolicy = policies.find((policy) => initialScope !== "all" && policy.scope === initialScope) || policies[0];
   const [scope, setScope] = useState<PolicyScope>(scopeLabels[initialScope] ? initialScope : "all");
   const [keyword, setKeyword] = useState("");
-  const [selectedPolicy, setSelectedPolicy] = useState<PolicyRecord>(policies[0]);
+  const [selectedPolicyKey, setSelectedPolicyKey] = useState(initialPolicy.key);
 
   const filteredPolicies = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     return policies.filter((policy) => {
-      const searchable = `${policy.title} ${policy.summary} ${policy.department} ${policy.region} ${policy.businessUse}`.toLowerCase();
+      const conclusions = (policy.conclusions || []).map((item) => `${item.label} ${item.value} ${item.helper}`).join(" ");
+      const rules = (policy.rules || []).map((item) => `${item.item} ${item.baseRange} ${item.companyRate} ${item.personalRate} ${item.note}`).join(" ");
+      const searchable =
+        `${policy.title} ${policy.summary} ${policy.department} ${policy.region} ${policy.businessUse} ${conclusions} ${rules}`.toLowerCase();
       if (scope !== "all" && policy.scope !== scope) return false;
       if (normalizedKeyword && !searchable.includes(normalizedKeyword)) return false;
       return true;
     });
   }, [keyword, scope]);
 
+  const selectedPolicy =
+    filteredPolicies.find((policy) => policy.key === selectedPolicyKey) ||
+    policies.find((policy) => policy.key === selectedPolicyKey) ||
+    filteredPolicies[0] ||
+    policies[0];
+
   const activeCount = policies.filter((policy) => policy.status === "active").length;
   const watchCount = policies.filter((policy) => policy.status === "watch").length;
   const readiness = Math.round((activeCount / policies.length) * 100);
 
   return (
-    <div className="mx-auto max-w-7xl animate-fade-in">
+    <div className="mx-auto max-w-[1600px] animate-fade-in">
       <PageHeader
         title="政策中心"
         subtitle="多地区政策版本、官方来源、适用模块和资料清单集中管理"
@@ -235,8 +453,8 @@ export default function PolicyCenterPage() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <Card style={{ borderRadius: 12 }} title="政策版本列表">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(300px,380px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+        <Card className="min-w-0" style={{ borderRadius: 12 }} title="政策版本列表">
           <div className="space-y-3">
             {filteredPolicies.map((policy) => {
               const selected = selectedPolicy.key === policy.key;
@@ -245,7 +463,7 @@ export default function PolicyCenterPage() {
                 <button
                   key={policy.key}
                   type="button"
-                  onClick={() => setSelectedPolicy(policy)}
+                  onClick={() => setSelectedPolicyKey(policy.key)}
                   className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent p-3 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                   style={{
                     borderColor: selected ? "rgba(99, 102, 241, 0.42)" : "var(--border-color-light)",
@@ -270,7 +488,7 @@ export default function PolicyCenterPage() {
           </div>
         </Card>
 
-        <Card style={{ borderRadius: 12 }} title="政策详情">
+        <Card className="min-w-0" style={{ borderRadius: 12 }} title="政策详情">
           <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -282,18 +500,18 @@ export default function PolicyCenterPage() {
               </div>
               <Tag color={statusMeta[selectedPolicy.status].color}>{statusMeta[selectedPolicy.status].label}</Tag>
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div className="rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
+              <div className="min-w-0 rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
                 <div className="text-xs" style={{ color: "var(--text-color-3)" }}>政策类型</div>
-                <div className="mt-1 font-semibold" style={{ color: "var(--text-color-1)" }}>{scopeLabels[selectedPolicy.scope]}</div>
+                <div className="mt-1 break-words font-semibold" style={{ color: "var(--text-color-1)" }}>{scopeLabels[selectedPolicy.scope]}</div>
               </div>
-              <div className="rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+              <div className="min-w-0 rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
                 <div className="text-xs" style={{ color: "var(--text-color-3)" }}>适用地区</div>
-                <div className="mt-1 font-semibold" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.region}</div>
+                <div className="mt-1 break-words font-semibold" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.region}</div>
               </div>
-              <div className="rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+              <div className="min-w-0 rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
                 <div className="text-xs" style={{ color: "var(--text-color-3)" }}>版本</div>
-                <div className="mt-1 font-semibold" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.version}</div>
+                <div className="mt-1 break-words font-semibold" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.version}</div>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -307,6 +525,73 @@ export default function PolicyCenterPage() {
               </div>
             </div>
           </div>
+
+          {selectedPolicy.conclusions?.length ? (
+            <div className="mt-4">
+              <div className="mb-3 font-medium" style={{ color: "var(--text-color-1)" }}>关键结论</div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+                {selectedPolicy.conclusions.map((conclusion) => {
+                  const tone = conclusionToneMeta[conclusion.tone];
+                  return (
+                    <div
+                      key={`${selectedPolicy.key}-${conclusion.label}`}
+                      className="min-w-0 rounded-xl border p-4"
+                      style={{ borderColor: tone.border, backgroundColor: tone.background }}
+                    >
+                      <div className="text-xs font-medium" style={{ color: "var(--text-color-3)" }}>{conclusion.label}</div>
+                      <div className="mt-2 break-words text-lg font-bold" style={{ color: tone.color }}>{conclusion.value}</div>
+                      <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-2)" }}>{conclusion.helper}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {selectedPolicy.rules?.length ? (
+            <div className="mt-4">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                <div className="font-medium" style={{ color: "var(--text-color-1)" }}>缴费/计算口径</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>逐项展示基数、公司承担、个人扣缴和执行期</div>
+              </div>
+              <div className="space-y-3">
+                {selectedPolicy.rules.map((rule) => (
+                  <div
+                    key={`${selectedPolicy.key}-${rule.item}`}
+                    className="rounded-xl border p-4"
+                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-base font-semibold" style={{ color: "var(--text-color-1)" }}>{rule.item}</div>
+                      <Tag color="arcoblue">{rule.effectivePeriod}</Tag>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+                      {[
+                        { label: "基数上下限", value: rule.baseRange },
+                        { label: "公司承担比例", value: rule.companyRate },
+                        { label: "个人扣缴比例", value: rule.personalRate },
+                        { label: "执行周期", value: rule.effectivePeriod },
+                      ].map((field) => (
+                        <div
+                          key={`${rule.item}-${field.label}`}
+                          className="min-w-0 rounded-lg border px-3 py-2"
+                          style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-bg-2)" }}
+                        >
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{field.label}</div>
+                          <div className="mt-1 break-words text-sm font-semibold leading-5" style={{ color: "var(--text-color-1)" }}>
+                            {field.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 rounded-lg px-3 py-2 text-xs leading-5" style={{ backgroundColor: "var(--color-fill-1)", color: "var(--text-color-3)" }}>
+                      {rule.note}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div>
@@ -337,6 +622,24 @@ export default function PolicyCenterPage() {
               打开来源
             </Button>
           </div>
+
+          {selectedPolicy.sourceLinks?.length ? (
+            <div className="mt-3 rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+              <div className="mb-2 text-xs" style={{ color: "var(--text-color-3)" }}>结论引用来源</div>
+              <div className="flex flex-wrap gap-2">
+                {selectedPolicy.sourceLinks.map((source) => (
+                  <Button
+                    key={source.url}
+                    size="small"
+                    type="outline"
+                    onClick={() => window.open(source.url, "_blank", "noopener,noreferrer")}
+                  >
+                    {source.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 flex items-start gap-2 rounded-xl border p-3 text-xs leading-5" style={{ borderColor: "rgba(245, 158, 11, 0.32)", color: "var(--color-warning)" }}>
             <IconExclamationCircle className="mt-0.5 shrink-0" />
