@@ -46,6 +46,27 @@ MAMOJI_SQLITE_PATH=/absolute/path/to/mamoji.db mvn -f backend/pom.xml spring-boo
 
 默认数据库位于 `backend/data/mamoji.db`。该目录用于本地演示数据，不应提交到 Git。
 
+**可选：启用 MinIO 对象存储**
+
+默认情况下，票据附件只记录文件元数据，方便本地演示。生产或准生产环境建议启用 MinIO：
+
+```bash
+docker run -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  quay.io/minio/minio server /data --console-address ":9001"
+
+MAMOJI_OBJECT_STORAGE_ENABLED=true \
+MAMOJI_MINIO_ENDPOINT=http://localhost:9000 \
+MAMOJI_MINIO_ACCESS_KEY=minioadmin \
+MAMOJI_MINIO_SECRET_KEY=minioadmin \
+MAMOJI_MINIO_BUCKET=mamoji \
+MAMOJI_MINIO_PRESIGNED_URL_EXPIRY_SECONDS=600 \
+mvn -f backend/pom.xml spring-boot:run
+```
+
+开启后，票据、发票、合同、报销附件会写入 MinIO bucket，并在票据台账中记录 bucket/object key。业务侧通过后端生成短时效访问链接查看附件，建议 bucket 保持私有。
+
 ## 功能概览
 
 - 公司经营台账：围绕公司主体管理资金账户、经营流水、成本类型和收入类型。
