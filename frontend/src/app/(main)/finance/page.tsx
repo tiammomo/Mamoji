@@ -1,0 +1,759 @@
+"use client";
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Button, Card, Empty, Message, Progress, Skeleton, Tag } from "@arco-design/web-react";
+import {
+  IconCalendar,
+  IconCheckCircle,
+  IconDashboard,
+  IconExclamationCircle,
+  IconFile,
+  IconRefresh,
+  IconRight,
+  IconSafe,
+  IconStorage,
+  IconSwap,
+} from "@arco-design/web-react/icon";
+import { useRouter } from "next/navigation";
+import PageHeader from "@/components/common/PageHeader";
+import AmountDisplay from "@/components/common/AmountDisplay";
+import { accountApi } from "@/lib/api/accounts";
+import { budgetApi } from "@/lib/api/budgets";
+import { receiptApi } from "@/lib/api/receipts";
+import { statsApi } from "@/lib/api/stats";
+import { transactionApi } from "@/lib/api/transactions";
+import { useAppStore } from "@/lib/stores/appStore";
+import { formatAmount, formatDate } from "@/lib/utils/format";
+import type {
+  Account,
+  AccountSummary,
+  Budget,
+  OverviewStats,
+  ReceiptSummary,
+  ReceiptVoucher,
+  Transaction,
+} from "@/lib/types";
+
+type FinanceView = {
+  accountSummary: AccountSummary | null;
+  accounts: Account[];
+  receiptSummary: ReceiptSummary | null;
+  vouchers: ReceiptVoucher[];
+  budgets: Budget[];
+  transactions: Transaction[];
+  stats: OverviewStats | null;
+};
+
+type FinanceAction = {
+  title: string;
+  detail: string;
+  path: string;
+  severity: "success" | "notice" | "warning" | "danger";
+  icon: ReactNode;
+};
+
+const emptyView: FinanceView = {
+  accountSummary: null,
+  accounts: [],
+  receiptSummary: null,
+  vouchers: [],
+  budgets: [],
+  transactions: [],
+  stats: null,
+};
+
+const accountTypeMeta: Record<string, { label: string; color: string; icon: ReactNode }> = {
+  cash: { label: "现金", color: "green", icon: <IconStorage /> },
+  bank: { label: "银行账户", color: "arcoblue", icon: <IconSafe /> },
+  credit: { label: "信用账户", color: "orange", icon: <IconSwap /> },
+  digital: { label: "数字钱包", color: "cyan", icon: <IconStorage /> },
+  investment: { label: "理财账户", color: "purple", icon: <IconSafe /> },
+  debt: { label: "负债账户", color: "red", icon: <IconExclamationCircle /> },
+};
+
+const voucherTypeLabels: Record<string, string> = {
+  sales_invoice: "销项发票",
+  purchase_invoice: "进项发票",
+  receipt: "收据",
+  bank_slip: "银行回单",
+  contract: "合同付款",
+  reimbursement: "报销凭证",
+  tax_receipt: "税务回执",
+};
+
+const statusMeta: Record<FinanceAction["severity"], { color: string; label: string }> = {
+  success: { color: "green", label: "正常" },
+  notice: { color: "arcoblue", label: "关注" },
+  warning: { color: "orange", label: "预警" },
+  danger: { color: "red", label: "风险" },
+};
+
+const currency = "CNY";
+
+const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(value, max));
+
+const daysUntil = (date?: string | null) => {
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
+};
+
+const isOpenVoucher = (voucher: ReceiptVoucher) =>
+  voucher.status !== "archived" && voucher.status !== "rejected";
+
+const isReceivable = (voucher: ReceiptVoucher) =>
+  voucher.direction === "income"
+  && isOpenVoucher(voucher)
+  && (voucher.status === "pending_review" || !voucher.transactionId);
+
+const isPayable = (voucher: ReceiptVoucher) =>
+  voucher.direction === "expense"
+  && isOpenVoucher(voucher)
+  && (voucher.status === "pending_review" || !voucher.transactionId);
+
+const riskColor = (riskLevel: string) => {
+  if (riskLevel === "critical" || riskLevel === "high") return "red";
+  if (riskLevel === "medium") return "orange";
+  return "green";
+};
+
+const loadFinanceView = async (): Promise<FinanceView> => {
+  const [
+    accountSummaryResult,
+    accountsResult,
+    receiptSummaryResult,
+    vouchersResult,
+    budgetsResult,
+    transactionsResult,
+    statsResult,
+  ] = await Promise.allSettled([
+    accountApi.summary(),
+    accountApi.list(),
+    receiptApi.summary(),
+    receiptApi.list({ page: 0, size: 50 }),
+    budgetApi.active(),
+    transactionApi.list({ page: 0, size: 8 }),
+    statsApi.overview(),
+  ]);
+
+  return {
+    accountSummary: accountSummaryResult.status === "fulfilled" ? accountSummaryResult.value.data : null,
+    accounts: accountsResult.status === "fulfilled" ? accountsResult.value.data : [],
+    receiptSummary: receiptSummaryResult.status === "fulfilled" ? receiptSummaryResult.value.data : null,
+    vouchers: vouchersResult.status === "fulfilled" ? vouchersResult.value.data.content : [],
+    budgets: budgetsResult.status === "fulfilled" ? budgetsResult.value.data : [],
+    transactions: transactionsResult.status === "fulfilled" ? transactionsResult.value.data.content : [],
+    stats: statsResult.status === "fulfilled" ? statsResult.value.data : null,
+  };
+};
+
+export default function FinancePage() {
+  const router = useRouter();
+  const activeCompanyId = useAppStore((state) => state.activeCompanyId);
+  const [view, setView] = useState<FinanceView>(emptyView);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadData = async (quiet = false) => {
+    if (quiet) setRefreshing(true);
+    try {
+      setView(await loadFinanceView());
+      if (quiet) Message.success("财务总览已刷新");
+    } catch {
+      Message.error("财务总览加载失败");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      const nextView = await loadFinanceView();
+      if (!cancelled) {
+        setView(nextView);
+        setLoading(false);
+      }
+    };
+
+    void load().catch(() => {
+      if (!cancelled) {
+        Message.error("财务总览加载失败");
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCompanyId]);
+
+  const financeModel = useMemo(() => {
+    const accountSummary = view.accountSummary;
+    const receiptSummary = view.receiptSummary;
+    const monthlyIncome = accountSummary?.currentMonthIncome ?? view.stats?.monthlyIncome ?? 0;
+    const monthlyExpense = accountSummary?.currentMonthExpense ?? view.stats?.monthlyExpense ?? 0;
+    const monthlyNetFlow = monthlyIncome - monthlyExpense;
+    const availableBalance = accountSummary?.availableBalance ?? 0;
+    const liquidityMonths = monthlyExpense > 0 ? availableBalance / monthlyExpense : null;
+    const receivableVouchers = view.vouchers.filter(isReceivable);
+    const payableVouchers = view.vouchers.filter(isPayable);
+    const receivableAmount = receivableVouchers.reduce((sum, voucher) => sum + (voucher.amount || 0), 0);
+    const payableAmount = payableVouchers.reduce((sum, voucher) => sum + (voucher.amount || 0), 0);
+    const overduePayables = payableVouchers.filter((voucher) => {
+      const days = daysUntil(voucher.dueDate);
+      return days !== null && days < 0;
+    });
+    const budgetRisks = view.budgets.filter((budget) =>
+      budget.warningReached || budget.riskLevel === "high" || budget.riskLevel === "critical"
+    );
+    const accountRisks = view.accounts.filter((account) =>
+      account.riskLevel === "high" || account.riskLevel === "critical" || account.reconciliationStatus === "exception"
+    );
+    const pendingReceiptCount = receiptSummary?.pendingReviewCount ?? 0;
+    const missingAttachmentCount = receiptSummary?.missingAttachmentCount ?? 0;
+    const missingTransactionCount = receiptSummary?.missingTransactionCount ?? 0;
+
+    const deductions = [
+      Math.min((accountSummary?.pendingReconciliationCount ?? 0) * 6, 18),
+      Math.min((accountSummary?.highRiskCount ?? 0) * 10, 20),
+      Math.min(pendingReceiptCount * 4, 16),
+      Math.min((missingAttachmentCount + missingTransactionCount) * 5, 20),
+      Math.min(budgetRisks.length * 8, 16),
+      monthlyNetFlow < 0 ? 10 : 0,
+    ];
+    const healthScore = clamp(100 - deductions.reduce((sum, item) => sum + item, 0));
+    const healthSeverity: FinanceAction["severity"] =
+      healthScore >= 85 ? "success" : healthScore >= 70 ? "notice" : healthScore >= 55 ? "warning" : "danger";
+
+    const accountStructure = Object.entries(
+      view.accounts.reduce<Record<string, { type: string; count: number; balance: number; available: number }>>((map, account) => {
+        const current = map[account.type] || { type: account.type, count: 0, balance: 0, available: 0 };
+        current.count += 1;
+        current.balance += account.balance || 0;
+        current.available += account.availableBalance || 0;
+        map[account.type] = current;
+        return map;
+      }, {})
+    )
+      .map(([, item]) => item)
+      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
+
+    const actions: FinanceAction[] = [];
+    if ((accountSummary?.pendingReconciliationCount ?? 0) > 0) {
+      actions.push({
+        title: "资金账户需要对账",
+        detail: `${accountSummary?.pendingReconciliationCount ?? 0} 个账户处于待对账状态`,
+        path: "/accounts",
+        severity: "warning",
+        icon: <IconSafe />,
+      });
+    }
+    if (accountRisks.length > 0) {
+      actions.push({
+        title: "账户风险需要复核",
+        detail: `${accountRisks.length} 个账户存在高风险或异常对账状态`,
+        path: "/accounts",
+        severity: "danger",
+        icon: <IconExclamationCircle />,
+      });
+    }
+    if (pendingReceiptCount > 0 || missingAttachmentCount > 0) {
+      actions.push({
+        title: "票据核验未完成",
+        detail: `${pendingReceiptCount} 张待核验，${missingAttachmentCount} 张缺附件`,
+        path: "/receipts",
+        severity: "warning",
+        icon: <IconFile />,
+      });
+    }
+    if (missingTransactionCount > 0) {
+      actions.push({
+        title: "凭证流水未匹配",
+        detail: `${missingTransactionCount} 张凭证尚未关联经营流水`,
+        path: "/receipts",
+        severity: "notice",
+        icon: <IconSwap />,
+      });
+    }
+    if (budgetRisks.length > 0) {
+      actions.push({
+        title: "预算执行接近上限",
+        detail: `${budgetRisks.length} 个预算口径触发预警或高风险`,
+        path: "/budgets",
+        severity: "warning",
+        icon: <IconCalendar />,
+      });
+    }
+    if (monthlyNetFlow < 0) {
+      actions.push({
+        title: "本月现金净流出",
+        detail: `本月净流出 ${formatAmount(Math.abs(monthlyNetFlow), currency)}，建议复盘成本项`,
+        path: "/transactions",
+        severity: "danger",
+        icon: <IconExclamationCircle />,
+      });
+    }
+    if (actions.length === 0) {
+      actions.push({
+        title: "财务闭环状态良好",
+        detail: "当前资金、票据、预算没有明显待处理风险",
+        path: "/finance",
+        severity: "success",
+        icon: <IconCheckCircle />,
+      });
+    }
+
+    const closingTasks = [
+      {
+        label: "资金账户对账",
+        done: (accountSummary?.pendingReconciliationCount ?? 0) === 0,
+        detail: (accountSummary?.pendingReconciliationCount ?? 0) === 0
+          ? "账户余额已完成核对"
+          : `${accountSummary?.pendingReconciliationCount ?? 0} 个账户待对账`,
+      },
+      {
+        label: "票据核验归档",
+        done: pendingReceiptCount === 0 && missingAttachmentCount === 0,
+        detail: `${pendingReceiptCount} 张待核验，${missingAttachmentCount} 张缺附件`,
+      },
+      {
+        label: "凭证流水匹配",
+        done: missingTransactionCount === 0,
+        detail: missingTransactionCount === 0 ? "凭证与流水匹配完成" : `${missingTransactionCount} 张凭证未匹配`,
+      },
+      {
+        label: "预算偏差复盘",
+        done: budgetRisks.length === 0,
+        detail: budgetRisks.length === 0 ? "暂无预算预警" : `${budgetRisks.length} 个预算需复盘`,
+      },
+      {
+        label: "月度利润检查",
+        done: monthlyNetFlow >= 0,
+        detail: monthlyNetFlow >= 0 ? "本月经营净额为正" : "本月经营净额为负",
+      },
+    ];
+
+    return {
+      monthlyIncome,
+      monthlyExpense,
+      monthlyNetFlow,
+      availableBalance,
+      liquidityMonths,
+      receivableAmount,
+      payableAmount,
+      receivableVouchers,
+      payableVouchers,
+      overduePayables,
+      budgetRisks,
+      accountRisks,
+      healthScore,
+      healthSeverity,
+      accountStructure,
+      actions,
+      closingTasks,
+    };
+  }, [view]);
+
+  const metricCards = [
+    {
+      label: "可用资金",
+      value: formatAmount(financeModel.availableBalance, currency),
+      hint: `${view.accountSummary?.activeAccountCount || 0} 个启用账户`,
+      icon: <IconSafe />,
+      color: "var(--color-primary)",
+    },
+    {
+      label: "本月净现金流",
+      value: formatAmount(financeModel.monthlyNetFlow, currency),
+      hint: `流入 ${formatAmount(financeModel.monthlyIncome, currency)}`,
+      icon: <IconSwap />,
+      color: financeModel.monthlyNetFlow >= 0 ? "var(--color-success)" : "var(--color-danger)",
+    },
+    {
+      label: "票据缺口",
+      value: String((view.receiptSummary?.pendingReviewCount || 0) + (view.receiptSummary?.missingTransactionCount || 0)),
+      hint: `${view.receiptSummary?.missingAttachmentCount || 0} 张缺附件`,
+      icon: <IconFile />,
+      color: "var(--color-warning)",
+    },
+    {
+      label: "财务健康度",
+      value: `${financeModel.healthScore.toFixed(0)}分`,
+      hint: statusMeta[financeModel.healthSeverity].label,
+      icon: <IconDashboard />,
+      color: financeModel.healthSeverity === "danger" ? "var(--color-danger)" : "var(--color-success)",
+    },
+  ];
+
+  return (
+    <div className="mx-auto max-w-7xl animate-fade-in">
+      <PageHeader
+        title="财务总览"
+        subtitle="资金安全、票据闭环、应收应付、月结动作集中管理"
+        icon={<IconDashboard />}
+        extra={
+          <div className="flex items-center gap-2">
+            {refreshing && <Tag color="arcoblue">刷新中</Tag>}
+            <Button icon={<IconRefresh />} onClick={() => loadData(true)}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<IconFile />} onClick={() => router.push("/receipts")}>
+              处理凭证
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {metricCards.map((card) => (
+          <Card key={card.label} style={{ borderRadius: 12, minHeight: 150 }}>
+            <div className="flex h-full min-h-[110px] flex-col justify-between">
+              <div className="flex items-start justify-between">
+                <div className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</div>
+                <span className="inline-flex text-xl" style={{ color: card.color }}>{card.icon}</span>
+              </div>
+              {loading ? (
+                <Skeleton />
+              ) : (
+                <div>
+                  <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{card.value}</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>{card.hint}</div>
+                </div>
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.12fr_0.88fr]">
+        <Card style={{ borderRadius: 12 }} title="财务健康雷达">
+          {loading ? (
+            <Skeleton />
+          ) : (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
+              <div
+                className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border px-5 py-6"
+                style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+              >
+                <Progress
+                  type="circle"
+                  percent={financeModel.healthScore}
+                  width={132}
+                  color={financeModel.healthSeverity === "danger" ? "var(--color-danger)" : "var(--color-primary)"}
+                  formatText={() => `${financeModel.healthScore.toFixed(0)}分`}
+                />
+                <Tag className="mt-4" color={statusMeta[financeModel.healthSeverity].color}>
+                  {statusMeta[financeModel.healthSeverity].label}
+                </Tag>
+                <div className="mt-3 text-center text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                  由对账、票据、预算、现金流和账户风险综合计算
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>现金可覆盖</div>
+                  <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                    {financeModel.liquidityMonths === null ? "--" : `${financeModel.liquidityMonths.toFixed(1)} 个月`}
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    按本月成本支出估算
+                  </div>
+                </div>
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>待对账/高风险账户</div>
+                  <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                    {(view.accountSummary?.pendingReconciliationCount || 0) + financeModel.accountRisks.length}
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    建议月结前完成复核
+                  </div>
+                </div>
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>应收待闭环</div>
+                  <div className="mt-2 text-xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                    {formatAmount(financeModel.receivableAmount, currency)}
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    {financeModel.receivableVouchers.length} 张收入凭证待匹配
+                  </div>
+                </div>
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>应付待处理</div>
+                  <div className="mt-2 text-xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                    {formatAmount(financeModel.payableAmount, currency)}
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    {financeModel.overduePayables.length} 张可能逾期
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card
+          style={{ borderRadius: 12 }}
+          title="重点动作"
+          extra={<Button type="text" size="small" onClick={() => router.push("/accounts")}>资金账户</Button>}
+        >
+          {loading ? (
+            <Skeleton />
+          ) : (
+            <div className="space-y-3">
+              {financeModel.actions.slice(0, 5).map((action) => {
+                const meta = statusMeta[action.severity];
+                return (
+                  <button
+                    key={action.title}
+                    type="button"
+                    onClick={() => router.push(action.path)}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent p-3 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                    style={{ borderColor: "var(--border-color-light)" }}
+                  >
+                    <span
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
+                      style={{ backgroundColor: "var(--color-fill-1)", color: meta.color === "red" ? "var(--color-danger)" : "var(--color-primary)" }}
+                    >
+                      {action.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{action.title}</span>
+                      <span className="mt-1 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{action.detail}</span>
+                    </span>
+                    <Tag color={meta.color}>{meta.label}</Tag>
+                    <IconRight style={{ color: "var(--text-color-4)" }} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Card style={{ borderRadius: 12 }} title="资金结构">
+          {loading ? (
+            <Skeleton />
+          ) : financeModel.accountStructure.length === 0 ? (
+            <Empty description="暂无资金账户" />
+          ) : (
+            <div className="space-y-3">
+              {financeModel.accountStructure.map((item) => {
+                const meta = accountTypeMeta[item.type] || { label: item.type, color: "gray", icon: <IconSafe /> };
+                const percent = view.accountSummary?.totalAssets
+                  ? clamp(Math.abs(item.balance) / Math.max(Math.abs(view.accountSummary.totalAssets), 1) * 100)
+                  : 0;
+                return (
+                  <div key={item.type} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
+                          style={{ backgroundColor: "var(--color-fill-1)", color: "var(--color-primary)" }}
+                        >
+                          {meta.icon}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{meta.label}</div>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.count} 个账户</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{formatAmount(item.balance, currency)}</div>
+                        <Tag size="small" color={meta.color}>{percent.toFixed(0)}%</Tag>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ backgroundColor: "var(--border-color-light)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: "var(--color-primary)" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="应收应付">
+          {loading ? (
+            <Skeleton />
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>应收待闭环</span>
+                  <Tag color="green">{financeModel.receivableVouchers.length} 张</Tag>
+                </div>
+                <div className="mt-2 text-2xl font-bold amount-income">{formatAmount(financeModel.receivableAmount, currency)}</div>
+              </div>
+              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>应付待处理</span>
+                  <Tag color={financeModel.overduePayables.length > 0 ? "red" : "orange"}>{financeModel.payableVouchers.length} 张</Tag>
+                </div>
+                <div className="mt-2 text-2xl font-bold amount-expense">{formatAmount(financeModel.payableAmount, currency)}</div>
+              </div>
+              <div className="space-y-2">
+                {[...financeModel.receivableVouchers, ...financeModel.payableVouchers].slice(0, 4).map((voucher) => {
+                  const days = daysUntil(voucher.dueDate);
+                  return (
+                    <div key={voucher.id} className="flex items-center justify-between gap-3 text-sm">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{voucher.title}</div>
+                        <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+                          {voucherTypeLabels[voucher.voucherType] || voucher.voucherType} · {voucher.counterparty}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <AmountDisplay amount={voucher.amount} type={voucher.direction === "income" ? 1 : 2} size="small" />
+                        <div className="text-xs" style={{ color: days !== null && days < 0 ? "var(--color-danger)" : "var(--text-color-3)" }}>
+                          {days === null ? "无截止日" : days < 0 ? `逾期 ${Math.abs(days)} 天` : `${days} 天后`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {financeModel.receivableVouchers.length + financeModel.payableVouchers.length === 0 && (
+                  <Empty description="暂无应收应付待办" />
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="月结清单">
+          {loading ? (
+            <Skeleton />
+          ) : (
+            <div className="space-y-3">
+              {financeModel.closingTasks.map((task) => (
+                <div key={task.label} className="flex items-start gap-3 rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+                  <span
+                    className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full"
+                    style={{
+                      backgroundColor: task.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
+                      color: task.done ? "var(--color-success)" : "var(--color-warning)",
+                    }}
+                  >
+                    {task.done ? <IconCheckCircle /> : <IconExclamationCircle />}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{task.label}</div>
+                    <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{task.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Card
+          style={{ borderRadius: 12 }}
+          title="预算与费用控制"
+          extra={<Button type="text" size="small" onClick={() => router.push("/budgets")}>查看预算</Button>}
+        >
+          {loading ? (
+            <Skeleton />
+          ) : financeModel.budgetRisks.length === 0 ? (
+            <Empty description="暂无预算风险" />
+          ) : (
+            <div className="space-y-3">
+              {financeModel.budgetRisks.slice(0, 5).map((budget) => (
+                <div key={budget.id} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{budget.name}</div>
+                      <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                        {budget.startDate} 至 {budget.endDate}
+                      </div>
+                    </div>
+                    <Tag color={riskColor(budget.riskLevel)}>{(budget.usageRate * 100).toFixed(0)}%</Tag>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ backgroundColor: "var(--border-color-light)" }}>
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${clamp(budget.usageRate * 100)}%`,
+                        backgroundColor: budget.riskLevel === "high" || budget.riskLevel === "critical"
+                          ? "var(--color-danger)"
+                          : "var(--color-warning)",
+                      }}
+                    />
+                  </div>
+                  <div className="mt-2 flex justify-between text-xs" style={{ color: "var(--text-color-3)" }}>
+                    <span>已用 {formatAmount(budget.spent, currency)}</span>
+                    <span>预算 {formatAmount(budget.amount, currency)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card
+          style={{ borderRadius: 12 }}
+          title="最近经营流水"
+          extra={<Button type="text" size="small" onClick={() => router.push("/transactions")}>查看流水</Button>}
+        >
+          {loading ? (
+            <Skeleton />
+          ) : view.transactions.length === 0 ? (
+            <Empty description="暂无经营流水" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col style={{ width: "36%" }} />
+                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "12%" }} />
+                </colgroup>
+                <thead>
+                  <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
+                    <th className="px-3 py-2 text-left font-medium" style={{ color: "var(--text-color-2)" }}>事项</th>
+                    <th className="px-3 py-2 text-left font-medium" style={{ color: "var(--text-color-2)" }}>分类</th>
+                    <th className="px-3 py-2 text-left font-medium" style={{ color: "var(--text-color-2)" }}>账户</th>
+                    <th className="px-3 py-2 text-right font-medium" style={{ color: "var(--text-color-2)" }}>金额</th>
+                    <th className="px-3 py-2 text-center font-medium" style={{ color: "var(--text-color-2)" }}>日期</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.transactions.map((transaction) => (
+                    <tr key={transaction.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
+                      <td className="px-3 py-3 align-middle">
+                        <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{transaction.note || "未命名流水"}</div>
+                        {transaction.amount >= 10000 && <Tag className="mt-1" size="small" color="orange">大额</Tag>}
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <div className="truncate" style={{ color: "var(--text-color-2)" }}>{transaction.categoryName || "未分类"}</div>
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <div className="truncate" style={{ color: "var(--text-color-2)" }}>{transaction.accountName || "未设置"}</div>
+                      </td>
+                      <td className="px-3 py-3 text-right align-middle">
+                        <AmountDisplay amount={transaction.amount} type={transaction.type} showSign size="small" />
+                      </td>
+                      <td className="px-3 py-3 text-center align-middle whitespace-nowrap" style={{ color: "var(--text-color-3)" }}>
+                        {formatDate(transaction.date)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}

@@ -176,6 +176,31 @@ body {
   color: var(--text-color-1) !important;
 }
 
+.compensation-payroll-modal.arco-modal {
+  overflow: hidden;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--bg-color-card) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+.compensation-payroll-modal .arco-modal-content,
+.compensation-payroll-modal .arco-modal-header,
+.compensation-payroll-modal .arco-modal-footer,
+.compensation-payroll-modal .arco-modal-body {
+  background: var(--bg-color-card) !important;
+  color: var(--text-color-1) !important;
+}
+
+.compensation-payroll-modal .arco-modal-header,
+.compensation-payroll-modal .arco-modal-footer {
+  border-color: var(--border-color) !important;
+}
+
+.compensation-payroll-modal .arco-modal-body {
+  padding: 20px 24px !important;
+}
+
 .arco-select-popup,
 .arco-select-popup .arco-select-popup-inner {
   background: var(--bg-color-card) !important;

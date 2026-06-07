@@ -72,6 +72,14 @@ type TaxFormValues = {
   note?: string | null;
 };
 
+type ComplianceIssue = {
+  key: string;
+  title: string;
+  description: string;
+  severity: "high" | "medium" | "low";
+  item?: TaxItem;
+};
+
 const initialFilters: TaxFilters = {
   keyword: "",
   taxType: "",
@@ -132,6 +140,20 @@ const sourceLabels: Record<string, string> = {
   policy: "政策规则",
 };
 
+const severityLabels: Record<ComplianceIssue["severity"], { label: string; color: string; weight: number }> = {
+  high: { label: "高风险", color: "red", weight: 3 },
+  medium: { label: "需关注", color: "orange", weight: 2 },
+  low: { label: "提示", color: "arcoblue", weight: 1 },
+};
+
+const taxMaterialChecklist: Record<string, string[]> = {
+  vat: ["销项发票", "进项/成本票据", "收入流水", "免税或减征依据"],
+  corporate_income_tax: ["利润表", "成本费用票据", "税会差异台账", "优惠政策依据"],
+  personal_income_tax: ["薪酬表", "社保公积金明细", "专项附加扣除", "个税扣缴申报表"],
+  surcharge: ["增值税申报结果", "附加税费申报表", "减免政策口径"],
+  stamp_duty: ["合同台账", "应税凭证", "计税金额", "减免政策口径"],
+};
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -173,6 +195,74 @@ function taxBurdenRate(items: TaxItem[]) {
   return (tax / taxable) * 100;
 }
 
+function readinessChecks(item: TaxItem) {
+  return [
+    { label: "责任人", done: Boolean(item.responsiblePerson) },
+    { label: "计税口径", done: Number(item.taxableAmount || 0) >= 0 && Number(item.taxAmount || 0) >= 0 },
+    { label: "政策依据", done: Boolean(item.policyBasis) },
+    { label: "申报状态", done: ["prepared", "submitted", "accepted"].includes(item.filingStatus) },
+    { label: "缴纳进度", done: item.paymentStatus === "paid" || unpaidAmount(item) > 0 },
+  ];
+}
+
+function readinessPercent(item: TaxItem) {
+  const checks = readinessChecks(item);
+  return Math.round((checks.filter((check) => check.done).length / checks.length) * 100);
+}
+
+function complianceIssuesFor(items: TaxItem[]): ComplianceIssue[] {
+  const issues: ComplianceIssue[] = [];
+  items.forEach((item) => {
+    const days = daysUntil(item.dueDate);
+    const unpaid = unpaidAmount(item);
+    if (unpaid > 0 && days !== null && days < 0) {
+      issues.push({
+        key: `${item.id}-overdue`,
+        title: "税款已逾期",
+        description: `${item.name} 已逾期 ${Math.abs(days)} 天，待缴 ${formatAmount(unpaid)}`,
+        severity: "high",
+        item,
+      });
+    } else if (unpaid > 0 && days !== null && days <= 15) {
+      issues.push({
+        key: `${item.id}-due-soon`,
+        title: "临近申报缴纳截止日",
+        description: `${item.name} ${days === 0 ? "今日截止" : `${days} 天后截止`}`,
+        severity: "medium",
+        item,
+      });
+    }
+    if (!["submitted", "accepted"].includes(item.filingStatus) && unpaid > 0) {
+      issues.push({
+        key: `${item.id}-filing`,
+        title: "申报状态未闭环",
+        description: `${item.name} 当前为「${filingLabels[item.filingStatus]?.label || item.filingStatus}」`,
+        severity: days !== null && days <= 7 ? "high" : "medium",
+        item,
+      });
+    }
+    if (!item.responsiblePerson) {
+      issues.push({
+        key: `${item.id}-owner`,
+        title: "负责人缺失",
+        description: `${item.name} 未设置税务责任人`,
+        severity: "medium",
+        item,
+      });
+    }
+    if (!item.policyBasis) {
+      issues.push({
+        key: `${item.id}-policy`,
+        title: "政策依据缺失",
+        description: `${item.name} 未设置政策画像或填报依据`,
+        severity: "low",
+        item,
+      });
+    }
+  });
+  return issues.sort((left, right) => severityLabels[right.severity].weight - severityLabels[left.severity].weight);
+}
+
 function toPayload(values: TaxFormValues): TaxItemPayload {
   return {
     name: values.name,
@@ -208,6 +298,7 @@ export default function TaxPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<TaxItem | null>(null);
+  const [quickActionId, setQuickActionId] = useState<number | null>(null);
   const [form] = Form.useForm<TaxFormValues>();
 
   const loadData = async (quiet = false) => {
@@ -276,6 +367,15 @@ export default function TaxPage() {
     () => [...pendingItems].sort((left, right) => left.dueDate.localeCompare(right.dueDate)).slice(0, 5),
     [pendingItems]
   );
+  const calendarItems = useMemo(
+    () => [...taxItems].sort((left, right) => left.dueDate.localeCompare(right.dueDate)).slice(0, 8),
+    [taxItems]
+  );
+  const complianceIssues = useMemo(() => complianceIssuesFor(taxItems).slice(0, 6), [taxItems]);
+  const averageReadiness = useMemo(() => {
+    if (taxItems.length === 0) return 0;
+    return Math.round(taxItems.reduce((sum, item) => sum + readinessPercent(item), 0) / taxItems.length);
+  }, [taxItems]);
   const typeStats = useMemo(() => {
     const grouped = new Map<string, { taxType: string; count: number; taxAmount: number; unpaid: number }>();
     taxItems.forEach((item) => {
@@ -398,6 +498,42 @@ export default function TaxPage() {
         }
       },
     });
+  };
+
+  const handleMarkSubmitted = async (item: TaxItem) => {
+    try {
+      setQuickActionId(item.id);
+      await enterpriseApi.updateTaxItem(item.id, {
+        status: item.status === "estimated" ? "pending" : item.status,
+        filingStatus: "submitted",
+        declarationDate: today(),
+      });
+      Message.success("已标记为已申报");
+      await loadData(true);
+    } catch {
+      Message.error("申报状态更新失败");
+    } finally {
+      setQuickActionId(null);
+    }
+  };
+
+  const handleMarkPaid = async (item: TaxItem) => {
+    try {
+      setQuickActionId(item.id);
+      await enterpriseApi.updateTaxItem(item.id, {
+        status: "paid",
+        filingStatus: "accepted",
+        paymentStatus: "paid",
+        paidAmount: Number(item.taxAmount || 0),
+        paymentDate: today(),
+      });
+      Message.success("已标记为已缴纳");
+      await loadData(true);
+    } catch {
+      Message.error("缴纳状态更新失败");
+    } finally {
+      setQuickActionId(null);
+    }
   };
 
   const summaryCards = [
@@ -559,6 +695,123 @@ export default function TaxPage() {
         </Card>
       </div>
 
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_0.95fr_1fr]">
+        <Card style={{ borderRadius: 12 }} title="申报日历">
+          {initialLoading ? (
+            <Skeleton />
+          ) : calendarItems.length === 0 ? (
+            <Empty description="暂无申报日历" />
+          ) : (
+            <div className="space-y-3">
+              {calendarItems.map((item) => {
+                const typeMeta = taxTypeLabels[item.taxType] || { label: item.taxType, color: "gray", icon: <IconFile /> };
+                const readiness = readinessPercent(item);
+                const days = daysUntil(item.dueDate);
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-lg border p-3"
+                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold">{item.name}</div>
+                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                          {typeMeta.label} · {item.period}
+                        </div>
+                      </div>
+                      <Tag color={days !== null && days < 0 ? "red" : days !== null && days <= 15 ? "orange" : "arcoblue"}>
+                        {displayDate(item.dueDate)}
+                      </Tag>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3 text-xs" style={{ color: "var(--text-color-3)" }}>
+                      <span>{dueLabel(item)}</span>
+                      <span>完备度 {readiness}%</span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ backgroundColor: "var(--color-fill-2)" }}>
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${readiness}%`,
+                          background: readiness >= 80 ? "var(--gradient-income)" : readiness >= 60 ? "var(--gradient-warning)" : "var(--gradient-expense)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="合规检查">
+          {initialLoading ? (
+            <Skeleton />
+          ) : (
+            <div>
+              <div
+                className="mb-4 rounded-lg border p-4"
+                style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+              >
+                <div className="text-sm" style={{ color: "var(--text-color-3)" }}>平均资料完备度</div>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <span className="text-3xl font-bold">{averageReadiness}%</span>
+                  <span className="text-xs" style={{ color: "var(--text-color-3)" }}>{complianceIssues.length} 项待检查</span>
+                </div>
+              </div>
+              {complianceIssues.length === 0 ? (
+                <Empty description="暂无合规风险" />
+              ) : (
+                <div className="space-y-3">
+                  {complianceIssues.map((issue) => {
+                    const severity = severityLabels[issue.severity];
+                    return (
+                      <div key={issue.key} className="flex items-start gap-3">
+                        <Tag color={severity.color}>{severity.label}</Tag>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium">{issue.title}</div>
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{issue.description}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        <Card style={{ borderRadius: 12 }} title="申报资料清单">
+          {initialLoading ? (
+            <Skeleton />
+          ) : (
+            <div className="space-y-3">
+              {Object.entries(taxMaterialChecklist).map(([taxType, materials]) => {
+                const meta = taxTypeLabels[taxType] || { label: taxType, color: "gray", icon: <IconFile /> };
+                const relatedCount = taxItems.filter((item) => item.taxType === taxType).length;
+                return (
+                  <div
+                    key={taxType}
+                    className="rounded-lg border p-3"
+                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <Tag color={meta.color}>{meta.label}</Tag>
+                      <span className="text-xs" style={{ color: "var(--text-color-3)" }}>{relatedCount} 项</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {materials.map((material) => (
+                        <Tag key={material} color="gray">{material}</Tag>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
       <Card className="mb-4" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-[repeat(6,minmax(0,1fr))_120px]">
           <Input
@@ -630,14 +883,14 @@ export default function TaxPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
             <colgroup>
-              <col style={{ width: "21%" }} />
+              <col style={{ width: "20%" }} />
               <col style={{ width: "12%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "14%" }} />
+              <col style={{ width: "13%" }} />
               <col style={{ width: "12%" }} />
               <col style={{ width: "6%" }} />
-              <col style={{ width: "5%" }} />
+              <col style={{ width: "7%" }} />
             </colgroup>
             <thead>
               <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
@@ -727,6 +980,26 @@ export default function TaxPage() {
                     </td>
                     <td className="px-4 py-4 text-center align-middle">
                       <div className="flex justify-center gap-1">
+                        {!["submitted", "accepted"].includes(item.filingStatus) && (
+                          <Button
+                            type="text"
+                            size="mini"
+                            title="标记已申报"
+                            loading={quickActionId === item.id}
+                            icon={<IconCheckCircle />}
+                            onClick={() => handleMarkSubmitted(item)}
+                          />
+                        )}
+                        {unpaid > 0 && (
+                          <Button
+                            type="text"
+                            size="mini"
+                            title="标记已缴纳"
+                            loading={quickActionId === item.id}
+                            icon={<IconSafe />}
+                            onClick={() => handleMarkPaid(item)}
+                          />
+                        )}
                         <Button type="text" size="mini" title="编辑" icon={<IconEdit />} onClick={() => openEdit(item)} />
                         <Button type="text" size="mini" title="删除" status="danger" icon={<IconDelete />} onClick={() => handleDelete(item)} />
                       </div>

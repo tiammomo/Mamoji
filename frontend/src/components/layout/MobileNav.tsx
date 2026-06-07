@@ -12,9 +12,9 @@ import {
 
 const tabs = [
   { key: "/dashboard", icon: <IconDashboard />, label: "dashboard" },
-  { key: "/transactions", icon: <IconFile />, label: "transactions" },
+  { key: "/operations", icon: <IconFile />, label: "operationsOverview" },
   { key: "/reports", icon: <IconStorage />, label: "reports" },
-  { key: "/accounts", icon: <IconSafe />, label: "accounts" },
+  { key: "/finance", icon: <IconSafe />, label: "financeOverview" },
   { key: "/admin/users", icon: <IconUserGroup />, label: "userManagement" },
   { key: "/settings", icon: <IconSettings />, label: "settings" },
 ];
@@ -34,7 +34,9 @@ export default function MobileNav() {
       }}
     >
       {tabs.map((tab) => {
-        const isActive = pathname === tab.key || pathname.startsWith(tab.key + "/");
+        const financeChildActive = tab.key === "/finance" && ["/accounts", "/receipts"].some((key) => pathname.startsWith(key));
+        const operationsChildActive = tab.key === "/operations" && ["/transactions", "/budgets", "/reports", "/recurring"].some((key) => pathname.startsWith(key));
+        const isActive = pathname === tab.key || pathname.startsWith(tab.key + "/") || financeChildActive || operationsChildActive;
         return (
           <button
             key={tab.key}

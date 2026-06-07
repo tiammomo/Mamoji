@@ -551,132 +551,108 @@ export default function BudgetsPage() {
           />
         ) : (
           <>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[1080px] table-fixed border-collapse text-sm">
-                <colgroup>
-                  <col style={{ width: 210 }} />
-                  <col style={{ width: 138 }} />
-                  <col style={{ width: 160 }} />
-                  <col style={{ width: 190 }} />
-                  <col style={{ width: 82 }} />
-                  <col style={{ width: 96 }} />
-                  <col style={{ width: 120 }} />
-                  <col style={{ width: 84 }} />
-                </colgroup>
-                <thead>
-                  <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                    {["预算与口径", "周期", "金额", "执行进度", "状态", "风险", "预警", "操作"].map((column) => (
-                      <th key={column} className="px-3 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedBudgets.map((budget) => {
-                    const budgetType = getBudgetType(budget);
-                    return (
-                      <tr
-                        key={budget.id}
-                        onClick={() => setSelectedBudget(budget)}
-                        className="cursor-pointer border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
-                        style={{ borderColor: "var(--border-color-light)" }}
-                      >
-                        <td className="px-3 py-4 align-middle">
-                          <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{budget.name}</div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Tag color={budgetType.color}>{budgetType.label}</Tag>
-                            <Tag color={budget.categoryName ? "arcoblue" : "purple"}>{budget.categoryName || "公司整体"}</Tag>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
-                            {formatIsoDate(budget.startDate)}
-                          </div>
-                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>
-                            至 {formatIsoDate(budget.endDate)}
-                          </div>
-                          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                            {getDeadlineText(budget)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{formatAmount(budget.amount)}</div>
-                          <div className="mt-1 text-xs" style={{ color: "#ef4444" }}>已用 {formatAmount(budget.spent)}</div>
-                          <div className="mt-1 text-xs" style={{ color: budget.remainingAmount < 0 ? "#ef4444" : "#10b981" }}>
-                            剩余 {formatAmount(budget.remainingAmount)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <BudgetProgress
-                            spent={budget.spent}
-                            amount={budget.amount}
-                            usageRate={budget.usageRate}
-                            warningThreshold={budget.warningThreshold}
-                            riskLevel={budget.riskLevel}
-                            showLabel={false}
-                          />
-                          <div className="mt-2 flex justify-between text-xs" style={{ color: "var(--text-color-4)" }}>
-                            <span>{formatPercent(budget.usageRate)}</span>
-                            <span>时间 {formatPercent(getPeriodProgress(budget))}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <Tag color={statusConfig[budget.status]?.color || "gray"}>{statusConfig[budget.status]?.label || "未知"}</Tag>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <RiskBadge level={budget.riskLevel} />
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>阈值 {budget.warningThreshold}%</div>
-                          <div className="mt-1 text-xs" style={{ color: budget.warningReached ? "#f59e0b" : "var(--text-color-4)" }}>
-                            {getPaceText(budget)}
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-middle">
-                          {renderActions(budget)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="space-y-3 md:hidden">
+            <div className="space-y-3">
               {pagedBudgets.map((budget) => {
                 const budgetType = getBudgetType(budget);
+                const periodProgress = getPeriodProgress(budget);
+                const status = statusConfig[budget.status] || { label: "未知", color: "gray" };
                 return (
-                  <button
+                  <div
                     key={budget.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedBudget(budget)}
-                    className="w-full cursor-pointer rounded-xl border p-4 text-left transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
-                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-card)" }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedBudget(budget);
+                      }
+                    }}
+                    className="w-full cursor-pointer rounded-xl border px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:bg-black/[0.015] hover:shadow-md dark:hover:bg-white/[0.03]"
+                    style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{budget.name}</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <Tag color={budgetType.color}>{budgetType.label}</Tag>
-                          <RiskBadge level={budget.riskLevel} />
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(260px,1.15fr)_minmax(260px,1.1fr)_minmax(160px,0.7fr)] xl:items-center">
+                      <div className="min-w-0 border-b pb-3 xl:border-b-0 xl:border-r xl:pb-0 xl:pr-4" style={{ borderColor: "var(--border-color-light)" }}>
+                        <div className="flex items-start gap-3">
+                          <span
+                            className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl"
+                            style={{ backgroundColor: "var(--color-fill-1)", color: "var(--color-primary)" }}
+                          >
+                            <IconFile />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-semibold" style={{ color: "var(--text-color-1)" }}>
+                              {budget.name}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Tag color={budgetType.color}>{budgetType.label}</Tag>
+                              <Tag color={budget.categoryName ? "arcoblue" : "purple"}>{budget.categoryName || "公司整体"}</Tag>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{formatPercent(budget.usageRate)}</div>
-                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>{getDeadlineText(budget)}</div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>预算</div>
+                          <div className="mt-1 truncate font-semibold" style={{ color: "var(--text-color-1)" }}>
+                            {formatAmount(budget.amount)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>已用</div>
+                          <div className="mt-1 truncate font-semibold" style={{ color: "#ef4444" }}>
+                            {formatAmount(budget.spent)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>剩余</div>
+                          <div className="mt-1 truncate font-semibold" style={{ color: budget.remainingAmount < 0 ? "#ef4444" : "#10b981" }}>
+                            {formatAmount(budget.remainingAmount)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-xs" style={{ color: "var(--text-color-3)" }}>执行进度</span>
+                          <span className="text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>
+                            {formatPercent(budget.usageRate)}
+                          </span>
+                        </div>
+                        <BudgetProgress
+                          spent={budget.spent}
+                          amount={budget.amount}
+                          usageRate={budget.usageRate}
+                          warningThreshold={budget.warningThreshold}
+                          riskLevel={budget.riskLevel}
+                          showLabel={false}
+                        />
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                          <div>
+                            {formatIsoDate(budget.startDate)} - {formatIsoDate(budget.endDate)}
+                          </div>
+                          <div className="text-right">
+                            时间 {formatPercent(periodProgress)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 xl:flex-col xl:items-end">
+                        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                          <Tag color={status.color}>{status.label}</Tag>
+                          <RiskBadge level={budget.riskLevel} />
+                        </div>
+                        <div className="text-left text-xs xl:text-right">
+                          <div style={{ color: "var(--text-color-3)" }}>{getDeadlineText(budget)}</div>
+                          <div className="mt-1" style={{ color: budget.warningReached ? "#f59e0b" : "var(--text-color-4)" }}>
+                            阈值 {budget.warningThreshold}% · {getPaceText(budget)}
+                          </div>
+                        </div>
+                        {renderActions(budget)}
                       </div>
                     </div>
-                    <div className="mt-4">
-                      <BudgetProgress
-                        spent={budget.spent}
-                        amount={budget.amount}
-                        usageRate={budget.usageRate}
-                        warningThreshold={budget.warningThreshold}
-                        riskLevel={budget.riskLevel}
-                      />
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -700,25 +676,54 @@ export default function BudgetsPage() {
         onCancel={() => setSelectedBudget(null)}
       >
         {selectedBudget && (
-          <div className="space-y-5">
-            <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-page)" }}>
-              <div className="text-sm" style={{ color: "var(--text-color-3)" }}>{selectedBudget.name}</div>
-              <div className="mt-2 text-2xl font-semibold" style={{ color: "var(--text-color-1)" }}>
-                {formatAmount(selectedBudget.amount)}
+          <div className="space-y-5 pb-20">
+            <div
+              className="overflow-hidden rounded-xl border"
+              style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}
+            >
+              <div className="p-5" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm" style={{ color: "var(--text-color-3)" }}>{selectedBudget.name}</div>
+                    <div className="mt-3 text-3xl font-semibold" style={{ color: "var(--text-color-1)" }}>
+                      {formatAmount(selectedBudget.amount)}
+                    </div>
+                  </div>
+                  <span
+                    className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
+                    style={{ backgroundColor: "rgba(99, 102, 241, 0.12)", color: "var(--color-primary)" }}
+                  >
+                    <IconCalendar />
+                  </span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Tag color={getBudgetType(selectedBudget).color}>{getBudgetType(selectedBudget).label}</Tag>
+                  <Tag color={statusConfig[selectedBudget.status]?.color || "gray"}>{statusConfig[selectedBudget.status]?.label || "未知"}</Tag>
+                  <RiskBadge level={selectedBudget.riskLevel} />
+                </div>
+                <div className="mt-5">
+                  <BudgetProgress
+                    spent={selectedBudget.spent}
+                    amount={selectedBudget.amount}
+                    usageRate={selectedBudget.usageRate}
+                    warningThreshold={selectedBudget.warningThreshold}
+                    riskLevel={selectedBudget.riskLevel}
+                  />
+                </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Tag color={getBudgetType(selectedBudget).color}>{getBudgetType(selectedBudget).label}</Tag>
-                <Tag color={statusConfig[selectedBudget.status]?.color || "gray"}>{statusConfig[selectedBudget.status]?.label || "未知"}</Tag>
-                <RiskBadge level={selectedBudget.riskLevel} />
-              </div>
-              <div className="mt-4">
-                <BudgetProgress
-                  spent={selectedBudget.spent}
-                  amount={selectedBudget.amount}
-                  usageRate={selectedBudget.usageRate}
-                  warningThreshold={selectedBudget.warningThreshold}
-                  riskLevel={selectedBudget.riskLevel}
-                />
+              <div className="grid grid-cols-2 gap-3 border-t p-4" style={{ borderColor: "var(--border-color)" }}>
+                <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>预算周期</div>
+                  <div className="mt-2 text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+                    {formatIsoDate(selectedBudget.startDate)} - {formatIsoDate(selectedBudget.endDate)}
+                  </div>
+                </div>
+                <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>截止状态</div>
+                  <div className="mt-2 text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+                    {getDeadlineText(selectedBudget)}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -731,9 +736,13 @@ export default function BudgetsPage() {
                   ["使用率", formatPercent(selectedBudget.usageRate), "var(--text-color-1)"],
                   ["时间进度", formatPercent(getPeriodProgress(selectedBudget)), "var(--text-color-1)"],
                 ].map(([label, value, color]) => (
-                  <div key={label} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
+                  <div
+                    key={label}
+                    className="min-h-[84px] rounded-xl border p-4"
+                    style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}
+                  >
                     <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{label}</div>
-                    <div className="mt-2 font-semibold" style={{ color }}>{value}</div>
+                    <div className="mt-3 text-base font-semibold" style={{ color }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -741,7 +750,7 @@ export default function BudgetsPage() {
 
             <div>
               <div className="mb-3 text-sm font-medium" style={{ color: "var(--text-color-1)" }}>基础信息</div>
-              <div className="space-y-3 text-sm">
+              <div className="overflow-hidden rounded-xl border text-sm" style={{ borderColor: "var(--border-color)" }}>
                 {[
                   ["预算编号", `#${selectedBudget.id}`],
                   ["统计口径", selectedBudget.categoryName || "公司整体"],
@@ -752,15 +761,19 @@ export default function BudgetsPage() {
                   ["创建时间", formatDateTime(selectedBudget.createdAt)],
                   ["更新时间", formatDateTime(selectedBudget.updatedAt)],
                 ].map(([label, value]) => (
-                  <div key={label} className="flex items-center justify-between gap-4">
+                  <div
+                    key={label}
+                    className="flex items-center justify-between gap-4 border-b px-4 py-3 last:border-b-0"
+                    style={{ borderColor: "var(--border-color-light)" }}
+                  >
                     <span style={{ color: "var(--text-color-3)" }}>{label}</span>
-                    <span className="text-right" style={{ color: "var(--text-color-1)" }}>{value}</span>
+                    <span className="text-right font-medium" style={{ color: "var(--text-color-1)" }}>{value}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="sticky bottom-0 -mx-6 flex gap-2 border-t px-6 py-4" style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}>
               <Button type="primary" icon={<IconEdit />} onClick={() => openEdit(selectedBudget)}>
                 编辑预算
               </Button>

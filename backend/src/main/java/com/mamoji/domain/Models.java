@@ -2,6 +2,7 @@ package com.mamoji.domain;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.math.BigDecimal;
+import java.util.List;
 
 public final class Models {
     private Models() {
@@ -210,9 +211,49 @@ public final class Models {
         public BigDecimal housingFund;
         public BigDecimal taxEstimate;
         public BigDecimal monthlyCost;
+        public BigDecimal socialInsuranceBase;
+        public BigDecimal socialInsurancePersonalRate;
+        public BigDecimal socialInsuranceCompanyRate;
+        public BigDecimal socialInsurancePersonalAmount;
+        public BigDecimal socialInsuranceCompanyAmount;
+        public BigDecimal housingFundBase;
+        public BigDecimal housingFundPersonalRate;
+        public BigDecimal housingFundCompanyRate;
+        public BigDecimal housingFundPersonalAmount;
+        public BigDecimal housingFundCompanyAmount;
+        public BigDecimal personalDeduction;
+        public BigDecimal netPayEstimate;
+        public String socialInsuranceRegion;
+        public String hukouType;
+        public String medicalTier;
+        public BigDecimal pensionBase;
+        public BigDecimal medicalBase;
+        public BigDecimal unemploymentBase;
+        public BigDecimal workInjuryBase;
+        public BigDecimal maternityBase;
+        public BigDecimal workInjuryCompanyRate;
+        public String socialInsurancePolicyNote;
+        public List<SocialInsuranceItem> socialInsuranceItems;
+        public List<String> socialInsuranceWarnings;
         public String emergencyContact;
         public String createdAt;
         public String updatedAt;
+    }
+
+    public static class SocialInsuranceItem {
+        public String key;
+        public String name;
+        public String category;
+        public BigDecimal base;
+        public BigDecimal minBase;
+        public BigDecimal maxBase;
+        public BigDecimal personalRate;
+        public BigDecimal companyRate;
+        public BigDecimal personalAmount;
+        public BigDecimal companyAmount;
+        public String policyBasis;
+        public String validPeriod;
+        public String status;
     }
 
     public static class EmploymentEvent {

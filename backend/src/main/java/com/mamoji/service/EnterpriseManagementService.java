@@ -11,6 +11,7 @@ import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.LinkedHashMap;
@@ -129,12 +130,28 @@ public class EnterpriseManagementService {
     public Department createDepartment(String authorization, Map<String, Object> body) {
         User user = accessControl.requirePeopleManager(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
-        return enterpriseStore.department(
+        Department department = enterpriseStore.department(
             company.id,
             textOr(body.get("name"), "新部门"),
             textOr(body.get("costCenter"), "GENERAL"),
             String.valueOf(number(body.get("budget"), BigDecimal.ZERO))
         );
+        applyDepartmentFields(department, body);
+        touch(department);
+        enterpriseStore.saveDepartment(department);
+        return department;
+    }
+
+    public Department updateDepartment(String authorization, long id, Map<String, Object> body) {
+        User user = accessControl.requirePeopleManager(authorization);
+        Department department = require(enterpriseStore.departments.get(id), "Department not found");
+        if (!accessControl.canAccessCompany(user, department.companyId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
+        }
+        applyDepartmentFields(department, body);
+        touch(department);
+        enterpriseStore.saveDepartment(department);
+        return department;
     }
 
     public List<Employee> listEmployees(String authorization, Map<String, String> params) {
@@ -177,6 +194,9 @@ public class EnterpriseManagementService {
             null,
             nullableText(body.get("emergencyContact"))
         );
+        applyEmployeeFields(employee, body);
+        touch(employee);
+        enterpriseStore.saveEmployee(employee);
         enterpriseStore.event(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
         return employee;
     }
@@ -448,6 +468,24 @@ public class EnterpriseManagementService {
         }
     }
 
+    private void applyDepartmentFields(Department department, Map<String, Object> body) {
+        if (body.containsKey("name")) {
+            department.name = textOr(body.get("name"), department.name);
+        }
+        if (body.containsKey("costCenter")) {
+            department.costCenter = textOr(body.get("costCenter"), department.costCenter);
+        }
+        if (body.containsKey("budget")) {
+            department.budget = number(body.get("budget"), department.budget);
+        }
+        if (body.containsKey("managerEmployeeId")) {
+            department.managerEmployeeId = optionalLong(body.get("managerEmployeeId")).orElse(null);
+        }
+        if (body.containsKey("status")) {
+            department.status = intValue(body.get("status"), department.status);
+        }
+    }
+
     private void applyEmployeeFields(Employee employee, Map<String, Object> body) {
         if (body.containsKey("userId")) {
             employee.userId = optionalLong(body.get("userId")).orElse(null);
@@ -490,16 +528,89 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("socialInsurance")) {
             employee.socialInsurance = number(body.get("socialInsurance"), employee.socialInsurance);
+            if (!body.containsKey("socialInsuranceCompanyRate")) {
+                employee.socialInsuranceCompanyRate = rateFromAmount(employee.socialInsurance, employee.socialInsuranceBase, employee.salary, employee.socialInsuranceCompanyRate);
+            }
         }
         if (body.containsKey("housingFund")) {
             employee.housingFund = number(body.get("housingFund"), employee.housingFund);
+            if (!body.containsKey("housingFundCompanyRate")) {
+                employee.housingFundCompanyRate = rateFromAmount(employee.housingFund, employee.housingFundBase, employee.salary, employee.housingFundCompanyRate);
+            }
         }
         if (body.containsKey("taxEstimate")) {
             employee.taxEstimate = number(body.get("taxEstimate"), employee.taxEstimate);
         }
+        if (body.containsKey("socialInsuranceBase")) {
+            employee.socialInsuranceBase = number(body.get("socialInsuranceBase"), employee.socialInsuranceBase);
+        }
+        if (body.containsKey("socialInsurancePersonalRate")) {
+            employee.socialInsurancePersonalRate = number(body.get("socialInsurancePersonalRate"), employee.socialInsurancePersonalRate);
+        }
+        if (body.containsKey("socialInsuranceCompanyRate")) {
+            employee.socialInsuranceCompanyRate = number(body.get("socialInsuranceCompanyRate"), employee.socialInsuranceCompanyRate);
+        }
+        if (body.containsKey("socialInsuranceRegion")) {
+            employee.socialInsuranceRegion = textOr(body.get("socialInsuranceRegion"), employee.socialInsuranceRegion);
+        }
+        if (body.containsKey("hukouType")) {
+            employee.hukouType = textOr(body.get("hukouType"), employee.hukouType);
+        }
+        if (body.containsKey("medicalTier")) {
+            employee.medicalTier = textOr(body.get("medicalTier"), employee.medicalTier);
+        }
+        if (body.containsKey("pensionBase")) {
+            employee.pensionBase = number(body.get("pensionBase"), employee.pensionBase);
+        }
+        if (body.containsKey("medicalBase")) {
+            employee.medicalBase = number(body.get("medicalBase"), employee.medicalBase);
+        }
+        if (body.containsKey("unemploymentBase")) {
+            employee.unemploymentBase = number(body.get("unemploymentBase"), employee.unemploymentBase);
+        }
+        if (body.containsKey("workInjuryBase")) {
+            employee.workInjuryBase = number(body.get("workInjuryBase"), employee.workInjuryBase);
+        }
+        if (body.containsKey("maternityBase")) {
+            employee.maternityBase = number(body.get("maternityBase"), employee.maternityBase);
+        }
+        if (body.containsKey("workInjuryCompanyRate")) {
+            employee.workInjuryCompanyRate = number(body.get("workInjuryCompanyRate"), employee.workInjuryCompanyRate);
+        }
+        if (body.containsKey("socialInsurancePolicyNote")) {
+            employee.socialInsurancePolicyNote = nullableText(body.get("socialInsurancePolicyNote"));
+        }
+        if (body.containsKey("housingFundBase")) {
+            employee.housingFundBase = number(body.get("housingFundBase"), employee.housingFundBase);
+        }
+        if (body.containsKey("housingFundPersonalRate")) {
+            employee.housingFundPersonalRate = number(body.get("housingFundPersonalRate"), employee.housingFundPersonalRate);
+        }
+        if (body.containsKey("housingFundCompanyRate")) {
+            employee.housingFundCompanyRate = number(body.get("housingFundCompanyRate"), employee.housingFundCompanyRate);
+        }
+        if (body.containsKey("personalDeduction")) {
+            employee.personalDeduction = number(body.get("personalDeduction"), employee.personalDeduction);
+        }
         if (body.containsKey("emergencyContact")) {
             employee.emergencyContact = nullableText(body.get("emergencyContact"));
         }
+    }
+
+    private static BigDecimal rateFromAmount(BigDecimal amount, BigDecimal base, BigDecimal fallbackBase, BigDecimal fallbackRate) {
+        BigDecimal safeBase = positiveOr(base, fallbackBase);
+        BigDecimal safeAmount = amount == null ? BigDecimal.ZERO : amount;
+        if (safeBase.signum() <= 0 || safeAmount.signum() <= 0) {
+            return fallbackRate == null ? BigDecimal.ZERO : fallbackRate;
+        }
+        return safeAmount.multiply(BigDecimal.valueOf(100)).divide(safeBase, 2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal positiveOr(BigDecimal value, BigDecimal fallback) {
+        if (value != null && value.signum() > 0) {
+            return value;
+        }
+        return fallback == null ? BigDecimal.ZERO : fallback;
     }
 
     private static boolean sameMonth(String date, YearMonth month) {

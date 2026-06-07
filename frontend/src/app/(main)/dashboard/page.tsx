@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Card, Grid, Button, Skeleton } from "@arco-design/web-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Card, Grid, Button, Progress, Skeleton, Tag } from "@arco-design/web-react";
 import {
   IconRight,
   IconArrowRise,
@@ -25,11 +25,22 @@ import { statsApi } from "@/lib/api/stats";
 import { transactionApi } from "@/lib/api/transactions";
 import { budgetApi } from "@/lib/api/budgets";
 import { enterpriseApi } from "@/lib/api/enterprise";
+import { accountApi } from "@/lib/api/accounts";
+import { receiptApi } from "@/lib/api/receipts";
+import { recurringApi, type RecurringItem } from "@/lib/api/recurring";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import BudgetProgress from "@/components/common/BudgetProgress";
 import { useAppStore } from "@/lib/stores/appStore";
-import { formatDate } from "@/lib/utils/format";
-import type { OverviewStats, Transaction, Budget, EnterpriseSummary, EntityTransfer } from "@/lib/types";
+import { formatAmount, formatDate } from "@/lib/utils/format";
+import type {
+  AccountSummary,
+  OverviewStats,
+  Transaction,
+  Budget,
+  EnterpriseSummary,
+  EntityTransfer,
+  ReceiptSummary,
+} from "@/lib/types";
 
 const { Row, Col } = Grid;
 
@@ -41,6 +52,44 @@ const transferTypeLabelKeys: Record<string, string> = {
   inter_entity_transfer: "transferInterEntity",
 };
 
+type WorkspaceSeverity = "success" | "notice" | "warning" | "danger";
+
+type WorkspaceAction = {
+  title: string;
+  detail: string;
+  path: string;
+  severity: WorkspaceSeverity;
+  icon: ReactNode;
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
+const severityMeta: Record<WorkspaceSeverity, { label: string; color: string; accent: string }> = {
+  success: { label: "正常", color: "green", accent: "#10b981" },
+  notice: { label: "关注", color: "arcoblue", accent: "#3b82f6" },
+  warning: { label: "预警", color: "orange", accent: "#f59e0b" },
+  danger: { label: "风险", color: "red", accent: "#ef4444" },
+};
+
+const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(value, max));
+
+const daysUntil = (date?: string | null) => {
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${date.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return null;
+  return Math.ceil((target.getTime() - today.getTime()) / DAY);
+};
+
+const dueText = (date?: string | null) => {
+  const days = daysUntil(date);
+  if (days === null) return "无截止日";
+  if (days < 0) return `逾期 ${Math.abs(days)} 天`;
+  if (days === 0) return "今日截止";
+  return `${days} 天后`;
+};
+
 export default function DashboardPage() {
   const router = useRouter();
   const t = useTranslations("dashboard");
@@ -50,6 +99,10 @@ export default function DashboardPage() {
   const [recentTx, setRecentTx] = useState<Transaction[]>([]);
   const [entityTransfers, setEntityTransfers] = useState<EntityTransfer[]>([]);
   const [alerts, setAlerts] = useState<Budget[]>([]);
+  const [activeBudgets, setActiveBudgets] = useState<Budget[]>([]);
+  const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
+  const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(null);
+  const [recurringItems, setRecurringItems] = useState<RecurringItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,12 +113,24 @@ export default function DashboardPage() {
       const transferRequest = activeCompanyId
         ? enterpriseApi.entityTransfers({ entityId: activeCompanyId })
         : enterpriseApi.entityTransfers();
-      const [statsResult, enterpriseResult, transactionResult, budgetResult, transferResult] = await Promise.allSettled([
+      const [
+        statsResult,
+        enterpriseResult,
+        transactionResult,
+        budgetResult,
+        transferResult,
+        accountResult,
+        receiptResult,
+        recurringResult,
+      ] = await Promise.allSettled([
         statsApi.overview(),
         enterpriseApi.summary(),
-        transactionApi.list({ page: 0, size: 5 }),
+        transactionApi.list({ page: 0, size: 8 }),
         budgetApi.active(),
         transferRequest,
+        accountApi.summary(),
+        receiptApi.summary(),
+        recurringApi.list(),
       ]);
 
       if (cancelled) return;
@@ -80,14 +145,24 @@ export default function DashboardPage() {
         setRecentTx(transactionResult.value.data.content);
       }
       if (budgetResult.status === "fulfilled") {
-        setAlerts(
-          budgetResult.value.data.filter((b) => b.riskLevel === "high" || b.riskLevel === "critical")
-        );
+        setActiveBudgets(budgetResult.value.data);
+        setAlerts(budgetResult.value.data.filter((b) =>
+          b.riskLevel === "high" || b.riskLevel === "critical" || b.warningReached
+        ));
       }
       if (transferResult.status === "fulfilled") {
         setEntityTransfers(transferResult.value.data);
       } else {
         setEntityTransfers([]);
+      }
+      if (accountResult.status === "fulfilled") {
+        setAccountSummary(accountResult.value.data);
+      }
+      if (receiptResult.status === "fulfilled") {
+        setReceiptSummary(receiptResult.value.data);
+      }
+      if (recurringResult.status === "fulfilled") {
+        setRecurringItems(recurringResult.value.data);
       }
       setLoading(false);
     };
@@ -101,37 +176,44 @@ export default function DashboardPage() {
 
   const quickActions = [
     {
-      icon: <IconEdit />,
-      label: t("quickNewRecord"),
-      path: "/transactions?action=new",
+      icon: <IconDashboard />,
+      label: t("quickOperations"),
+      path: "/operations",
       color: "#6366f1",
       bg: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
     },
     {
-      icon: <IconSwap />,
-      label: t("quickLedger"),
-      path: "/transactions",
+      icon: <IconEdit />,
+      label: t("quickNewRecord"),
+      path: "/transactions?action=new",
       color: "#10b981",
       bg: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
     },
     {
-      icon: <IconDashboard />,
-      label: t("quickReports"),
-      path: "/reports",
+      icon: <IconSafe />,
+      label: t("quickFinance"),
+      path: "/finance",
       color: "#3b82f6",
       bg: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
+    },
+    {
+      icon: <IconFile />,
+      label: t("quickTax"),
+      path: "/tax",
+      color: "#f59e0b",
+      bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
     },
     {
       icon: <IconCalendar />,
       label: t("quickBudgets"),
       path: "/budgets",
-      color: "#f59e0b",
-      bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+      color: "#8b5cf6",
+      bg: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
     },
     {
       icon: <IconUserGroup />,
       label: t("quickPeople"),
-      path: "/admin/users",
+      path: "/hr/organization",
       color: "#06b6d4",
       bg: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)",
     },
@@ -184,6 +266,229 @@ export default function DashboardPage() {
     },
   ];
   const activeEntityId = enterpriseSummary?.company?.id ?? activeCompanyId;
+
+  const workspaceModel = useMemo(() => {
+    const monthlyIncome = stats?.monthlyIncome || 0;
+    const monthlyExpense = stats?.monthlyExpense || 0;
+    const monthlyProfit = stats?.monthlyBalance ?? monthlyIncome - monthlyExpense;
+    const profitMargin = monthlyIncome > 0 ? monthlyProfit / monthlyIncome : 0;
+    const budgetRiskCount = alerts.length;
+    const accountIssueCount = (accountSummary?.pendingReconciliationCount || 0) + (accountSummary?.highRiskCount || 0);
+    const receiptIssueCount = (receiptSummary?.pendingReviewCount || 0)
+      + (receiptSummary?.missingAttachmentCount || 0)
+      + (receiptSummary?.missingTransactionCount || 0)
+      + (receiptSummary?.highRiskCount || 0);
+    const taxDueDays = daysUntil(enterpriseSummary?.nextTaxDueDate);
+    const taxRiskCount = (enterpriseSummary?.pendingTaxAmount || 0) > 0
+      ? taxDueDays !== null && taxDueDays <= 7 ? 2 : 1
+      : 0;
+    const activeRecurring = recurringItems.filter((item) => item.status === 1);
+    const overdueRecurring = activeRecurring.filter((item) => {
+      const days = daysUntil(item.nextExecution);
+      return days !== null && days < 0;
+    });
+    const weekRecurring = activeRecurring.filter((item) => {
+      const days = daysUntil(item.nextExecution);
+      return days !== null && days >= 0 && days <= 7;
+    });
+    const largeTransactions = recentTx.filter((tx) => Number(tx.amount || 0) >= 10000);
+    const reviewTransactions = recentTx.filter((tx) =>
+      Number(tx.amount || 0) >= 10000 || !tx.note?.trim() || (tx.type === 2 && tx.isRefundable)
+    );
+    const peopleCost = enterpriseSummary?.monthlyPeopleCost || 0;
+    const peopleCostRatio = monthlyExpense > 0 ? peopleCost / monthlyExpense : 0;
+    const onboardingCount = enterpriseSummary?.onboardingCount || 0;
+
+    const operationsScore = clamp(
+      100
+      - (monthlyProfit < 0 ? 28 : profitMargin < 0.15 ? 10 : 0)
+      - Math.min(budgetRiskCount * 8, 24)
+      - Math.min(reviewTransactions.length * 4, 18)
+      - Math.min(overdueRecurring.length * 12, 20)
+    );
+    const financeScore = clamp(
+      100
+      - Math.min(accountIssueCount * 8, 28)
+      - Math.min(receiptIssueCount * 5, 30)
+      - ((accountSummary?.availableBalance || 0) < monthlyExpense ? 10 : 0)
+    );
+    const taxScore = clamp(
+      100
+      - Math.min(taxRiskCount * 18, 36)
+      - ((enterpriseSummary?.pendingTaxAmount || 0) > 0 ? 10 : 0)
+    );
+    const hrScore = clamp(
+      100
+      - Math.min(onboardingCount * 6, 24)
+      - Math.min((enterpriseSummary?.departuresThisMonth || 0) * 8, 24)
+      - (peopleCostRatio > 0.65 ? 10 : 0)
+    );
+    const entityScore = clamp(
+      100
+      - Math.min(entityTransfers.filter((transfer) => transfer.status !== "settled" && transfer.status !== "completed").length * 7, 28)
+    );
+    const workspaceScore = Math.round((operationsScore + financeScore + taxScore + hrScore + entityScore) / 5);
+    const workspaceSeverity: WorkspaceSeverity =
+      workspaceScore >= 85 ? "success" : workspaceScore >= 70 ? "notice" : workspaceScore >= 55 ? "warning" : "danger";
+
+    const priorityActions: WorkspaceAction[] = [];
+    if (monthlyProfit < 0) {
+      priorityActions.push({
+        title: "经营利润为负",
+        detail: `本月净额 ${formatAmount(monthlyProfit)}，建议复盘收入与成本结构`,
+        path: "/operations",
+        severity: "danger",
+        icon: <IconExclamationCircle />,
+      });
+    }
+    if (budgetRiskCount > 0) {
+      priorityActions.push({
+        title: "预算需要复核",
+        detail: `${budgetRiskCount} 项预算触发预警或高风险`,
+        path: "/budgets",
+        severity: "warning",
+        icon: <IconCalendar />,
+      });
+    }
+    if (receiptIssueCount > 0) {
+      priorityActions.push({
+        title: "票据闭环未完成",
+        detail: `${receiptIssueCount} 个票据/流水匹配问题需要处理`,
+        path: "/receipts",
+        severity: "warning",
+        icon: <IconFile />,
+      });
+    }
+    if (accountIssueCount > 0) {
+      priorityActions.push({
+        title: "资金账户需对账",
+        detail: `${accountIssueCount} 个账户对账或风险项待处理`,
+        path: "/accounts",
+        severity: "notice",
+        icon: <IconSafe />,
+      });
+    }
+    if ((enterpriseSummary?.pendingTaxAmount || 0) > 0) {
+      priorityActions.push({
+        title: "税费待处理",
+        detail: `${formatAmount(enterpriseSummary?.pendingTaxAmount || 0)} · ${dueText(enterpriseSummary?.nextTaxDueDate)}`,
+        path: "/tax",
+        severity: taxDueDays !== null && taxDueDays <= 7 ? "danger" : "warning",
+        icon: <IconFile />,
+      });
+    }
+    if (overdueRecurring.length > 0 || weekRecurring.length > 0) {
+      priorityActions.push({
+        title: "周期事项临近",
+        detail: `逾期 ${overdueRecurring.length} 项，7 天内 ${weekRecurring.length} 项`,
+        path: "/recurring",
+        severity: overdueRecurring.length > 0 ? "danger" : "notice",
+        icon: <IconCalendar />,
+      });
+    }
+    if (priorityActions.length === 0) {
+      priorityActions.push({
+        title: "工作台状态良好",
+        detail: "经营、财务、税务和 HR 暂无明显待办风险",
+        path: "/dashboard",
+        severity: "success",
+        icon: <IconCheckCircle />,
+      });
+    }
+
+    const moduleHealth = [
+      {
+        title: "经营管理",
+        score: operationsScore,
+        detail: `${reviewTransactions.length} 笔流水待复核 · ${budgetRiskCount} 项预算预警`,
+        path: "/operations",
+        icon: <IconDashboard />,
+      },
+      {
+        title: "财务管理",
+        score: financeScore,
+        detail: `${accountIssueCount} 个账户问题 · ${receiptIssueCount} 个票据问题`,
+        path: "/finance",
+        icon: <IconSafe />,
+      },
+      {
+        title: "税务合规",
+        score: taxScore,
+        detail: `${formatAmount(enterpriseSummary?.pendingTaxAmount || 0)} 待处理 · ${dueText(enterpriseSummary?.nextTaxDueDate)}`,
+        path: "/tax",
+        icon: <IconFile />,
+      },
+      {
+        title: "组织与人事",
+        score: hrScore,
+        detail: `${enterpriseSummary?.activeEmployeeCount || 0} 人在职 · ${onboardingCount} 人待入职`,
+        path: "/hr/organization",
+        icon: <IconUserGroup />,
+      },
+      {
+        title: "主体往来",
+        score: entityScore,
+        detail: `${entityTransfers.length} 笔公司/家庭主体往来记录`,
+        path: "/dashboard",
+        icon: <IconSwap />,
+      },
+    ];
+
+    const dailyChecks = [
+      {
+        label: "经营流水日清",
+        done: reviewTransactions.length === 0,
+        detail: reviewTransactions.length === 0 ? "近期流水无需复核" : `${reviewTransactions.length} 笔需复核`,
+        path: "/transactions",
+      },
+      {
+        label: "资金账户对账",
+        done: accountIssueCount === 0,
+        detail: accountIssueCount === 0 ? "账户状态良好" : `${accountIssueCount} 个问题`,
+        path: "/accounts",
+      },
+      {
+        label: "票据凭证闭环",
+        done: receiptIssueCount === 0,
+        detail: receiptIssueCount === 0 ? "凭证状态良好" : `${receiptIssueCount} 个缺口`,
+        path: "/receipts",
+      },
+      {
+        label: "税务申报关注",
+        done: taxRiskCount === 0,
+        detail: taxRiskCount === 0 ? "暂无税费压力" : dueText(enterpriseSummary?.nextTaxDueDate),
+        path: "/tax",
+      },
+      {
+        label: "人员事项跟进",
+        done: onboardingCount === 0,
+        detail: onboardingCount === 0 ? "暂无待入职" : `${onboardingCount} 人待入职`,
+        path: "/admin/users",
+      },
+    ];
+
+    return {
+      workspaceScore,
+      workspaceSeverity,
+      priorityActions,
+      moduleHealth,
+      dailyChecks,
+      largeTransactions,
+      weekRecurring,
+      overdueRecurring,
+      activeBudgetCount: activeBudgets.length,
+    };
+  }, [
+    accountSummary,
+    activeBudgets.length,
+    alerts,
+    enterpriseSummary,
+    entityTransfers,
+    receiptSummary,
+    recentTx,
+    recurringItems,
+    stats,
+  ]);
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
@@ -250,6 +555,168 @@ export default function DashboardPage() {
           </Col>
         ))}
       </Row>
+
+      <Card
+        className="mb-6"
+        style={{ borderRadius: 16 }}
+        title={
+          <div className="flex items-center gap-2">
+            <IconDashboard />
+            <span>经营指挥台</span>
+          </div>
+        }
+      >
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+          <div
+            className="flex min-h-[242px] flex-col items-center justify-center rounded-xl border px-5 py-6"
+            style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+          >
+            {loading ? (
+              <Skeleton />
+            ) : (
+              <>
+                <Progress
+                  type="circle"
+                  percent={workspaceModel.workspaceScore}
+                  width={136}
+                  color={severityMeta[workspaceModel.workspaceSeverity].accent}
+                  formatText={() => `${workspaceModel.workspaceScore}分`}
+                />
+                <Tag className="mt-4" color={severityMeta[workspaceModel.workspaceSeverity].color}>
+                  {severityMeta[workspaceModel.workspaceSeverity].label}
+                </Tag>
+                <div className="mt-3 text-center text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                  综合经营、财务、税务、HR 和主体往来计算
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>今日优先动作</h3>
+              <Button type="text" size="small" onClick={() => router.push("/operations")}>
+                经营总览 <IconRight />
+              </Button>
+            </div>
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((item) => <Skeleton key={item} style={{ height: 54 }} />)}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {workspaceModel.priorityActions.slice(0, 4).map((action) => {
+                  const meta = severityMeta[action.severity];
+                  return (
+                    <button
+                      key={action.title}
+                      type="button"
+                      onClick={() => router.push(action.path)}
+                      className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent p-3 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                      style={{ borderColor: "var(--border-color-light)" }}
+                    >
+                      <span
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
+                        style={{ backgroundColor: "var(--color-fill-1)", color: meta.accent }}
+                      >
+                        {action.icon}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold" style={{ color: "var(--text-color-1)" }}>
+                          {action.title}
+                        </span>
+                        <span className="mt-1 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+                          {action.detail}
+                        </span>
+                      </span>
+                      <Tag color={meta.color}>{meta.label}</Tag>
+                      <IconRight style={{ color: "var(--text-color-4)" }} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>日清检查</h3>
+              <Tag color="arcoblue">{workspaceModel.dailyChecks.filter((item) => item.done).length}/{workspaceModel.dailyChecks.length}</Tag>
+            </div>
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map((item) => <Skeleton key={item} style={{ height: 48 }} />)}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {workspaceModel.dailyChecks.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => router.push(item.path)}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border bg-transparent px-3 py-2.5 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                    style={{ borderColor: "var(--border-color-light)" }}
+                  >
+                    <span
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full"
+                      style={{
+                        backgroundColor: item.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
+                        color: item.done ? "var(--color-success)" : "var(--color-warning)",
+                      }}
+                    >
+                      {item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{item.label}</span>
+                      <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.detail}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mb-6" style={{ borderRadius: 16 }} title="模块健康">
+        {loading ? (
+          <Row gutter={16}>
+            {[1, 2, 3, 4, 5].map((item) => (
+              <Col key={item} xs={24} md={8}>
+                <Skeleton style={{ height: 96 }} />
+              </Col>
+            ))}
+          </Row>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            {workspaceModel.moduleHealth.map((module) => {
+              const severity: WorkspaceSeverity = module.score >= 85 ? "success" : module.score >= 70 ? "notice" : module.score >= 55 ? "warning" : "danger";
+              const meta = severityMeta[severity];
+              return (
+                <button
+                  key={module.title}
+                  type="button"
+                  onClick={() => router.push(module.path)}
+                  className="min-h-[128px] cursor-pointer rounded-xl border bg-transparent p-4 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
+                  style={{ borderColor: "var(--border-color-light)" }}
+                >
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <span
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
+                      style={{ backgroundColor: "var(--color-fill-1)", color: meta.accent }}
+                    >
+                      {module.icon}
+                    </span>
+                    <Tag color={meta.color}>{module.score.toFixed(0)}分</Tag>
+                  </div>
+                  <div className="truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{module.title}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{module.detail}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       {/* Enterprise overview */}
       <Row gutter={16} className="dashboard-card-row mb-6">

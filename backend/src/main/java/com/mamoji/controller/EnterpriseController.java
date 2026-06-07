@@ -88,6 +88,15 @@ public class EnterpriseController {
         return service.createDepartment(authorization, body);
     }
 
+    @PutMapping("/departments/{id}")
+    public Department updateDepartment(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id,
+        @RequestBody Map<String, Object> body
+    ) {
+        return service.updateDepartment(authorization, id, body);
+    }
+
     @GetMapping("/employees")
     public List<Employee> employees(
         @RequestHeader(value = "Authorization", required = false) String authorization,

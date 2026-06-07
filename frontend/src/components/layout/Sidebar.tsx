@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar } from "@arco-design/web-react";
 import {
+  IconDashboard,
   IconFile,
   IconHome,
   IconSwap,
@@ -16,6 +17,8 @@ import {
   IconMenuUnfold,
   IconDown,
   IconRight,
+  IconBranch,
+  IconTrophy,
 } from "@arco-design/web-react/icon";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
@@ -34,6 +37,7 @@ const menuGroups: Array<{
   {
     labelKey: "operationsGroup",
     items: [
+      { key: "/operations", labelKey: "operationsOverview", icon: <IconDashboard /> },
       { key: "/transactions", labelKey: "transactions", icon: <IconSwap /> },
       { key: "/budgets", labelKey: "budgets", icon: <IconCalendar /> },
       { key: "/reports", labelKey: "reports", icon: <IconStorage /> },
@@ -43,6 +47,7 @@ const menuGroups: Array<{
   {
     labelKey: "financeGroup",
     items: [
+      { key: "/finance", labelKey: "financeOverview", icon: <IconDashboard /> },
       { key: "/accounts", labelKey: "accounts", icon: <IconSafe /> },
       { key: "/receipts", labelKey: "receipts", icon: <IconFile /> },
     ],
@@ -56,8 +61,10 @@ const menuGroups: Array<{
   {
     labelKey: "hrGroup",
     items: [
+      { key: "/hr/organization", labelKey: "organizationManagement", icon: <IconBranch /> },
       { key: "/admin/users", labelKey: "userManagement", icon: <IconUserGroup /> },
       { key: "/admin/compensation", labelKey: "compensationManagement", icon: <IconIdcard /> },
+      { key: "/hr/performance", labelKey: "performanceManagement", icon: <IconTrophy /> },
     ],
   },
   {
@@ -98,7 +105,11 @@ export default function Sidebar() {
   const { user } = useAuthStore();
   const t = useTranslations("nav");
 
-  const selectedKey = pathname.startsWith("/admin/compensation")
+  const selectedKey = pathname.startsWith("/hr/organization")
+    ? "/hr/organization"
+    : pathname.startsWith("/hr/performance")
+    ? "/hr/performance"
+    : pathname.startsWith("/admin/compensation")
     ? "/admin/compensation"
     : pathname.startsWith("/admin/users")
     ? "/admin/users"

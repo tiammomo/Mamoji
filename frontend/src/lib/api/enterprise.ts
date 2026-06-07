@@ -13,6 +13,14 @@ import type {
 } from "@/lib/types";
 
 type CompanyScopedParams = { companyId?: number };
+type DepartmentPayload = {
+  companyId?: number;
+  name: string;
+  costCenter: string;
+  budget: number;
+  managerEmployeeId?: number | null;
+  status?: number;
+};
 
 const getActiveCompanyId = () => {
   if (typeof window === "undefined") return undefined;
@@ -45,8 +53,10 @@ export const enterpriseApi = {
   updateCompany: (data: Partial<Company>, params?: { companyId?: number }) =>
     client.put<Company>("/enterprise/company", data, { params: withCompany(params) }),
   departments: (params?: { companyId?: number }) => client.get<Department[]>("/enterprise/departments", { params: withCompany(params) }),
-  createDepartment: (data: { companyId?: number; name: string; costCenter: string; budget: number }) =>
+  createDepartment: (data: DepartmentPayload) =>
     client.post<Department>("/enterprise/departments", withCompanyBody(data)),
+  updateDepartment: (id: number, data: Partial<DepartmentPayload>) =>
+    client.put<Department>(`/enterprise/departments/${id}`, data),
   employees: (params?: { companyId?: number; keyword?: string; status?: string; departmentId?: number }) =>
     client.get<Employee[]>("/enterprise/employees", { params: withCompany(params) }),
   createEmployee: (data: EmployeePayload) => client.post<Employee>("/enterprise/employees", withCompanyBody(data)),

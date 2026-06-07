@@ -37,6 +37,22 @@ export type EmploymentType = "full_time" | "part_time" | "contractor" | "intern"
 export type AccessRole = "founder" | "finance_admin" | "hr_admin" | "department_manager" | "employee" | "viewer";
 export type AccessScope = "group" | "company" | "company_set" | "department" | "self" | "readonly";
 
+export interface SocialInsuranceItem {
+  key: string;
+  name: string;
+  category: string;
+  base: number;
+  minBase?: number | null;
+  maxBase?: number | null;
+  personalRate: number;
+  companyRate: number;
+  personalAmount: number;
+  companyAmount: number;
+  policyBasis: string;
+  validPeriod: string;
+  status: string;
+}
+
 export interface Employee {
   id: number;
   companyId: number;
@@ -58,6 +74,30 @@ export interface Employee {
   housingFund: number;
   taxEstimate: number;
   monthlyCost: number;
+  socialInsuranceBase: number;
+  socialInsurancePersonalRate: number;
+  socialInsuranceCompanyRate: number;
+  socialInsurancePersonalAmount: number;
+  socialInsuranceCompanyAmount: number;
+  housingFundBase: number;
+  housingFundPersonalRate: number;
+  housingFundCompanyRate: number;
+  housingFundPersonalAmount: number;
+  housingFundCompanyAmount: number;
+  personalDeduction: number;
+  netPayEstimate: number;
+  socialInsuranceRegion: string;
+  hukouType: "local" | "non_local" | string;
+  medicalTier: "tier1" | "tier2" | string;
+  pensionBase: number;
+  medicalBase: number;
+  unemploymentBase: number;
+  workInjuryBase: number;
+  maternityBase: number;
+  workInjuryCompanyRate: number;
+  socialInsurancePolicyNote?: string | null;
+  socialInsuranceItems?: SocialInsuranceItem[];
+  socialInsuranceWarnings?: string[];
   emergencyContact?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -174,6 +214,23 @@ export interface EmployeePayload {
   socialInsurance: number;
   housingFund: number;
   taxEstimate: number;
+  socialInsuranceBase?: number;
+  socialInsurancePersonalRate?: number;
+  socialInsuranceCompanyRate?: number;
+  socialInsuranceRegion?: string;
+  hukouType?: string;
+  medicalTier?: string;
+  pensionBase?: number;
+  medicalBase?: number;
+  unemploymentBase?: number;
+  workInjuryBase?: number;
+  maternityBase?: number;
+  workInjuryCompanyRate?: number;
+  socialInsurancePolicyNote?: string | null;
+  housingFundBase?: number;
+  housingFundPersonalRate?: number;
+  housingFundCompanyRate?: number;
+  personalDeduction?: number;
   emergencyContact?: string | null;
 }
 

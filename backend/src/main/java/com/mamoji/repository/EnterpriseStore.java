@@ -6,6 +6,7 @@ import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.domain.Models.SocialInsuranceItem;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
 import jakarta.annotation.PostConstruct;
@@ -16,6 +17,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -38,6 +40,29 @@ public class EnterpriseStore {
     public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
     public final Map<Long, ReceiptVoucher> receiptVouchers = new ConcurrentHashMap<>();
 
+    private static final String DEFAULT_SOCIAL_INSURANCE_REGION = "深圳";
+    private static final String DEFAULT_HUKOU_TYPE = "non_local";
+    private static final String DEFAULT_MEDICAL_TIER = "tier1";
+    private static final BigDecimal SHENZHEN_PENSION_MIN_BASE = new BigDecimal("4775");
+    private static final BigDecimal SHENZHEN_PENSION_MAX_BASE = new BigDecimal("27549");
+    private static final BigDecimal SHENZHEN_MEDICAL_MIN_BASE = new BigDecimal("6727");
+    private static final BigDecimal SHENZHEN_MEDICAL_MAX_BASE = new BigDecimal("33633");
+    private static final BigDecimal SHENZHEN_UNEMPLOYMENT_MIN_BASE = new BigDecimal("2520");
+    private static final BigDecimal SHENZHEN_UNEMPLOYMENT_MAX_BASE = new BigDecimal("44265");
+    private static final BigDecimal DEFAULT_PENSION_PERSONAL_RATE = new BigDecimal("8");
+    private static final BigDecimal DEFAULT_PENSION_COMPANY_RATE = new BigDecimal("16");
+    private static final BigDecimal DEFAULT_LOCAL_SUPPLEMENT_PENSION_COMPANY_RATE = new BigDecimal("1");
+    private static final BigDecimal DEFAULT_MEDICAL_TIER1_PERSONAL_RATE = new BigDecimal("2");
+    private static final BigDecimal DEFAULT_MEDICAL_TIER1_COMPANY_RATE = new BigDecimal("6");
+    private static final BigDecimal DEFAULT_MEDICAL_TIER2_PERSONAL_RATE = new BigDecimal("0.5");
+    private static final BigDecimal DEFAULT_MEDICAL_TIER2_COMPANY_RATE = new BigDecimal("1.5");
+    private static final BigDecimal DEFAULT_MATERNITY_COMPANY_RATE = new BigDecimal("0.5");
+    private static final BigDecimal DEFAULT_UNEMPLOYMENT_PERSONAL_RATE = new BigDecimal("0.2");
+    private static final BigDecimal DEFAULT_UNEMPLOYMENT_COMPANY_RATE = new BigDecimal("0.8");
+    private static final BigDecimal DEFAULT_WORK_INJURY_COMPANY_RATE = new BigDecimal("0.2");
+    private static final BigDecimal DEFAULT_HOUSING_FUND_RATE = new BigDecimal("8");
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
 
@@ -56,6 +81,7 @@ public class EnterpriseStore {
         ensureHouseholdSubject();
         ensureEntityTransferSeed();
         ensureReceiptVoucherSeed();
+        ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
         attachDepartmentNames();
     }
@@ -127,6 +153,28 @@ public class EnterpriseStore {
                 social_insurance TEXT NOT NULL,
                 housing_fund TEXT NOT NULL,
                 tax_estimate TEXT NOT NULL,
+                social_insurance_base TEXT NOT NULL DEFAULT '0',
+                social_insurance_personal_rate TEXT NOT NULL DEFAULT '0',
+                social_insurance_company_rate TEXT NOT NULL DEFAULT '0',
+                social_insurance_personal_amount TEXT NOT NULL DEFAULT '0',
+                social_insurance_company_amount TEXT NOT NULL DEFAULT '0',
+                housing_fund_base TEXT NOT NULL DEFAULT '0',
+                housing_fund_personal_rate TEXT NOT NULL DEFAULT '0',
+                housing_fund_company_rate TEXT NOT NULL DEFAULT '0',
+                housing_fund_personal_amount TEXT NOT NULL DEFAULT '0',
+                housing_fund_company_amount TEXT NOT NULL DEFAULT '0',
+                personal_deduction TEXT NOT NULL DEFAULT '0',
+                net_pay_estimate TEXT NOT NULL DEFAULT '0',
+                social_insurance_region TEXT NOT NULL DEFAULT '深圳',
+                hukou_type TEXT NOT NULL DEFAULT 'non_local',
+                medical_tier TEXT NOT NULL DEFAULT 'tier1',
+                pension_base TEXT NOT NULL DEFAULT '0',
+                medical_base TEXT NOT NULL DEFAULT '0',
+                unemployment_base TEXT NOT NULL DEFAULT '0',
+                work_injury_base TEXT NOT NULL DEFAULT '0',
+                maternity_base TEXT NOT NULL DEFAULT '0',
+                work_injury_company_rate TEXT NOT NULL DEFAULT '0.2',
+                social_insurance_policy_note TEXT,
                 monthly_cost TEXT NOT NULL,
                 emergency_contact TEXT,
                 created_at TEXT NOT NULL,
@@ -135,6 +183,28 @@ public class EnterpriseStore {
             """);
         ensureColumn("employees", "access_role", "TEXT NOT NULL DEFAULT 'employee'");
         ensureColumn("employees", "access_scope", "TEXT NOT NULL DEFAULT 'self'");
+        ensureColumn("employees", "social_insurance_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "social_insurance_personal_rate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "social_insurance_company_rate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "social_insurance_personal_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "social_insurance_company_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "housing_fund_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "housing_fund_personal_rate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "housing_fund_company_rate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "housing_fund_personal_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "housing_fund_company_amount", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "personal_deduction", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "net_pay_estimate", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "social_insurance_region", "TEXT NOT NULL DEFAULT '深圳'");
+        ensureColumn("employees", "hukou_type", "TEXT NOT NULL DEFAULT 'non_local'");
+        ensureColumn("employees", "medical_tier", "TEXT NOT NULL DEFAULT 'tier1'");
+        ensureColumn("employees", "pension_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "medical_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "unemployment_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "work_injury_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "maternity_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "work_injury_company_rate", "TEXT NOT NULL DEFAULT '0.2'");
+        ensureColumn("employees", "social_insurance_policy_note", "TEXT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS employment_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -508,6 +578,16 @@ public class EnterpriseStore {
         });
     }
 
+    private void ensureEmployeePayrollDefaults() {
+        employees.values().forEach(employee -> {
+            boolean updated = hydrateEmployeePayroll(employee);
+            if (updated) {
+                employee.updatedAt = InMemoryStore.now();
+                saveEmployee(employee);
+            }
+        });
+    }
+
     private void ensureTaxItemDefaults() {
         taxItems.values().forEach(item -> {
             boolean updated = hydrateTaxItemDefaults(item);
@@ -768,15 +848,42 @@ public class EnterpriseStore {
         employee.socialInsurance = money(socialInsurance);
         employee.housingFund = money(housingFund);
         employee.taxEstimate = money(taxEstimate);
-        employee.monthlyCost = monthlyCost == null ? totalMonthlyCost(employee) : money(monthlyCost);
+        employee.socialInsuranceBase = employee.salary;
+        employee.socialInsurancePersonalRate = DEFAULT_PENSION_PERSONAL_RATE;
+        employee.socialInsuranceCompanyRate = percentageOf(employee.socialInsurance, employee.socialInsuranceBase, DEFAULT_PENSION_COMPANY_RATE);
+        employee.socialInsurancePersonalAmount = BigDecimal.ZERO;
+        employee.socialInsuranceCompanyAmount = employee.socialInsurance;
+        employee.housingFundBase = employee.salary;
+        employee.housingFundPersonalRate = DEFAULT_HOUSING_FUND_RATE;
+        employee.housingFundCompanyRate = percentageOf(employee.housingFund, employee.housingFundBase, DEFAULT_HOUSING_FUND_RATE);
+        employee.housingFundPersonalAmount = BigDecimal.ZERO;
+        employee.housingFundCompanyAmount = employee.housingFund;
+        employee.personalDeduction = BigDecimal.ZERO;
+        employee.netPayEstimate = BigDecimal.ZERO;
+        employee.socialInsuranceRegion = DEFAULT_SOCIAL_INSURANCE_REGION;
+        employee.hukouType = DEFAULT_HUKOU_TYPE;
+        employee.medicalTier = DEFAULT_MEDICAL_TIER;
+        employee.pensionBase = clamp(employee.salary, SHENZHEN_PENSION_MIN_BASE, SHENZHEN_PENSION_MAX_BASE);
+        employee.medicalBase = clamp(employee.salary, SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE);
+        employee.unemploymentBase = clamp(employee.salary, SHENZHEN_UNEMPLOYMENT_MIN_BASE, SHENZHEN_UNEMPLOYMENT_MAX_BASE);
+        employee.workInjuryBase = max(employee.salary, SHENZHEN_UNEMPLOYMENT_MIN_BASE);
+        employee.maternityBase = employee.medicalBase;
+        employee.workInjuryCompanyRate = DEFAULT_WORK_INJURY_COMPANY_RATE;
+        employee.socialInsurancePolicyNote = shenzhenPolicyNote();
+        employee.monthlyCost = money(monthlyCost);
+        hydrateEmployeePayroll(employee);
         employee.emergencyContact = emergencyContact;
         stamp(employee);
         employee.id = insert("""
             INSERT INTO employees (
                 company_id, user_id, department_id, name, email, phone, position, employment_type, status,
-                access_role, access_scope, hire_date, leave_date, salary, social_insurance, housing_fund, tax_estimate, monthly_cost,
-                emergency_contact, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                access_role, access_scope, hire_date, leave_date, salary, social_insurance, housing_fund, tax_estimate,
+                social_insurance_base, social_insurance_personal_rate, social_insurance_company_rate, social_insurance_personal_amount,
+                social_insurance_company_amount, housing_fund_base, housing_fund_personal_rate, housing_fund_company_rate,
+                housing_fund_personal_amount, housing_fund_company_amount, personal_deduction, net_pay_estimate,
+                social_insurance_region, hukou_type, medical_tier, pension_base, medical_base, unemployment_base, work_injury_base,
+                maternity_base, work_injury_company_rate, social_insurance_policy_note, monthly_cost, emergency_contact, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindEmployee(ps, employee));
         employees.put(employee.id, employee);
         attachDepartmentNames();
@@ -784,18 +891,31 @@ public class EnterpriseStore {
     }
 
     public void saveEmployee(Employee employee) {
-        employee.monthlyCost = totalMonthlyCost(employee);
+        hydrateEmployeePayroll(employee);
         employees.put(employee.id, employee);
         jdbc.update("""
             UPDATE employees SET company_id = ?, user_id = ?, department_id = ?, name = ?, email = ?, phone = ?,
                 position = ?, employment_type = ?, status = ?, access_role = ?, access_scope = ?, hire_date = ?, leave_date = ?, salary = ?,
-                social_insurance = ?, housing_fund = ?, tax_estimate = ?, monthly_cost = ?, emergency_contact = ?,
+                social_insurance = ?, housing_fund = ?, tax_estimate = ?, social_insurance_base = ?, social_insurance_personal_rate = ?,
+                social_insurance_company_rate = ?, social_insurance_personal_amount = ?, social_insurance_company_amount = ?,
+                housing_fund_base = ?, housing_fund_personal_rate = ?, housing_fund_company_rate = ?, housing_fund_personal_amount = ?,
+                housing_fund_company_amount = ?, personal_deduction = ?, net_pay_estimate = ?, social_insurance_region = ?,
+                hukou_type = ?, medical_tier = ?, pension_base = ?, medical_base = ?, unemployment_base = ?, work_injury_base = ?,
+                maternity_base = ?, work_injury_company_rate = ?, social_insurance_policy_note = ?, monthly_cost = ?, emergency_contact = ?,
                 updated_at = ?
             WHERE id = ?
             """, employee.companyId, employee.userId, employee.departmentId, employee.name, employee.email, employee.phone,
             employee.position, employee.employmentType, employee.status, employee.accessRole, employee.accessScope, employee.hireDate, employee.leaveDate,
             moneyText(employee.salary), moneyText(employee.socialInsurance), moneyText(employee.housingFund),
-            moneyText(employee.taxEstimate), moneyText(employee.monthlyCost), employee.emergencyContact,
+            moneyText(employee.taxEstimate), moneyText(employee.socialInsuranceBase), moneyText(employee.socialInsurancePersonalRate),
+            moneyText(employee.socialInsuranceCompanyRate), moneyText(employee.socialInsurancePersonalAmount),
+            moneyText(employee.socialInsuranceCompanyAmount), moneyText(employee.housingFundBase),
+            moneyText(employee.housingFundPersonalRate), moneyText(employee.housingFundCompanyRate),
+            moneyText(employee.housingFundPersonalAmount), moneyText(employee.housingFundCompanyAmount),
+            moneyText(employee.personalDeduction), moneyText(employee.netPayEstimate), employee.socialInsuranceRegion,
+            employee.hukouType, employee.medicalTier, moneyText(employee.pensionBase), moneyText(employee.medicalBase),
+            moneyText(employee.unemploymentBase), moneyText(employee.workInjuryBase), moneyText(employee.maternityBase),
+            moneyText(employee.workInjuryCompanyRate), employee.socialInsurancePolicyNote, moneyText(employee.monthlyCost), employee.emergencyContact,
             employee.updatedAt, employee.id);
         attachDepartmentNames();
     }
@@ -1158,10 +1278,33 @@ public class EnterpriseStore {
         employee.socialInsurance = money(rs.getString("social_insurance"));
         employee.housingFund = money(rs.getString("housing_fund"));
         employee.taxEstimate = money(rs.getString("tax_estimate"));
+        employee.socialInsuranceBase = money(rs.getString("social_insurance_base"));
+        employee.socialInsurancePersonalRate = money(rs.getString("social_insurance_personal_rate"));
+        employee.socialInsuranceCompanyRate = money(rs.getString("social_insurance_company_rate"));
+        employee.socialInsurancePersonalAmount = money(rs.getString("social_insurance_personal_amount"));
+        employee.socialInsuranceCompanyAmount = money(rs.getString("social_insurance_company_amount"));
+        employee.housingFundBase = money(rs.getString("housing_fund_base"));
+        employee.housingFundPersonalRate = money(rs.getString("housing_fund_personal_rate"));
+        employee.housingFundCompanyRate = money(rs.getString("housing_fund_company_rate"));
+        employee.housingFundPersonalAmount = money(rs.getString("housing_fund_personal_amount"));
+        employee.housingFundCompanyAmount = money(rs.getString("housing_fund_company_amount"));
+        employee.personalDeduction = money(rs.getString("personal_deduction"));
+        employee.netPayEstimate = money(rs.getString("net_pay_estimate"));
+        employee.socialInsuranceRegion = rs.getString("social_insurance_region");
+        employee.hukouType = rs.getString("hukou_type");
+        employee.medicalTier = rs.getString("medical_tier");
+        employee.pensionBase = money(rs.getString("pension_base"));
+        employee.medicalBase = money(rs.getString("medical_base"));
+        employee.unemploymentBase = money(rs.getString("unemployment_base"));
+        employee.workInjuryBase = money(rs.getString("work_injury_base"));
+        employee.maternityBase = money(rs.getString("maternity_base"));
+        employee.workInjuryCompanyRate = money(rs.getString("work_injury_company_rate"));
+        employee.socialInsurancePolicyNote = rs.getString("social_insurance_policy_note");
         employee.monthlyCost = money(rs.getString("monthly_cost"));
         employee.emergencyContact = rs.getString("emergency_contact");
         employee.createdAt = rs.getString("created_at");
         employee.updatedAt = rs.getString("updated_at");
+        hydrateEmployeePayroll(employee);
         return employee;
     }
 
@@ -1281,10 +1424,32 @@ public class EnterpriseStore {
         ps.setString(15, moneyText(employee.socialInsurance));
         ps.setString(16, moneyText(employee.housingFund));
         ps.setString(17, moneyText(employee.taxEstimate));
-        ps.setString(18, moneyText(employee.monthlyCost));
-        ps.setString(19, employee.emergencyContact);
-        ps.setString(20, employee.createdAt);
-        ps.setString(21, employee.updatedAt);
+        ps.setString(18, moneyText(employee.socialInsuranceBase));
+        ps.setString(19, moneyText(employee.socialInsurancePersonalRate));
+        ps.setString(20, moneyText(employee.socialInsuranceCompanyRate));
+        ps.setString(21, moneyText(employee.socialInsurancePersonalAmount));
+        ps.setString(22, moneyText(employee.socialInsuranceCompanyAmount));
+        ps.setString(23, moneyText(employee.housingFundBase));
+        ps.setString(24, moneyText(employee.housingFundPersonalRate));
+        ps.setString(25, moneyText(employee.housingFundCompanyRate));
+        ps.setString(26, moneyText(employee.housingFundPersonalAmount));
+        ps.setString(27, moneyText(employee.housingFundCompanyAmount));
+        ps.setString(28, moneyText(employee.personalDeduction));
+        ps.setString(29, moneyText(employee.netPayEstimate));
+        ps.setString(30, employee.socialInsuranceRegion);
+        ps.setString(31, employee.hukouType);
+        ps.setString(32, employee.medicalTier);
+        ps.setString(33, moneyText(employee.pensionBase));
+        ps.setString(34, moneyText(employee.medicalBase));
+        ps.setString(35, moneyText(employee.unemploymentBase));
+        ps.setString(36, moneyText(employee.workInjuryBase));
+        ps.setString(37, moneyText(employee.maternityBase));
+        ps.setString(38, moneyText(employee.workInjuryCompanyRate));
+        ps.setString(39, employee.socialInsurancePolicyNote);
+        ps.setString(40, moneyText(employee.monthlyCost));
+        ps.setString(41, employee.emergencyContact);
+        ps.setString(42, employee.createdAt);
+        ps.setString(43, employee.updatedAt);
     }
 
     private void bindTaxItem(PreparedStatement ps, TaxItem item) throws SQLException {
@@ -1381,8 +1546,322 @@ public class EnterpriseStore {
         }
     }
 
-    private static BigDecimal totalMonthlyCost(Employee employee) {
-        return money(employee.salary).add(money(employee.socialInsurance)).add(money(employee.housingFund)).add(money(employee.taxEstimate));
+    private static boolean hydrateEmployeePayroll(Employee employee) {
+        boolean updated = false;
+        BigDecimal salary = money(employee.salary);
+        if (!sameMoney(employee.salary, salary)) {
+            employee.salary = salary;
+            updated = true;
+        }
+        String region = blankToDefault(employee.socialInsuranceRegion, DEFAULT_SOCIAL_INSURANCE_REGION);
+        String hukouType = normalizeHukouType(employee.hukouType);
+        String medicalTier = normalizeMedicalTier(employee.medicalTier);
+        String policyNote = shenzhenPolicyNote();
+        if (!sameText(employee.socialInsuranceRegion, region)) {
+            employee.socialInsuranceRegion = region;
+            updated = true;
+        }
+        if (!sameText(employee.hukouType, hukouType)) {
+            employee.hukouType = hukouType;
+            updated = true;
+        }
+        if (!sameText(employee.medicalTier, medicalTier)) {
+            employee.medicalTier = medicalTier;
+            updated = true;
+        }
+        if (!sameText(employee.socialInsurancePolicyNote, policyNote)) {
+            employee.socialInsurancePolicyNote = policyNote;
+            updated = true;
+        }
+
+        List<String> warnings = new ArrayList<>();
+        BigDecimal pensionBase = boundedBase("养老保险", firstPositive(employee.pensionBase, firstPositive(employee.socialInsuranceBase, salary)),
+            SHENZHEN_PENSION_MIN_BASE, SHENZHEN_PENSION_MAX_BASE, warnings);
+        BigDecimal medicalBase = boundedBase("医疗保险", firstPositive(employee.medicalBase, firstPositive(employee.socialInsuranceBase, salary)),
+            SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE, warnings);
+        BigDecimal unemploymentBase = boundedBase("失业保险", firstPositive(employee.unemploymentBase, salary),
+            SHENZHEN_UNEMPLOYMENT_MIN_BASE, SHENZHEN_UNEMPLOYMENT_MAX_BASE, warnings);
+        BigDecimal maternityBase = boundedBase("生育保险", firstPositive(employee.maternityBase, medicalBase),
+            SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE, warnings);
+        BigDecimal workInjuryBase = max(firstPositive(employee.workInjuryBase, salary), SHENZHEN_UNEMPLOYMENT_MIN_BASE);
+        BigDecimal workInjuryCompanyRate = isZeroOrLess(employee.workInjuryCompanyRate)
+            ? DEFAULT_WORK_INJURY_COMPANY_RATE
+            : money(employee.workInjuryCompanyRate);
+
+        if (!sameMoney(employee.pensionBase, pensionBase)) {
+            employee.pensionBase = pensionBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.medicalBase, medicalBase)) {
+            employee.medicalBase = medicalBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.unemploymentBase, unemploymentBase)) {
+            employee.unemploymentBase = unemploymentBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.maternityBase, maternityBase)) {
+            employee.maternityBase = maternityBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.workInjuryBase, workInjuryBase)) {
+            employee.workInjuryBase = workInjuryBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.workInjuryCompanyRate, workInjuryCompanyRate)) {
+            employee.workInjuryCompanyRate = workInjuryCompanyRate;
+            updated = true;
+        }
+
+        if (isZeroOrLess(employee.housingFundBase)) {
+            employee.housingFundBase = salary;
+            updated = true;
+        }
+        if (isZeroOrLess(employee.housingFundPersonalRate)) {
+            employee.housingFundPersonalRate = DEFAULT_HOUSING_FUND_RATE;
+            updated = true;
+        }
+        if (isZeroOrLess(employee.housingFundCompanyRate)) {
+            employee.housingFundCompanyRate = percentageOf(firstPositive(employee.housingFundCompanyAmount, employee.housingFund),
+                employee.housingFundBase, DEFAULT_HOUSING_FUND_RATE);
+            updated = true;
+        }
+        if (employee.taxEstimate == null) {
+            employee.taxEstimate = BigDecimal.ZERO;
+            updated = true;
+        }
+        if (employee.personalDeduction == null) {
+            employee.personalDeduction = BigDecimal.ZERO;
+            updated = true;
+        }
+
+        BigDecimal medicalPersonalRate = "tier2".equals(medicalTier) ? DEFAULT_MEDICAL_TIER2_PERSONAL_RATE : DEFAULT_MEDICAL_TIER1_PERSONAL_RATE;
+        BigDecimal medicalCompanyRate = "tier2".equals(medicalTier) ? DEFAULT_MEDICAL_TIER2_COMPANY_RATE : DEFAULT_MEDICAL_TIER1_COMPANY_RATE;
+        List<SocialInsuranceItem> socialInsuranceItems = new ArrayList<>();
+        socialInsuranceItems.add(socialInsuranceItem(
+            "pension", "养老保险", "养老", pensionBase, SHENZHEN_PENSION_MIN_BASE, SHENZHEN_PENSION_MAX_BASE,
+            DEFAULT_PENSION_PERSONAL_RATE, DEFAULT_PENSION_COMPANY_RATE,
+            "广东企业职工养老基数 2025-07 起；单位 16%，个人 8%", "2025-07-01 至 2026-06-30"
+        ));
+        if (isLocalHukou(hukouType)) {
+            socialInsuranceItems.add(socialInsuranceItem(
+                "localSupplementPension", "地方补充养老", "养老", pensionBase, SHENZHEN_PENSION_MIN_BASE, SHENZHEN_PENSION_MAX_BASE,
+                BigDecimal.ZERO, DEFAULT_LOCAL_SUPPLEMENT_PENSION_COMPANY_RATE,
+                "深圳本市户籍地方补充养老，单位承担", "长期政策，按最新通知调整"
+            ));
+        }
+        socialInsuranceItems.add(socialInsuranceItem(
+            "medical", "医疗保险" + ("tier2".equals(medicalTier) ? "二档" : "一档"), "医疗", medicalBase,
+            SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE, medicalPersonalRate, medicalCompanyRate,
+            "深圳医保 2026 基数；一档单位 6%/个人 2%，二档单位 1.5%/个人 0.5%", "2026-01-01 至 2026-12-31"
+        ));
+        socialInsuranceItems.add(socialInsuranceItem(
+            "maternity", "生育保险", "生育", maternityBase, SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE,
+            BigDecimal.ZERO, DEFAULT_MATERNITY_COMPANY_RATE,
+            "深圳生育保险按职工医保基数，单位 0.5%，个人不缴", "2026-01-01 至 2026-12-31"
+        ));
+        socialInsuranceItems.add(socialInsuranceItem(
+            "unemployment", "失业保险", "失业", unemploymentBase, SHENZHEN_UNEMPLOYMENT_MIN_BASE, SHENZHEN_UNEMPLOYMENT_MAX_BASE,
+            DEFAULT_UNEMPLOYMENT_PERSONAL_RATE, DEFAULT_UNEMPLOYMENT_COMPANY_RATE,
+            "深圳失业保险 2025-07 至 2026-06 基数；单位 0.8%，个人 0.2%", "2025-07-01 至 2026-06-30"
+        ));
+        socialInsuranceItems.add(socialInsuranceItem(
+            "workInjury", "工伤保险", "工伤", workInjuryBase, SHENZHEN_UNEMPLOYMENT_MIN_BASE, null,
+            BigDecimal.ZERO, workInjuryCompanyRate,
+            "广东省级统筹八档行业基准费率，深圳 2024-07 起 0.2%-1.4%，个人不缴", "2024-07-01 起"
+        ));
+
+        BigDecimal socialPersonalAmount = socialPersonalAmount(socialInsuranceItems);
+        BigDecimal socialCompanyAmount = socialCompanyAmount(socialInsuranceItems);
+        BigDecimal housingPersonalAmount = contribution(employee.housingFundBase, employee.housingFundPersonalRate);
+        BigDecimal housingCompanyAmount = contribution(employee.housingFundBase, employee.housingFundCompanyRate);
+        BigDecimal monthlyCost = salary.add(socialCompanyAmount).add(housingCompanyAmount);
+        BigDecimal netPayEstimate = salary
+            .subtract(socialPersonalAmount)
+            .subtract(housingPersonalAmount)
+            .subtract(money(employee.taxEstimate))
+            .subtract(money(employee.personalDeduction));
+        if (netPayEstimate.signum() < 0) {
+            netPayEstimate = BigDecimal.ZERO;
+        }
+
+        if (!sameMoney(employee.socialInsuranceBase, pensionBase)) {
+            employee.socialInsuranceBase = pensionBase;
+            updated = true;
+        }
+        BigDecimal aggregatePersonalRate = percentageOf(socialPersonalAmount, pensionBase, BigDecimal.ZERO);
+        BigDecimal aggregateCompanyRate = percentageOf(socialCompanyAmount, pensionBase, BigDecimal.ZERO);
+        if (!sameMoney(employee.socialInsurancePersonalRate, aggregatePersonalRate)) {
+            employee.socialInsurancePersonalRate = aggregatePersonalRate;
+            updated = true;
+        }
+        if (!sameMoney(employee.socialInsuranceCompanyRate, aggregateCompanyRate)) {
+            employee.socialInsuranceCompanyRate = aggregateCompanyRate;
+            updated = true;
+        }
+        if (!sameMoney(employee.socialInsurancePersonalAmount, socialPersonalAmount)) {
+            employee.socialInsurancePersonalAmount = socialPersonalAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.socialInsuranceCompanyAmount, socialCompanyAmount)) {
+            employee.socialInsuranceCompanyAmount = socialCompanyAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.housingFundPersonalAmount, housingPersonalAmount)) {
+            employee.housingFundPersonalAmount = housingPersonalAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.housingFundCompanyAmount, housingCompanyAmount)) {
+            employee.housingFundCompanyAmount = housingCompanyAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.socialInsurance, socialCompanyAmount)) {
+            employee.socialInsurance = socialCompanyAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.housingFund, housingCompanyAmount)) {
+            employee.housingFund = housingCompanyAmount;
+            updated = true;
+        }
+        if (!sameMoney(employee.monthlyCost, monthlyCost)) {
+            employee.monthlyCost = monthlyCost;
+            updated = true;
+        }
+        if (!sameMoney(employee.netPayEstimate, netPayEstimate)) {
+            employee.netPayEstimate = netPayEstimate;
+            updated = true;
+        }
+        employee.socialInsuranceItems = socialInsuranceItems;
+        employee.socialInsuranceWarnings = warnings;
+        return updated;
+    }
+
+    private static SocialInsuranceItem socialInsuranceItem(
+        String key,
+        String name,
+        String category,
+        BigDecimal base,
+        BigDecimal minBase,
+        BigDecimal maxBase,
+        BigDecimal personalRate,
+        BigDecimal companyRate,
+        String policyBasis,
+        String validPeriod
+    ) {
+        SocialInsuranceItem item = new SocialInsuranceItem();
+        item.key = key;
+        item.name = name;
+        item.category = category;
+        item.base = money(base);
+        item.minBase = minBase;
+        item.maxBase = maxBase;
+        item.personalRate = money(personalRate);
+        item.companyRate = money(companyRate);
+        item.personalAmount = contribution(item.base, item.personalRate);
+        item.companyAmount = contribution(item.base, item.companyRate);
+        item.policyBasis = policyBasis;
+        item.validPeriod = validPeriod;
+        item.status = "normal";
+        return item;
+    }
+
+    private static BigDecimal socialPersonalAmount(List<SocialInsuranceItem> items) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (SocialInsuranceItem item : items) {
+            total = total.add(money(item.personalAmount));
+        }
+        return total;
+    }
+
+    private static BigDecimal socialCompanyAmount(List<SocialInsuranceItem> items) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (SocialInsuranceItem item : items) {
+            total = total.add(money(item.companyAmount));
+        }
+        return total;
+    }
+
+    private static BigDecimal boundedBase(String label, BigDecimal value, BigDecimal min, BigDecimal max, List<String> warnings) {
+        BigDecimal safeValue = money(value);
+        if (safeValue.compareTo(min) < 0) {
+            warnings.add(label + "基数低于深圳当前下限，已按 " + moneyText(min) + " 计算");
+            return min;
+        }
+        if (max != null && safeValue.compareTo(max) > 0) {
+            warnings.add(label + "基数高于深圳当前上限，已按 " + moneyText(max) + " 计算");
+            return max;
+        }
+        return safeValue;
+    }
+
+    private static BigDecimal clamp(BigDecimal value, BigDecimal min, BigDecimal max) {
+        BigDecimal safeValue = money(value);
+        if (safeValue.compareTo(min) < 0) {
+            return min;
+        }
+        if (max != null && safeValue.compareTo(max) > 0) {
+            return max;
+        }
+        return safeValue;
+    }
+
+    private static BigDecimal max(BigDecimal left, BigDecimal right) {
+        return money(left).compareTo(money(right)) >= 0 ? money(left) : money(right);
+    }
+
+    private static String normalizeHukouType(String value) {
+        String normalized = blankToDefault(value, DEFAULT_HUKOU_TYPE);
+        return "local".equals(normalized) || "shenzhen".equals(normalized) || "深户".equals(normalized) ? "local" : "non_local";
+    }
+
+    private static boolean isLocalHukou(String value) {
+        return "local".equals(normalizeHukouType(value));
+    }
+
+    private static String normalizeMedicalTier(String value) {
+        String normalized = blankToDefault(value, DEFAULT_MEDICAL_TIER);
+        return "tier2".equals(normalized) || "二档".equals(normalized) ? "tier2" : "tier1";
+    }
+
+    private static String blankToDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static boolean sameText(String left, String right) {
+        return blankToDefault(left, "").equals(blankToDefault(right, ""));
+    }
+
+    private static String shenzhenPolicyNote() {
+        return "深圳五险演示政策：养老 2025-07 至 2026-06 基数 4775-27549；医保/生育 2026 年基数 6727-33633；失业 2025-07 至 2026-06 基数 2520-44265；工伤按行业费率 0.2%-1.4%。";
+    }
+
+    private static BigDecimal contribution(BigDecimal base, BigDecimal rate) {
+        return money(base).multiply(money(rate)).divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal percentageOf(BigDecimal amount, BigDecimal base, BigDecimal fallback) {
+        BigDecimal safeBase = money(base);
+        if (safeBase.signum() <= 0) {
+            return fallback;
+        }
+        BigDecimal safeAmount = money(amount);
+        if (safeAmount.signum() <= 0) {
+            return fallback;
+        }
+        return safeAmount.multiply(ONE_HUNDRED).divide(safeBase, 2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal firstPositive(BigDecimal first, BigDecimal second) {
+        BigDecimal safeFirst = money(first);
+        return safeFirst.signum() > 0 ? safeFirst : money(second);
+    }
+
+    private static boolean isZeroOrLess(BigDecimal value) {
+        return money(value).compareTo(BigDecimal.ZERO) <= 0;
+    }
+
+    private static boolean sameMoney(BigDecimal left, BigDecimal right) {
+        return money(left).compareTo(money(right)) == 0;
     }
 
     private static BigDecimal money(Object value) {
