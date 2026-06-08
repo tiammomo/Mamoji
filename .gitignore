@@ -72,6 +72,9 @@ Thumbs.db
 
 # Screenshots (do not commit)
 *.png
+!docs/assets/
+!docs/assets/screenshots/
+!docs/assets/screenshots/*.png
 !.gitkeep
 
 # Local automation and smoke artifacts
