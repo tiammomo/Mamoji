@@ -481,4 +481,23 @@ public final class Models {
         public String actorName;
         public String createdAt;
     }
+
+    public static class OutboxEvent {
+        public long id;
+        public String eventId;
+        public String eventType;
+        public String aggregateType;
+        public long aggregateId;
+        public long companyId;
+        public long actorUserId;
+        public String payloadJson;
+        public String status;
+        public int attempts;
+        public String nextAttemptAt;
+        public String lockedAt;
+        public String processedAt;
+        public String lastError;
+        public String createdAt;
+        public String updatedAt;
+    }
 }

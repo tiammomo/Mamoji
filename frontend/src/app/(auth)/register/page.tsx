@@ -165,7 +165,7 @@ export default function RegisterPage() {
               field="password"
               rules={[
                 { required: true, message: "请输入密码" },
-                { minLength: 8, message: "密码至少8位" },
+                { minLength: 12, message: "密码至少12位" },
               ]}
             >
               <Input.Password

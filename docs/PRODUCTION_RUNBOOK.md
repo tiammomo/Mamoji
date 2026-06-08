@@ -8,6 +8,10 @@
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会生成测试账号、演示流水、演示员工、演示税费或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；只有排障时才临时关闭。
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
+- 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
+- 保持 `MAMOJI_PASSWORD_MIN_LENGTH=12`、`MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`；首次管理员、注册和改密都会执行该策略，复杂度要求至少包含大小写、数字、符号中的三类。
+- 登录失败保护默认按账号 5 次锁定 15 分钟，并按来源 50 次锁定 15 分钟；可通过 `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、`MAMOJI_AUTH_FAILURE_WINDOW_MINUTES`、`MAMOJI_AUTH_LOCK_MINUTES` 调整。
+- 保持 `MAMOJI_OUTBOX_ENABLED=true`。当前项目先使用数据库 Outbox 承接异步事件，不直接引入 RocketMQ；详细说明见 `docs/OUTBOX_EVENTS.md`。
 - 设置 `MAMOJI_SMOKE_EMAIL` 和 `MAMOJI_SMOKE_PASSWORD`，用于发布后自动冒烟验证。
 - 确认服务器只对外开放 `80/443`，Prometheus 端口默认绑定 `127.0.0.1:39090`。
 - 确认 DNS 已指向部署服务器，`MAMOJI_PUBLIC_HOST` 与证书域名一致。
@@ -91,15 +95,28 @@ scripts/smoke-prod.sh
 - 后端指标: `/actuator/prometheus`
 - 后端健康: `/actuator/health`
 - 公网健康: `/healthz`
+- 内置告警规则: `docker/prometheus/alerts.yml`
 
 最低告警建议：
 
-- 后端、前端、PostgreSQL、MinIO 任一容器不健康超过 2 分钟。
+- 后端不可抓取超过 2 分钟。
 - `/healthz` 连续失败超过 2 次。
-- 后端 5xx 比例持续升高。
-- PostgreSQL 连接池耗尽或连接数异常。
+- 后端 5xx 持续升高。
+- JVM 堆内存持续高于 90%。
+- PostgreSQL 连接池出现等待连接或连接数异常。
 - 磁盘可用空间低于 20%。
 - 备份任务失败或 24 小时内没有新备份。
+- Outbox `dead` 状态事件数量大于 0，或 `pending/failed` 积压持续增长。
+
+Prometheus 已内置后端不可抓取、5xx、堆内存和 HikariCP 等规则；生产通知仍需接入公司现有告警平台或 Alertmanager。
+
+Outbox 积压检查：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres \
+  psql -U "$MAMOJI_POSTGRES_USER" -d "$MAMOJI_POSTGRES_DB" \
+  -c "SELECT status, count(*) FROM outbox_events GROUP BY status ORDER BY status;"
+```
 
 ## 回滚
 
@@ -125,13 +142,17 @@ scripts/smoke-prod.sh
 
 ## 投产验收清单
 
+完整清单见 `docs/GO_LIVE_CHECKLIST.md`。
+
 - `.env.production` 中没有 `replace-with`、`example.com` 或默认 MinIO 密钥。
+- `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，`MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`。
 - 公网只开放 `80/443`；PostgreSQL、后端、前端、MinIO API/Console 不直接暴露公网。
 - `docker compose -f docker-compose.prod.yml --env-file .env.production ps` 全部 healthy。
 - `scripts/backup-prod.sh` 成功生成备份，且 `SHA256SUMS` 校验通过。
 - 在预生产环境执行过 `CONFIRM_RESTORE=yes scripts/restore-prod.sh <backup-dir>`。
 - `scripts/smoke-prod.sh` 通过。
 - 管理员能查询 `/api/v1/audit-logs`，并能看到登录、员工、税务和权限变更记录。
+- `outbox_events` 无 `dead` 事件，关键动作能产生并消费 Outbox 事件。
 - 生产注册入口必须携带有效邀请 token；无邀请的公开注册请求应返回 403。
 - 薪酬页能生成当月批次，锁定后批次状态为 `closed`，审计日志能查到 `payroll_run`。
 - 已记录最近一次可回滚代码 tag 或镜像 tag。

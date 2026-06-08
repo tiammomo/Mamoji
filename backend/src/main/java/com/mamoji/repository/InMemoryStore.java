@@ -55,6 +55,8 @@ public class InMemoryStore {
     private final String bootstrapAdminEmail;
     private final String bootstrapAdminPassword;
     private final String bootstrapAdminNickname;
+    private final int passwordMinLength;
+    private final boolean passwordRequireComplexity;
 
     public InMemoryStore(
         JdbcTemplate jdbc,
@@ -63,7 +65,9 @@ public class InMemoryStore {
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
         @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
-        @Value("${mamoji.bootstrap.admin-nickname:Mamoji 公司管理员}") String bootstrapAdminNickname
+        @Value("${mamoji.bootstrap.admin-nickname:Mamoji 公司管理员}") String bootstrapAdminNickname,
+        @Value("${mamoji.security.password.min-length:12}") int passwordMinLength,
+        @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity
     ) {
         this.jdbc = jdbc;
         this.passwordHasher = passwordHasher;
@@ -72,6 +76,8 @@ public class InMemoryStore {
         this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
         this.bootstrapAdminPassword = defaultIfBlank(bootstrapAdminPassword, "123456");
         this.bootstrapAdminNickname = defaultIfBlank(bootstrapAdminNickname, "Mamoji 公司管理员");
+        this.passwordMinLength = Math.max(8, passwordMinLength);
+        this.passwordRequireComplexity = passwordRequireComplexity;
     }
 
     @PostConstruct
@@ -419,11 +425,31 @@ public class InMemoryStore {
             throw new IllegalStateException("MAMOJI_BOOTSTRAP_ADMIN_EMAIL must be a valid email in bootstrap mode");
         }
         if (bootstrapAdminPassword == null
-            || bootstrapAdminPassword.length() < 12
+            || bootstrapAdminPassword.length() < passwordMinLength
             || "123456".equals(bootstrapAdminPassword)
             || bootstrapAdminPassword.toLowerCase(Locale.ROOT).contains("replace-with")) {
             throw new IllegalStateException("MAMOJI_BOOTSTRAP_ADMIN_PASSWORD must be replaced with a strong password in bootstrap mode");
         }
+        if (passwordRequireComplexity && passwordComplexityClasses(bootstrapAdminPassword) < 3) {
+            throw new IllegalStateException("MAMOJI_BOOTSTRAP_ADMIN_PASSWORD must contain at least three of lowercase, uppercase, digits and symbols in bootstrap mode");
+        }
+    }
+
+    private int passwordComplexityClasses(String password) {
+        int classes = 0;
+        if (password.chars().anyMatch(Character::isLowerCase)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(Character::isUpperCase)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(Character::isDigit)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch))) {
+            classes++;
+        }
+        return classes;
     }
 
     private String defaultIfBlank(String value, String fallback) {

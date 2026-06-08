@@ -18,6 +18,7 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.intValue;
@@ -33,32 +34,49 @@ public class AuthService {
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final PasswordHasher passwordHasher;
+    private final LoginSecurityService loginSecurityService;
+    private final OutboxEventService outboxEventService;
     private final String registrationMode;
+    private final int passwordMinLength;
+    private final boolean passwordRequireComplexity;
 
     public AuthService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         PasswordHasher passwordHasher,
-        @Value("${mamoji.registration.mode:open}") String registrationMode
+        LoginSecurityService loginSecurityService,
+        OutboxEventService outboxEventService,
+        @Value("${mamoji.registration.mode:open}") String registrationMode,
+        @Value("${mamoji.security.password.min-length:12}") int passwordMinLength,
+        @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.passwordHasher = passwordHasher;
+        this.loginSecurityService = loginSecurityService;
+        this.outboxEventService = outboxEventService;
         this.registrationMode = textOr(registrationMode, "open").toLowerCase(Locale.ROOT);
+        this.passwordMinLength = Math.max(8, passwordMinLength);
+        this.passwordRequireComplexity = passwordRequireComplexity;
     }
 
-    public Map<String, Object> login(Map<String, Object> body) {
-        String email = text(body.get("email"));
+    public Map<String, Object> login(Map<String, Object> body, String clientIp) {
+        String email = normalizedEmail(body.get("email"));
         String password = text(body.get("password"));
+        loginSecurityService.requireLoginAllowed(email, clientIp);
         Optional<User> matchedUser = store.findUserByEmail(email)
             .filter(candidate -> passwordHasher.matches(password, candidate.passwordHash));
         if (matchedUser.isEmpty()) {
             enterpriseStore.auditLog(0, "auth_session", 0, "login_failed", "登录失败: " + maskEmail(email), 0, "anonymous");
+            loginSecurityService.recordFailure(email, clientIp)
+                .ifPresent(lockedUntil -> enterpriseStore.auditLog(0, "auth_session", 0, "login_locked",
+                    "登录失败次数过多，账号或来源临时锁定至: " + lockedUntil, 0, "anonymous"));
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
         }
         User user = matchedUser.get();
+        loginSecurityService.recordSuccess(email, clientIp);
         if (passwordHasher.needsUpgrade(user.passwordHash)) {
             user.passwordHash = passwordHasher.hash(password);
             touch(user);
@@ -67,6 +85,7 @@ public class AuthService {
         return authenticated(user);
     }
 
+    @Transactional
     public Map<String, Object> register(Map<String, Object> body) {
         String email = normalizedEmail(body.get("email"));
         String password = text(body.get("password"));
@@ -76,13 +95,11 @@ public class AuthService {
         if (!email.contains("@")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email");
         }
-        if (password.length() < 8) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least 8 characters");
-        }
         if (store.findUserByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
         RegistrationInvite invite = invitationForRegistration(email, text(body.get("inviteToken")));
+        validateNewPassword(password);
         User user = store.user(
             email,
             textOr(body.get("nickname"), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
@@ -100,8 +117,19 @@ public class AuthService {
         Ledger ledger = store.ledger(user.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
         store.member(ledger.id, user.id, "owner");
         enterpriseStore.auditLog(0, "user", user.id, "register", "注册用户: " + user.email, user.id, user.nickname);
+        outboxEventService.publish("auth.user.registered", 0, "user", user.id, user.id, Map.of(
+            "email", user.email,
+            "nickname", user.nickname,
+            "role", user.role,
+            "registrationMode", registrationMode
+        ));
         if (invite != null) {
             enterpriseStore.auditLog(0, "registration_invite", invite.id, "accept", "接受注册邀请: " + user.email, user.id, user.nickname);
+            outboxEventService.publish("auth.registration_invite.accepted", 0, "registration_invite", invite.id, user.id, Map.of(
+                "email", user.email,
+                "acceptedUserId", user.id,
+                "invitedByUserId", invite.invitedByUserId
+            ));
         }
         return authenticated(user);
     }
@@ -111,6 +139,7 @@ public class AuthService {
         return store.sortedRegistrationInvites();
     }
 
+    @Transactional
     public RegistrationInvite createInvitation(String authorization, Map<String, Object> body) {
         User actor = accessControl.requireAdmin(authorization);
         String email = normalizedEmail(body.get("email"));
@@ -132,6 +161,13 @@ public class AuthService {
             actor.id
         );
         enterpriseStore.auditLog(0, "registration_invite", invite.id, "create", "创建注册邀请: " + email, actor.id, actor.nickname);
+        outboxEventService.publish("auth.registration_invite.created", 0, "registration_invite", invite.id, actor.id, Map.of(
+            "email", invite.email,
+            "role", invite.role,
+            "permissions", invite.permissions,
+            "expiresAt", invite.expiresAt,
+            "invitedByUserId", actor.id
+        ));
         return invite;
     }
 
@@ -159,9 +195,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Old password is incorrect");
         }
         String newPassword = text(body.get("newPassword"));
-        if (newPassword.length() < 6) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters");
-        }
+        validateNewPassword(newPassword);
         user.passwordHash = passwordHasher.hash(newPassword);
         touch(user);
         store.saveUser(user);
@@ -215,6 +249,32 @@ public class AuthService {
 
     private String normalizedEmail(Object value) {
         return text(value).trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void validateNewPassword(String password) {
+        if (password.length() < passwordMinLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least " + passwordMinLength + " characters");
+        }
+        if (!passwordRequireComplexity) {
+            return;
+        }
+        int classes = 0;
+        if (password.chars().anyMatch(Character::isLowerCase)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(Character::isUpperCase)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(Character::isDigit)) {
+            classes++;
+        }
+        if (password.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch))) {
+            classes++;
+        }
+        if (classes < 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Password must contain at least three of lowercase, uppercase, digits and symbols");
+        }
     }
 
     private String maskEmail(String email) {

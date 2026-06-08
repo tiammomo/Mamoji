@@ -3,6 +3,7 @@ package com.mamoji.controller;
 import com.mamoji.domain.Models.RegistrationInvite;
 import com.mamoji.domain.Models.User;
 import com.mamoji.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,8 +24,8 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@RequestBody Map<String, Object> body) {
-        return service.login(body);
+    public Map<String, Object> login(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+        return service.login(body, clientIp(request));
     }
 
     @PostMapping("/register")
@@ -69,5 +70,17 @@ public class AuthController {
         @RequestBody Map<String, Object> body
     ) {
         return service.changePassword(authorization, body);
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            return forwardedFor.split(",")[0].trim();
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
+        return request.getRemoteAddr();
     }
 }

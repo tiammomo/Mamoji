@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.intValue;
@@ -39,15 +40,18 @@ public class EnterpriseManagementService {
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
+    private final OutboxEventService outboxEventService;
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
-        EnterprisePermissionCatalog permissionCatalog
+        EnterprisePermissionCatalog permissionCatalog,
+        OutboxEventService outboxEventService
     ) {
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
+        this.outboxEventService = outboxEventService;
     }
 
     public Map<String, Object> summary(String authorization, Long companyId) {
@@ -95,6 +99,7 @@ public class EnterpriseManagementService {
         return accessControl.accessibleCompanies(accessControl.requireUser(authorization));
     }
 
+    @Transactional
     public Company createCompany(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = enterpriseStore.company(
@@ -117,6 +122,7 @@ public class EnterpriseManagementService {
         return accessControl.resolveCompany(accessControl.requireUser(authorization), companyId);
     }
 
+    @Transactional
     public Company updateCompanyProfile(String authorization, Long companyId, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
@@ -133,6 +139,7 @@ public class EnterpriseManagementService {
         return enterpriseStore.sortedDepartments(company.id);
     }
 
+    @Transactional
     public Department createDepartment(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
@@ -150,6 +157,7 @@ public class EnterpriseManagementService {
         return department;
     }
 
+    @Transactional
     public Department updateDepartment(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Department department = require(enterpriseStore.departments.get(id), "Department not found");
@@ -192,6 +200,7 @@ public class EnterpriseManagementService {
             .toList();
     }
 
+    @Transactional
     public Employee createEmployee(String authorization, Map<String, Object> body) {
         User operator = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(operator, optionalLong(body.get("companyId")).orElse(null));
@@ -226,6 +235,7 @@ public class EnterpriseManagementService {
         return employee;
     }
 
+    @Transactional
     public Employee updateEmployee(String authorization, long id, Map<String, Object> body) {
         User operator = accessControl.requireUser(authorization);
         Employee employee = require(enterpriseStore.employees.get(id), "Employee not found");
@@ -257,6 +267,7 @@ public class EnterpriseManagementService {
         return enterpriseStore.sortedTaxItems(company.id);
     }
 
+    @Transactional
     public TaxItem createTaxItem(String authorization, Map<String, Object> body) {
         User user = accessControl.requireFinanceManager(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
@@ -280,6 +291,7 @@ public class EnterpriseManagementService {
         return item;
     }
 
+    @Transactional
     public TaxItem updateTaxItem(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireFinanceManager(authorization);
         TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
@@ -294,6 +306,7 @@ public class EnterpriseManagementService {
         return item;
     }
 
+    @Transactional
     public void deleteTaxItem(String authorization, long id) {
         User user = accessControl.requireFinanceManager(authorization);
         TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
@@ -314,6 +327,7 @@ public class EnterpriseManagementService {
         return enterpriseStore.sortedEntityTransfers(accessibleEntityIds, scopedEntityId);
     }
 
+    @Transactional
     public EntityTransfer createEntityTransfer(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         long fromEntityId = optionalLong(body.get("fromEntityId"))
@@ -348,6 +362,19 @@ public class EnterpriseManagementService {
 
     private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
         enterpriseStore.auditLog(companyId, entityType, entityId, action, summary, user.id, user.nickname);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("actorName", user.nickname);
+        payload.put("entityType", entityType);
+        payload.put("action", action);
+        outboxEventService.publish(
+            "enterprise." + entityType + "." + action,
+            companyId,
+            entityType,
+            entityId,
+            user.id,
+            payload
+        );
     }
 
     private void applyTaxItemFields(TaxItem item, Map<String, Object> body) {

@@ -68,7 +68,7 @@ async function main() {
       body: JSON.stringify({
         email: "smoke-" + Date.now() + "@example.invalid",
         nickname: "Smoke",
-        password: "smoke-password"
+        password: "Smoke-password-123"
       })
     });
     if (blockedRegister.status !== 403) {

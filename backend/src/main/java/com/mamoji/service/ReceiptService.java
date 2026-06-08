@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -46,17 +47,20 @@ public class ReceiptService {
     private final EnterpriseStore enterpriseStore;
     private final InMemoryStore coreStore;
     private final ObjectStorageService objectStorageService;
+    private final OutboxEventService outboxEventService;
 
     public ReceiptService(
         AccessControlService accessControl,
         EnterpriseStore enterpriseStore,
         InMemoryStore coreStore,
-        ObjectStorageService objectStorageService
+        ObjectStorageService objectStorageService,
+        OutboxEventService outboxEventService
     ) {
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
         this.coreStore = coreStore;
         this.objectStorageService = objectStorageService;
+        this.outboxEventService = outboxEventService;
     }
 
     public PagedResponse<ReceiptVoucher> list(String authorization, Map<String, String> params) {
@@ -167,6 +171,7 @@ public class ReceiptService {
         return result;
     }
 
+    @Transactional
     public ReceiptVoucher create(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
@@ -199,6 +204,7 @@ public class ReceiptService {
         return voucher;
     }
 
+    @Transactional
     public ReceiptVoucher update(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireFinanceManager(authorization);
         ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
@@ -634,6 +640,25 @@ public class ReceiptService {
 
     private void logVoucher(User user, ReceiptVoucher voucher, String action, String summary) {
         enterpriseStore.auditLog(voucher.companyId, "receipt_voucher", voucher.id, action, summary, user.id, user.nickname);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("voucherNo", voucher.voucherNo);
+        payload.put("voucherType", voucher.voucherType);
+        payload.put("status", voucher.status);
+        payload.put("invoiceCheckStatus", voucher.invoiceCheckStatus);
+        payload.put("deductionStatus", voucher.deductionStatus);
+        payload.put("approvalStatus", voucher.approvalStatus);
+        payload.put("accountingStatus", voucher.accountingStatus);
+        payload.put("amount", voucher.amount);
+        payload.put("taxAmount", voucher.taxAmount);
+        outboxEventService.publish(
+            "receipt_voucher." + action,
+            voucher.companyId,
+            "receipt_voucher",
+            voucher.id,
+            user.id,
+            payload
+        );
     }
 
     private boolean isBlank(String value) {

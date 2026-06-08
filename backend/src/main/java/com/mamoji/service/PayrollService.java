@@ -24,6 +24,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.optionalLong;
@@ -34,16 +35,19 @@ public class PayrollService {
     private final JdbcTemplate jdbc;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
+    private final OutboxEventService outboxEventService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PayrollService(
         JdbcTemplate jdbc,
         EnterpriseStore enterpriseStore,
-        AccessControlService accessControl
+        AccessControlService accessControl,
+        OutboxEventService outboxEventService
     ) {
         this.jdbc = jdbc;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
+        this.outboxEventService = outboxEventService;
     }
 
     public List<PayrollRun> listRuns(String authorization, Long companyId, String period) {
@@ -66,6 +70,7 @@ public class PayrollService {
         return runs;
     }
 
+    @Transactional
     public PayrollRun createRun(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
@@ -106,9 +111,17 @@ public class PayrollService {
         }
         run.items = items;
         enterpriseStore.auditLog(company.id, "payroll_run", run.id, "create", "生成薪酬月结批次: " + run.period, user.id, user.nickname);
+        outboxEventService.publish("payroll.run.created", company.id, "payroll_run", run.id, user.id, Map.of(
+            "period", run.period,
+            "employeeCount", run.employeeCount,
+            "salaryTotal", moneyText(run.salaryTotal),
+            "netPayTotal", moneyText(run.netPayTotal),
+            "companyCostTotal", moneyText(run.companyCostTotal)
+        ));
         return run;
     }
 
+    @Transactional
     public PayrollRun closeRun(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
         PayrollRun run = findRun(id);
@@ -125,6 +138,13 @@ public class PayrollService {
             """, user.id, now, now, id);
         PayrollRun closed = attachItems(findRun(id));
         enterpriseStore.auditLog(company.id, "payroll_run", closed.id, "close", "锁定薪酬月结批次: " + closed.period, user.id, user.nickname);
+        outboxEventService.publish("payroll.run.closed", company.id, "payroll_run", closed.id, user.id, Map.of(
+            "period", closed.period,
+            "employeeCount", closed.employeeCount,
+            "netPayTotal", moneyText(closed.netPayTotal),
+            "companyCostTotal", moneyText(closed.companyCostTotal),
+            "closedAt", closed.closedAt
+        ));
         return closed;
     }
 

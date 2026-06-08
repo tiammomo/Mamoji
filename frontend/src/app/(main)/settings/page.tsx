@@ -154,7 +154,7 @@ export default function SettingsPage() {
                   field="newPassword"
                   rules={[
                     { required: true, message: "请输入新密码" },
-                    { minLength: 6, message: "密码至少6位" },
+                    { minLength: 12, message: "密码至少12位" },
                   ]}
                 >
                   <Input.Password style={{ borderRadius: 12, height: 48 }} />

@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.function.Predicate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -34,15 +35,18 @@ public class AccountingService {
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
+    private final OutboxEventService outboxEventService;
 
     public AccountingService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
-        AccessControlService accessControl
+        AccessControlService accessControl,
+        OutboxEventService outboxEventService
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
+        this.outboxEventService = outboxEventService;
     }
 
     public List<Account> listAccounts(String authorization) {
@@ -62,6 +66,7 @@ public class AccountingService {
         return account;
     }
 
+    @Transactional
     public Account createAccount(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
         Account account = store.account(
@@ -81,6 +86,7 @@ public class AccountingService {
         return account;
     }
 
+    @Transactional
     public Account updateAccount(String authorization, long id, Map<String, Object> body) {
         Account account = getAccount(authorization, id);
         User user = requireUser(authorization);
@@ -110,6 +116,7 @@ public class AccountingService {
         return account;
     }
 
+    @Transactional
     public void deleteAccount(String authorization, long id) {
         Account account = getAccount(authorization, id);
         User user = requireUser(authorization);
@@ -748,6 +755,19 @@ public class AccountingService {
 
     private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
         enterpriseStore.auditLog(companyId, entityType, entityId, action, summary, user.id, user.nickname);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("actorName", user.nickname);
+        payload.put("entityType", entityType);
+        payload.put("action", action);
+        outboxEventService.publish(
+            "accounting." + entityType + "." + action,
+            companyId,
+            entityType,
+            entityId,
+            user.id,
+            payload
+        );
     }
 
     private static boolean sameMonth(String date, YearMonth month) {

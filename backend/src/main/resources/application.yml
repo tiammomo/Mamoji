@@ -47,6 +47,25 @@ mamoji:
     company-currency: ${MAMOJI_BOOTSTRAP_COMPANY_CURRENCY:CNY}
   registration:
     mode: ${MAMOJI_REGISTRATION_MODE:open}
+  security:
+    cors:
+      allowed-origins: ${MAMOJI_ALLOWED_ORIGINS:http://localhost:33000,http://127.0.0.1:33000}
+    auth:
+      max-failed-attempts: ${MAMOJI_AUTH_MAX_FAILED_ATTEMPTS:5}
+      max-failed-attempts-per-source: ${MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE:50}
+      failure-window-minutes: ${MAMOJI_AUTH_FAILURE_WINDOW_MINUTES:15}
+      lock-minutes: ${MAMOJI_AUTH_LOCK_MINUTES:15}
+    password:
+      min-length: ${MAMOJI_PASSWORD_MIN_LENGTH:12}
+      require-complexity: ${MAMOJI_PASSWORD_REQUIRE_COMPLEXITY:false}
+  outbox:
+    enabled: ${MAMOJI_OUTBOX_ENABLED:true}
+    consumer:
+      enabled: ${MAMOJI_OUTBOX_CONSUMER_ENABLED:true}
+      fixed-delay-ms: ${MAMOJI_OUTBOX_CONSUMER_FIXED_DELAY_MS:5000}
+      batch-size: ${MAMOJI_OUTBOX_CONSUMER_BATCH_SIZE:20}
+      max-attempts: ${MAMOJI_OUTBOX_CONSUMER_MAX_ATTEMPTS:8}
+      stale-lock-minutes: ${MAMOJI_OUTBOX_CONSUMER_STALE_LOCK_MINUTES:10}
   object-storage:
     enabled: ${MAMOJI_OBJECT_STORAGE_ENABLED:false}
     provider: minio

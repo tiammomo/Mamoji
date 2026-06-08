@@ -1,0 +1,38 @@
+groups:
+  - name: mamoji.production
+    rules:
+      - alert: MamojiBackendDown
+        expr: up{job="mamoji-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Mamoji backend metrics scrape is down
+          description: Prometheus cannot scrape backend /actuator/prometheus for more than 2 minutes.
+
+      - alert: MamojiHighHttp5xxRate
+        expr: sum(rate(http_server_requests_seconds_count{job="mamoji-backend",status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Mamoji backend 5xx responses are rising
+          description: Backend 5xx responses have stayed above 0.05 requests per second for 5 minutes.
+
+      - alert: MamojiHighHeapUsage
+        expr: sum(jvm_memory_used_bytes{job="mamoji-backend",area="heap"}) / sum(jvm_memory_max_bytes{job="mamoji-backend",area="heap"}) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Mamoji backend heap usage is high
+          description: JVM heap usage has stayed above 90% for 10 minutes.
+
+      - alert: MamojiDatabasePoolPendingConnections
+        expr: max(hikaricp_connections_pending{job="mamoji-backend"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Mamoji database pool has pending connections
+          description: HikariCP has had pending database connections for more than 5 minutes.
