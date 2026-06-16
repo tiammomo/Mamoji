@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { Button, Dropdown, Avatar, Badge, Tooltip, Input } from "@arco-design/web-react";
+import { useCallback, useEffect, useState } from "react";
+import { Button, Dropdown, Avatar, Badge, Tooltip, Input, Empty, Spin, Tag } from "@arco-design/web-react";
 import {
   IconMenu,
   IconSun,
@@ -16,6 +16,8 @@ import { useAuthStore } from "@/lib/stores/authStore";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import CompanySwitcher from "./CompanySwitcher";
+import { notificationApi } from "@/lib/api/notifications";
+import type { NotificationItem } from "@/lib/types";
 
 export default function Header() {
   const { toggleSidebar, theme, setTheme, locale, setLocale } = useAppStore();
@@ -24,6 +26,10 @@ export default function Header() {
   const t = useTranslations();
   const [searchVisible, setSearchVisible] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [notificationVisible, setNotificationVisible] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
 
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
@@ -53,6 +59,100 @@ export default function Header() {
     setSearchVisible(false);
   };
 
+  const loadNotificationSummary = useCallback(async () => {
+    try {
+      const res = await notificationApi.summary();
+      setUnreadCount(res.data.unreadCount || 0);
+    } catch {
+      setUnreadCount(0);
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+    try {
+      const [listRes, summaryRes] = await Promise.all([
+        notificationApi.list({ page: 0, size: 8 }),
+        notificationApi.summary(),
+      ]);
+      setNotifications(listRes.data.content);
+      setUnreadCount(summaryRes.data.unreadCount || 0);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const starter = window.setTimeout(() => {
+      void loadNotificationSummary();
+    }, 0);
+    const timer = window.setInterval(() => {
+      void loadNotificationSummary();
+    }, 45000);
+    return () => {
+      window.clearTimeout(starter);
+      window.clearInterval(timer);
+    };
+  }, [loadNotificationSummary]);
+
+  useEffect(() => {
+    if (!notificationVisible) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadNotifications();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [notificationVisible, loadNotifications]);
+
+  const openNotification = async (item: NotificationItem) => {
+    if (!item.readAt) {
+      await notificationApi.markRead(item.id);
+      setUnreadCount((count) => Math.max(0, count - 1));
+      setNotifications((current) =>
+        current.map((notification) =>
+          notification.id === item.id ? { ...notification, readAt: new Date().toISOString() } : notification
+        )
+      );
+    }
+    if (item.targetUrl) {
+      router.push(item.targetUrl);
+      setNotificationVisible(false);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    await notificationApi.markAllRead();
+    setUnreadCount(0);
+    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })));
+  };
+
+  const severityColor = (severity: string) => {
+    switch (severity) {
+      case "critical":
+        return "red";
+      case "warning":
+        return "orange";
+      case "success":
+        return "green";
+      default:
+        return "blue";
+    }
+  };
+
+  const formatTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString(locale === "zh" ? "zh-CN" : "en-US", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const searchDroplist = (
     <div
       className="global-search-panel rounded-xl border p-3 shadow-lg"
@@ -78,6 +178,73 @@ export default function Header() {
         <Button type="primary" size="small" onClick={submitGlobalSearch}>
           {t("common.search")}
         </Button>
+      </div>
+    </div>
+  );
+
+  const notificationDroplist = (
+    <div
+      className="notification-panel rounded-xl border shadow-lg"
+      style={{
+        width: 380,
+        maxWidth: "calc(100vw - 24px)",
+        backgroundColor: "var(--bg-color-card)",
+        borderColor: "var(--border-color)",
+      }}
+    >
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-color)" }}>
+        <div>
+          <div className="text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>
+            {t("common.notificationCenter")}
+          </div>
+          <div className="text-xs" style={{ color: "var(--text-color-3)" }}>
+            {t("common.unreadCount", { count: unreadCount })}
+          </div>
+        </div>
+        <Button size="small" type="text" disabled={unreadCount === 0} onClick={markAllNotificationsRead}>
+          {t("common.markAllRead")}
+        </Button>
+      </div>
+      <div style={{ maxHeight: 420, overflowY: "auto" }}>
+        {notificationsLoading ? (
+          <div className="flex justify-center py-8">
+            <Spin />
+          </div>
+        ) : notifications.length === 0 ? (
+          <div className="py-8">
+            <Empty description={t("common.noNotifications")} />
+          </div>
+        ) : (
+          notifications.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="block w-full border-b px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              style={{
+                borderColor: "var(--border-color)",
+                background: item.readAt ? "transparent" : "rgba(22, 93, 255, 0.06)",
+              }}
+              onClick={() => openNotification(item)}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+                    {item.title}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                    {item.content}
+                  </div>
+                </div>
+                <Tag color={severityColor(item.severity)} size="small">
+                  {t(`common.notificationSeverity.${item.severity}`)}
+                </Tag>
+              </div>
+              <div className="mt-2 text-xs" style={{ color: "var(--text-color-4)" }}>
+                {formatTime(item.createdAt)}
+              </div>
+            </button>
+          ))
+        )}
       </div>
     </div>
   );
@@ -122,17 +289,24 @@ export default function Header() {
           />
         </Dropdown>
 
-        {/* Notification */}
-        <Tooltip content={t("common.notifications")}>
-          <Badge count={0} dot>
+        <Dropdown
+          droplist={notificationDroplist}
+          trigger="click"
+          position="br"
+          popupVisible={notificationVisible}
+          onVisibleChange={setNotificationVisible}
+        >
+          <Tooltip content={t("common.notifications")}>
+            <Badge count={unreadCount} maxCount={99}>
             <Button
               type="text"
               icon={<IconNotification />}
               className="arco-btn-icon-only"
               style={{ color: "var(--text-color-3)" }}
             />
-          </Badge>
-        </Tooltip>
+            </Badge>
+          </Tooltip>
+        </Dropdown>
 
         {/* Theme toggle */}
         <Tooltip content={theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}>

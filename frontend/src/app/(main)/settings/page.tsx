@@ -1,16 +1,19 @@
 "use client";
-import { useState } from "react";
-import { Card, Form, Input, Button, Message, Tabs } from "@arco-design/web-react";
-import { IconArchive, IconLanguage, IconLock, IconMoon, IconSun, IconUser } from "@arco-design/web-react/icon";
+import { useEffect, useState } from "react";
+import { Button, Card, Checkbox, Form, Input, Message, Select, Switch, Tabs } from "@arco-design/web-react";
+import { IconArchive, IconLanguage, IconLock, IconMoon, IconNotification, IconSun, IconUser } from "@arco-design/web-react/icon";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useAuthStore } from "@/lib/stores/authStore";
 import { useAppStore } from "@/lib/stores/appStore";
 import { authApi } from "@/lib/api/auth";
+import { notificationApi } from "@/lib/api/notifications";
+import type { NotificationPreference } from "@/lib/types";
 import PageHeader from "@/components/common/PageHeader";
 
 const FormItem = Form.Item;
 const TabPane = Tabs.TabPane;
+const CheckboxGroup = Checkbox.Group;
 
 const AVATAR_PRESETS = [
   { emoji: "😊", color: "#6366f1" },
@@ -32,9 +35,33 @@ export default function SettingsPage() {
   const { theme, setTheme, locale, setLocale } = useAppStore();
   const [profileForm] = Form.useForm();
   const [passwordForm] = Form.useForm();
+  const [notificationPreference, setNotificationPreference] = useState<NotificationPreference | null>(null);
+  const [notificationSaving, setNotificationSaving] = useState(false);
+  const [webhookTesting, setWebhookTesting] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(
     user?.avatar || AVATAR_PRESETS[0].emoji + "|" + AVATAR_PRESETS[0].color
   );
+
+  const notificationTypeOptions = [
+    { label: t("notificationTypeTax"), value: "tax" },
+    { label: t("notificationTypeReceipt"), value: "receipt" },
+    { label: t("notificationTypePayroll"), value: "payroll" },
+    { label: t("notificationTypePeople"), value: "people" },
+    { label: t("notificationTypeFinance"), value: "finance" },
+    { label: t("notificationTypeSystem"), value: "system" },
+  ];
+
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await notificationApi.preference();
+        setNotificationPreference(res.data);
+      } catch {
+        Message.error(t("notificationLoadFailed"));
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [t]);
 
   const handleUpdateProfile = async (values: { nickname: string }) => {
     try {
@@ -67,6 +94,57 @@ export default function SettingsPage() {
     const next = locale === "zh" ? "en" : "zh";
     setLocale(next);
     window.location.reload();
+  };
+
+  const updateNotificationPreference = <K extends keyof NotificationPreference>(key: K, value: NotificationPreference[K]) => {
+    setNotificationPreference((current) => current ? { ...current, [key]: value } : current);
+  };
+
+  const saveNotificationPreference = async () => {
+    if (!notificationPreference) {
+      return;
+    }
+    setNotificationSaving(true);
+    try {
+      const res = await notificationApi.updatePreference({
+        enabled: notificationPreference.enabled,
+        webhookEnabled: notificationPreference.webhookEnabled,
+        webhookProvider: notificationPreference.webhookProvider,
+        webhookUrl: notificationPreference.webhookUrl || "",
+        minSeverity: notificationPreference.minSeverity,
+        mutedTypes: notificationPreference.mutedTypes,
+      });
+      setNotificationPreference(res.data);
+      Message.success(t("notificationSaved"));
+    } catch {
+      Message.error(t("notificationSaveFailed"));
+    } finally {
+      setNotificationSaving(false);
+    }
+  };
+
+  const testWebhook = async () => {
+    if (!notificationPreference) {
+      return;
+    }
+    setWebhookTesting(true);
+    try {
+      const res = await notificationApi.updatePreference({
+        enabled: notificationPreference.enabled,
+        webhookEnabled: notificationPreference.webhookEnabled,
+        webhookProvider: notificationPreference.webhookProvider,
+        webhookUrl: notificationPreference.webhookUrl || "",
+        minSeverity: notificationPreference.minSeverity,
+        mutedTypes: notificationPreference.mutedTypes,
+      });
+      setNotificationPreference(res.data);
+      await notificationApi.testWebhook();
+      Message.success(t("webhookTestSent"));
+    } catch {
+      Message.error(t("webhookTestFailed"));
+    } finally {
+      setWebhookTesting(false);
+    }
   };
 
   return (
@@ -229,6 +307,115 @@ export default function SettingsPage() {
                 >
                   {t("switchToLanguage", { language: locale === "zh" ? t("languageEnglish") : t("languageChinese") })}
                 </Button>
+              </div>
+            </div>
+          </TabPane>
+
+          <TabPane
+            key="notifications"
+            title={
+              <span className="flex items-center gap-2">
+                <IconNotification /> {t("notifications")}
+              </span>
+            }
+          >
+            <div className="py-6 space-y-5">
+              <div className="flex items-center justify-between gap-4 p-4 rounded-xl" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                <div>
+                  <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
+                    {t("notificationMasterSwitch")}
+                  </div>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>
+                    {t("notificationMasterSwitchHint")}
+                  </div>
+                </div>
+                <Switch
+                  checked={notificationPreference?.enabled ?? true}
+                  onChange={(checked) => updateNotificationPreference("enabled", checked)}
+                  disabled={!notificationPreference}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium mb-2" style={{ color: "var(--text-color-2)" }}>
+                    {t("minimumSeverity")}
+                  </label>
+                  <Select
+                    value={notificationPreference?.minSeverity || "info"}
+                    onChange={(value) => updateNotificationPreference("minSeverity", String(value))}
+                    style={{ width: "100%" }}
+                    disabled={!notificationPreference}
+                  >
+                    <Select.Option value="info">{t("severityInfo")}</Select.Option>
+                    <Select.Option value="warning">{t("severityWarning")}</Select.Option>
+                    <Select.Option value="critical">{t("severityCritical")}</Select.Option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2" style={{ color: "var(--text-color-2)" }}>
+                    {t("webhookProvider")}
+                  </label>
+                  <Select
+                    value={notificationPreference?.webhookProvider || "generic"}
+                    onChange={(value) => updateNotificationPreference("webhookProvider", String(value))}
+                    style={{ width: "100%" }}
+                    disabled={!notificationPreference}
+                  >
+                    <Select.Option value="generic">{t("webhookProviderGeneric")}</Select.Option>
+                    <Select.Option value="feishu">{t("webhookProviderFeishu")}</Select.Option>
+                    <Select.Option value="wecom">{t("webhookProviderWecom")}</Select.Option>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: "var(--text-color-2)" }}>
+                  {t("mutedTypes")}
+                </label>
+                <CheckboxGroup
+                  value={notificationPreference?.mutedTypes || []}
+                  options={notificationTypeOptions}
+                  onChange={(values) => updateNotificationPreference("mutedTypes", values.map(String))}
+                  disabled={!notificationPreference}
+                />
+              </div>
+
+              <div className="space-y-3 p-4 rounded-xl" style={{ backgroundColor: "var(--bg-color-page)" }}>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
+                      {t("webhookDelivery")}
+                    </div>
+                    <div className="text-sm" style={{ color: "var(--text-color-3)" }}>
+                      {t("webhookDeliveryHint")}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={notificationPreference?.webhookEnabled ?? false}
+                    onChange={(checked) => updateNotificationPreference("webhookEnabled", checked)}
+                    disabled={!notificationPreference}
+                  />
+                </div>
+                <Input
+                  value={notificationPreference?.webhookUrl || ""}
+                  onChange={(value) => updateNotificationPreference("webhookUrl", value)}
+                  placeholder={t("webhookUrlPlaceholder")}
+                  disabled={!notificationPreference || !notificationPreference.webhookEnabled}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="outline"
+                    onClick={testWebhook}
+                    loading={webhookTesting}
+                    disabled={!notificationPreference?.webhookEnabled || !notificationPreference?.webhookUrl}
+                  >
+                    {t("testWebhook")}
+                  </Button>
+                  <Button type="primary" onClick={saveNotificationPreference} loading={notificationSaving} disabled={!notificationPreference}>
+                    {t("saveNotificationSettings")}
+                  </Button>
+                </div>
               </div>
             </div>
           </TabPane>
