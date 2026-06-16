@@ -569,6 +569,12 @@ public class EnterpriseManagementService {
     private boolean isPayrollField(String field) {
         return List.of(
             "salary",
+            "overtimeBase",
+            "weekdayOvertimeHours",
+            "restDayOvertimeHours",
+            "holidayOvertimeHours",
+            "overtimePay",
+            "overtimePolicyNote",
             "socialInsurance",
             "housingFund",
             "taxEstimate",
@@ -701,6 +707,24 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("salary")) {
             employee.salary = number(body.get("salary"), employee.salary);
+        }
+        if (body.containsKey("overtimeBase")) {
+            employee.overtimeBase = number(body.get("overtimeBase"), employee.overtimeBase);
+        }
+        if (body.containsKey("weekdayOvertimeHours")) {
+            employee.weekdayOvertimeHours = number(body.get("weekdayOvertimeHours"), employee.weekdayOvertimeHours);
+        }
+        if (body.containsKey("restDayOvertimeHours")) {
+            employee.restDayOvertimeHours = number(body.get("restDayOvertimeHours"), employee.restDayOvertimeHours);
+        }
+        if (body.containsKey("holidayOvertimeHours")) {
+            employee.holidayOvertimeHours = number(body.get("holidayOvertimeHours"), employee.holidayOvertimeHours);
+        }
+        if (body.containsKey("overtimePay")) {
+            employee.overtimePay = number(body.get("overtimePay"), employee.overtimePay);
+        }
+        if (body.containsKey("overtimePolicyNote")) {
+            employee.overtimePolicyNote = nullableText(body.get("overtimePolicyNote"));
         }
         if (body.containsKey("socialInsurance")) {
             employee.socialInsurance = number(body.get("socialInsurance"), employee.socialInsurance);

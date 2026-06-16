@@ -244,6 +244,12 @@ public final class Models {
         public String profileVerifiedAt;
         public Long profileVerifiedBy;
         public BigDecimal salary;
+        public BigDecimal overtimeBase;
+        public BigDecimal weekdayOvertimeHours;
+        public BigDecimal restDayOvertimeHours;
+        public BigDecimal holidayOvertimeHours;
+        public BigDecimal overtimePay;
+        public String overtimePolicyNote;
         public BigDecimal socialInsurance;
         public BigDecimal housingFund;
         public BigDecimal taxEstimate;

@@ -35,6 +35,8 @@ const tableColumns = [
   { label: "公积金", description: "基数与双边比例", width: "190px", accent: "var(--text-color-3)" },
 ] as const;
 
+type EmployeeSortMode = "default" | "salary_desc" | "salary_asc" | "hire_desc" | "hire_asc";
+
 const SHENZHEN_POLICY = {
   region: "深圳",
   pension: { min: 4775, max: 27549, personalRate: 8, companyRate: 16, validPeriod: "2025-07 至 2026-06" },
@@ -42,18 +44,28 @@ const SHENZHEN_POLICY = {
   medicalTier2: { min: 6727, max: 33633, personalRate: 0.5, companyRate: 1.5, validPeriod: "2026 年" },
   maternity: { min: 6727, max: 33633, personalRate: 0, companyRate: 0.5, validPeriod: "2026 年" },
   unemployment: { min: 2520, max: 44265, personalRate: 0.2, companyRate: 0.8, validPeriod: "2025-07 至 2026-06" },
-  workInjury: { min: 2520, max: null as number | null, personalRate: 0, companyRate: 0.2, validPeriod: "2024-07 起" },
-  housingFund: { personalRate: 12, companyRate: 12 },
+  workInjury: { min: 2520, max: null as number | null, personalRate: 0, companyRate: 0.2, minCompanyRate: 0.2, maxCompanyRate: 1.4, validPeriod: "2024-07 起" },
+  housingFund: { min: 2520, max: 44265, minRate: 5, personalRate: 12, companyRate: 12, maxRate: 12, validPeriod: "2025-07 至 2026-06" },
 };
 
 const policyRows = [
   { name: "养老", range: "4775 - 27549", rate: "个人 8% / 公司 16%", period: SHENZHEN_POLICY.pension.validPeriod },
   { name: "医疗/生育", range: "6727 - 33633", rate: "一档 2%/6%，二档 0.5%/1.5%，生育公司 0.5%", period: SHENZHEN_POLICY.medicalTier1.validPeriod },
   { name: "失业", range: "2520 - 44265", rate: "个人 0.2% / 公司 0.8%", period: SHENZHEN_POLICY.unemployment.validPeriod },
-  { name: "工伤", range: "不低于 2520", rate: "公司 0.2% - 1.4%，个人不缴", period: SHENZHEN_POLICY.workInjury.validPeriod },
+  { name: "工伤", range: "不低于 2520；普通单位按工资总额，无单人工资上限", rate: "行业基准 0.2% - 1.4%，个人不缴", period: SHENZHEN_POLICY.workInjury.validPeriod },
+  { name: "公积金", range: "2520 - 44265", rate: "个人 5%-12% / 公司 5%-12%", period: SHENZHEN_POLICY.housingFund.validPeriod },
 ];
 
 const PAYROLL_STANDARD_DAYS = 21.75;
+const MONTHLY_WORK_DAYS = 20.67;
+const STANDARD_DAILY_HOURS = 8;
+const OVERTIME_POLICY = {
+  minBase: 2520,
+  weekdayRate: 1.5,
+  restDayRate: 2,
+  holidayRate: 3,
+  validPeriod: "2025-01 起",
+};
 const STANDARD_MONTHLY_DEDUCTION = 5000;
 const CURRENT_PAYROLL_MONTH = new Date().getMonth() + 1;
 const currentPayrollPeriod = () => {
@@ -74,6 +86,10 @@ const cumulativeTaxBrackets = [
 
 type CompensationFormValues = {
   salary: number;
+  overtimeBase: number;
+  weekdayOvertimeHours: number;
+  restDayOvertimeHours: number;
+  holidayOvertimeHours: number;
   socialInsuranceRegion: string;
   hukouType: "local" | "non_local";
   medicalTier: "tier1" | "tier2";
@@ -93,9 +109,13 @@ type CompensationFormValues = {
 type PayrollSnapshot = {
   salary: number;
   attendance: AttendanceSnapshot;
+  overtime: OvertimeSnapshot;
   taxWithholding: TaxWithholdingSnapshot;
   socialPersonalAmount: number;
   socialCompanyAmount: number;
+  housingFundBase: number;
+  housingFundPersonalRate: number;
+  housingFundCompanyRate: number;
   housingPersonalAmount: number;
   housingCompanyAmount: number;
   personalContribution: number;
@@ -110,12 +130,27 @@ type PayrollSnapshot = {
 
 type AttendanceSnapshot = {
   standardDays: number;
+  monthlyWorkDays: number;
   paidDays: number;
   absenceDays: number;
   missingPunches: number;
   attendanceDeduction: number;
   payableSalary: number;
   status: string;
+};
+
+type OvertimeSnapshot = {
+  base: number;
+  hourlyRate: number;
+  weekdayHours: number;
+  restDayHours: number;
+  holidayHours: number;
+  totalHours: number;
+  weekdayPay: number;
+  restDayPay: number;
+  holidayPay: number;
+  totalPay: number;
+  warnings: string[];
 };
 
 type TaxWithholdingSnapshot = {
@@ -136,14 +171,15 @@ const roundMoney = (value: number) => Math.round(value * 100) / 100;
 
 const contribution = (base: number, rate: number) => roundMoney((money(base) * money(rate)) / 100);
 
-const attendanceSnapshotOf = (salary: number): AttendanceSnapshot => ({
+const attendanceSnapshotOf = (salary: number, overtimePay = 0): AttendanceSnapshot => ({
   standardDays: PAYROLL_STANDARD_DAYS,
+  monthlyWorkDays: MONTHLY_WORK_DAYS,
   paidDays: PAYROLL_STANDARD_DAYS,
   absenceDays: 0,
   missingPunches: 0,
   attendanceDeduction: 0,
-  payableSalary: roundMoney(money(salary)),
-  status: "全勤测算",
+  payableSalary: roundMoney(money(salary) + money(overtimePay)),
+  status: money(overtimePay) > 0 ? "全勤含加班" : "全勤测算",
 });
 
 const taxForTaxableIncome = (taxableIncome: number) => {
@@ -219,6 +255,49 @@ const clampBase = (label: string, value: number, min: number, max: number | null
   return safeValue;
 };
 
+const clampRate = (label: string, value: number, min: number, max: number, warnings: string[]) => {
+  const safeValue = money(value);
+  if (safeValue < min) {
+    warnings.push(`${label}低于当前下限，已按 ${formatPercent(min)} 测算`);
+    return min;
+  }
+  if (safeValue > max) {
+    warnings.push(`${label}高于当前上限，已按 ${formatPercent(max)} 测算`);
+    return max;
+  }
+  return safeValue;
+};
+
+const buildOvertime = (values: CompensationFormValues): OvertimeSnapshot => {
+  const warnings: string[] = [];
+  const rawBase = money(values.overtimeBase || values.salary);
+  const base = Math.max(rawBase, OVERTIME_POLICY.minBase);
+  if (rawBase > 0 && rawBase < OVERTIME_POLICY.minBase) {
+    warnings.push(`加班工资基数低于当前最低工资，已按 ${currencyText(OVERTIME_POLICY.minBase)} 测算`);
+  }
+  const hourlyRate = roundMoney(base / PAYROLL_STANDARD_DAYS / STANDARD_DAILY_HOURS);
+  const weekdayHours = Math.max(0, money(values.weekdayOvertimeHours));
+  const restDayHours = Math.max(0, money(values.restDayOvertimeHours));
+  const holidayHours = Math.max(0, money(values.holidayOvertimeHours));
+  const weekdayPay = roundMoney(hourlyRate * weekdayHours * OVERTIME_POLICY.weekdayRate);
+  const restDayPay = roundMoney(hourlyRate * restDayHours * OVERTIME_POLICY.restDayRate);
+  const holidayPay = roundMoney(hourlyRate * holidayHours * OVERTIME_POLICY.holidayRate);
+
+  return {
+    base,
+    hourlyRate,
+    weekdayHours,
+    restDayHours,
+    holidayHours,
+    totalHours: roundMoney(weekdayHours + restDayHours + holidayHours),
+    weekdayPay,
+    restDayPay,
+    holidayPay,
+    totalPay: roundMoney(weekdayPay + restDayPay + holidayPay),
+    warnings,
+  };
+};
+
 const makeSocialItem = ({
   key,
   name,
@@ -268,6 +347,13 @@ const buildSocialInsuranceItems = (values: CompensationFormValues) => {
   if (rawWorkInjuryBase < SHENZHEN_POLICY.workInjury.min) {
     warnings.push(`工伤保险基数低于深圳当前下限，已按 ${currencyText(SHENZHEN_POLICY.workInjury.min)} 测算`);
   }
+  const workInjuryCompanyRate = clampRate(
+    "工伤公司费率",
+    values.workInjuryCompanyRate || SHENZHEN_POLICY.workInjury.companyRate,
+    SHENZHEN_POLICY.workInjury.minCompanyRate,
+    SHENZHEN_POLICY.workInjury.maxCompanyRate,
+    warnings
+  );
   const medicalPolicy = values.medicalTier === "tier2" ? SHENZHEN_POLICY.medicalTier2 : SHENZHEN_POLICY.medicalTier1;
   const items: SocialInsuranceItem[] = [
     makeSocialItem({
@@ -326,7 +412,7 @@ const buildSocialInsuranceItems = (values: CompensationFormValues) => {
       minBase: SHENZHEN_POLICY.workInjury.min,
       maxBase: SHENZHEN_POLICY.workInjury.max,
       personalRate: SHENZHEN_POLICY.workInjury.personalRate,
-      companyRate: money(values.workInjuryCompanyRate) || SHENZHEN_POLICY.workInjury.companyRate,
+      companyRate: workInjuryCompanyRate,
       policyBasis: "广东省级统筹八档行业基准费率，深圳 2024-07 起 0.2%-1.4%，个人不缴",
       validPeriod: SHENZHEN_POLICY.workInjury.validPeriod,
     }),
@@ -354,13 +440,43 @@ const sumSocialPersonal = (items: SocialInsuranceItem[]) => roundMoney(items.red
 
 const sumSocialCompany = (items: SocialInsuranceItem[]) => roundMoney(items.reduce((total, item) => total + money(item.companyAmount), 0));
 
+const buildHousingFund = (values: CompensationFormValues) => {
+  const warnings: string[] = [];
+  const housingFundBase = clampBase("公积金缴存基数", values.housingFundBase || values.salary, SHENZHEN_POLICY.housingFund.min, SHENZHEN_POLICY.housingFund.max, warnings);
+  const housingFundPersonalRate = clampRate(
+    "公积金个人比例",
+    values.housingFundPersonalRate || SHENZHEN_POLICY.housingFund.personalRate,
+    SHENZHEN_POLICY.housingFund.minRate,
+    SHENZHEN_POLICY.housingFund.maxRate,
+    warnings
+  );
+  const housingFundCompanyRate = clampRate(
+    "公积金公司比例",
+    values.housingFundCompanyRate || SHENZHEN_POLICY.housingFund.companyRate,
+    SHENZHEN_POLICY.housingFund.minRate,
+    SHENZHEN_POLICY.housingFund.maxRate,
+    warnings
+  );
+
+  return {
+    base: housingFundBase,
+    personalRate: housingFundPersonalRate,
+    companyRate: housingFundCompanyRate,
+    personalAmount: contribution(housingFundBase, housingFundPersonalRate),
+    companyAmount: contribution(housingFundBase, housingFundCompanyRate),
+    warnings,
+  };
+};
+
 const payrollFromForm = (values: CompensationFormValues): PayrollSnapshot => {
   const { items: socialItems, warnings: socialWarnings } = buildSocialInsuranceItems(values);
-  const attendance = attendanceSnapshotOf(values.salary);
+  const housingFund = buildHousingFund(values);
+  const overtime = buildOvertime(values);
+  const attendance = attendanceSnapshotOf(values.salary, overtime.totalPay);
   const socialPersonalAmount = sumSocialPersonal(socialItems);
   const socialCompanyAmount = sumSocialCompany(socialItems);
-  const housingPersonalAmount = contribution(values.housingFundBase, values.housingFundPersonalRate);
-  const housingCompanyAmount = contribution(values.housingFundBase, values.housingFundCompanyRate);
+  const housingPersonalAmount = housingFund.personalAmount;
+  const housingCompanyAmount = housingFund.companyAmount;
   const personalContribution = socialPersonalAmount + housingPersonalAmount;
   const companyContribution = socialCompanyAmount + housingCompanyAmount;
   const taxWithholding = cumulativeTaxWithholding({
@@ -377,15 +493,19 @@ const payrollFromForm = (values: CompensationFormValues): PayrollSnapshot => {
   return {
     salary: values.salary,
     attendance,
+    overtime,
     taxWithholding,
     socialPersonalAmount,
     socialCompanyAmount,
+    housingFundBase: housingFund.base,
+    housingFundPersonalRate: housingFund.personalRate,
+    housingFundCompanyRate: housingFund.companyRate,
     housingPersonalAmount,
     housingCompanyAmount,
     personalContribution,
     companyContribution,
     socialItems,
-    socialWarnings,
+    socialWarnings: [...socialWarnings, ...housingFund.warnings, ...overtime.warnings],
     taxEstimate,
     personalDeduction: values.personalDeduction,
     netPayEstimate,
@@ -395,20 +515,20 @@ const payrollFromForm = (values: CompensationFormValues): PayrollSnapshot => {
 
 const payrollOf = (employee: Employee): PayrollSnapshot => {
   const salary = money(employee.salary);
-  const fallbackSocial = buildSocialInsuranceItems(formFromEmployee(employee));
+  const employeeForm = formFromEmployee(employee);
+  const fallbackSocial = buildSocialInsuranceItems(employeeForm);
+  const housingFund = buildHousingFund(employeeForm);
+  const overtime = buildOvertime(employeeForm);
   const socialItems = employee.socialInsuranceItems?.length ? employee.socialInsuranceItems : fallbackSocial.items;
   const socialWarnings = employee.socialInsuranceWarnings?.length ? employee.socialInsuranceWarnings : fallbackSocial.warnings;
   const socialPersonalAmount = sumSocialPersonal(socialItems) || money(employee.socialInsurancePersonalAmount);
   const socialCompanyAmount = sumSocialCompany(socialItems) || money(employee.socialInsuranceCompanyAmount) || money(employee.socialInsurance);
-  const housingBase = money(employee.housingFundBase) || salary;
-  const housingPersonalRate = money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate;
-  const housingCompanyRate = money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate;
-  const housingPersonalAmount = money(employee.housingFundPersonalAmount) || contribution(housingBase, housingPersonalRate);
-  const housingCompanyAmount = money(employee.housingFundCompanyAmount) || money(employee.housingFund) || contribution(housingBase, housingCompanyRate);
+  const housingPersonalAmount = housingFund.personalAmount;
+  const housingCompanyAmount = housingFund.companyAmount;
   const personalContribution = socialPersonalAmount + housingPersonalAmount;
   const companyContribution = socialCompanyAmount + housingCompanyAmount;
   const personalDeduction = money(employee.personalDeduction);
-  const attendance = attendanceSnapshotOf(salary);
+  const attendance = attendanceSnapshotOf(salary, overtime.totalPay);
   const taxWithholding = cumulativeTaxWithholding({
     payableSalary: attendance.payableSalary,
     socialPersonalAmount,
@@ -422,15 +542,19 @@ const payrollOf = (employee: Employee): PayrollSnapshot => {
   return {
     salary,
     attendance,
+    overtime,
     taxWithholding,
     socialPersonalAmount,
     socialCompanyAmount,
+    housingFundBase: housingFund.base,
+    housingFundPersonalRate: housingFund.personalRate,
+    housingFundCompanyRate: housingFund.companyRate,
     housingPersonalAmount,
     housingCompanyAmount,
     personalContribution,
     companyContribution,
     socialItems,
-    socialWarnings,
+    socialWarnings: [...socialWarnings, ...housingFund.warnings, ...overtime.warnings],
     taxEstimate,
     personalDeduction,
     netPayEstimate,
@@ -441,8 +565,13 @@ const payrollOf = (employee: Employee): PayrollSnapshot => {
 const formFromEmployee = (employee: Employee): CompensationFormValues => {
   const salary = money(employee.salary);
   const medicalBase = money(employee.medicalBase) || Math.min(Math.max(salary, SHENZHEN_POLICY.medicalTier1.min), SHENZHEN_POLICY.medicalTier1.max);
+  const housingFundBase = money(employee.housingFundBase) || Math.min(Math.max(salary, SHENZHEN_POLICY.housingFund.min), SHENZHEN_POLICY.housingFund.max);
   return {
     salary,
+    overtimeBase: money(employee.overtimeBase) || salary,
+    weekdayOvertimeHours: money(employee.weekdayOvertimeHours),
+    restDayOvertimeHours: money(employee.restDayOvertimeHours),
+    holidayOvertimeHours: money(employee.holidayOvertimeHours),
     socialInsuranceRegion: employee.socialInsuranceRegion || SHENZHEN_POLICY.region,
     hukouType: employee.hukouType === "local" ? "local" : "non_local",
     medicalTier: employee.medicalTier === "tier2" ? "tier2" : "tier1",
@@ -452,7 +581,7 @@ const formFromEmployee = (employee: Employee): CompensationFormValues => {
     unemploymentBase: money(employee.unemploymentBase) || Math.min(Math.max(salary, SHENZHEN_POLICY.unemployment.min), SHENZHEN_POLICY.unemployment.max),
     workInjuryBase: money(employee.workInjuryBase) || Math.max(salary, SHENZHEN_POLICY.workInjury.min),
     workInjuryCompanyRate: money(employee.workInjuryCompanyRate) || SHENZHEN_POLICY.workInjury.companyRate,
-    housingFundBase: money(employee.housingFundBase) || salary,
+    housingFundBase,
     housingFundPersonalRate: money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate,
     housingFundCompanyRate: money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate,
     taxEstimate: money(employee.taxEstimate),
@@ -462,6 +591,10 @@ const formFromEmployee = (employee: Employee): CompensationFormValues => {
 
 const zeroForm: CompensationFormValues = {
   salary: 0,
+  overtimeBase: 0,
+  weekdayOvertimeHours: 0,
+  restDayOvertimeHours: 0,
+  holidayOvertimeHours: 0,
   socialInsuranceRegion: SHENZHEN_POLICY.region,
   hukouType: "non_local",
   medicalTier: "tier1",
@@ -576,13 +709,29 @@ export default function CompensationPage() {
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("active");
+  const [sortMode, setSortMode] = useState<EmployeeSortMode>("default");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [payrollBusy, setPayrollBusy] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [compensationForm, setCompensationForm] = useState<CompensationFormValues>(zeroForm);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const employeesPagination = useClientPagination(employees, 10);
+  const sortedEmployees = useMemo(() => {
+    const nextEmployees = [...employees];
+    switch (sortMode) {
+      case "salary_desc":
+        return nextEmployees.sort((left, right) => money(right.salary) - money(left.salary) || left.id - right.id);
+      case "salary_asc":
+        return nextEmployees.sort((left, right) => money(left.salary) - money(right.salary) || left.id - right.id);
+      case "hire_desc":
+        return nextEmployees.sort((left, right) => right.hireDate.localeCompare(left.hireDate) || left.id - right.id);
+      case "hire_asc":
+        return nextEmployees.sort((left, right) => left.hireDate.localeCompare(right.hireDate) || left.id - right.id);
+      default:
+        return nextEmployees;
+    }
+  }, [employees, sortMode]);
+  const employeesPagination = useClientPagination(sortedEmployees, 10);
 
   const fetchData = useCallback(async (nextKeyword = keyword, nextStatus = status) => {
     try {
@@ -716,6 +865,12 @@ export default function CompensationPage() {
       setSaving(true);
       await enterpriseApi.updateEmployee(editingEmployee.id, {
         salary: compensationForm.salary,
+        overtimeBase: projectedPayroll.overtime.base,
+        weekdayOvertimeHours: projectedPayroll.overtime.weekdayHours,
+        restDayOvertimeHours: projectedPayroll.overtime.restDayHours,
+        holidayOvertimeHours: projectedPayroll.overtime.holidayHours,
+        overtimePay: projectedPayroll.overtime.totalPay,
+        overtimePolicyNote: `工作日延时150%，休息日未调休200%，法定节假日300%；小时工资=加班基数/21.75/8。`,
         taxEstimate: projectedPayroll.taxEstimate,
         socialInsuranceRegion: compensationForm.socialInsuranceRegion,
         hukouType: compensationForm.hukouType,
@@ -910,6 +1065,21 @@ export default function CompensationPage() {
                   <Select.Option value="departed">已离职</Select.Option>
                   <Select.Option value="all">全部状态</Select.Option>
                 </Select>
+                <Select
+                  value={sortMode}
+                  onChange={(value) => {
+                    setSortMode(value as EmployeeSortMode);
+                    employeesPagination.resetPage();
+                    tableScrollRef.current?.scrollTo({ left: 0 });
+                  }}
+                  style={{ width: 152 }}
+                >
+                  <Select.Option value="default">默认排序</Select.Option>
+                  <Select.Option value="salary_desc">工资高到低</Select.Option>
+                  <Select.Option value="salary_asc">工资低到高</Select.Option>
+                  <Select.Option value="hire_desc">入职最新</Select.Option>
+                  <Select.Option value="hire_asc">入职最早</Select.Option>
+                </Select>
                 <Button type="primary" onClick={handleSearch}>搜索</Button>
               </div>
             </div>
@@ -972,9 +1142,9 @@ export default function CompensationPage() {
                   ) : employeesPagination.pagedData.map((employee) => {
                     const statusConfig = statusLabels[employee.status] || { label: employee.status, color: "gray" };
                     const payroll = payrollOf(employee);
-                    const housingBase = money(employee.housingFundBase) || payroll.salary;
-                    const housingPersonalRate = money(employee.housingFundPersonalRate) || SHENZHEN_POLICY.housingFund.personalRate;
-                    const housingCompanyRate = money(employee.housingFundCompanyRate) || SHENZHEN_POLICY.housingFund.companyRate;
+                    const housingBase = payroll.housingFundBase;
+                    const housingPersonalRate = payroll.housingFundPersonalRate;
+                    const housingCompanyRate = payroll.housingFundCompanyRate;
                     const taxAndOtherDeduction = payroll.taxEstimate + payroll.personalDeduction;
                     return (
                       <tr key={employee.id} className="border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
@@ -998,6 +1168,9 @@ export default function CompensationPage() {
                           <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
                             {employee.departmentName || "未分配部门"} · {employee.position}
                           </div>
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                            入职 {employee.hireDate}
+                          </div>
                         </td>
                         <td className="px-4 py-4 align-middle">
                           <div className="rounded-xl border p-3" style={{ borderColor: "rgba(16, 185, 129, 0.24)", backgroundColor: "rgba(16, 185, 129, 0.06)" }}>
@@ -1006,7 +1179,8 @@ export default function CompensationPage() {
                               <AmountDisplay amount={payroll.netPayEstimate} type={1} size="medium" />
                             </div>
                             <div className="mt-2 space-y-0.5">
-                              <BreakdownLine label="考勤后应发" value={payroll.attendance.payableSalary} strong />
+                              <BreakdownLine label="应发工资" value={payroll.attendance.payableSalary} strong />
+                              {payroll.overtime.totalPay > 0 && <BreakdownLine label="其中加班费" value={payroll.overtime.totalPay} />}
                               <BreakdownLine label="个人五险" value={payroll.socialPersonalAmount} sign="-" />
                               <BreakdownLine label="个人公积金" value={payroll.housingPersonalAmount} sign="-" />
                               <BreakdownLine label="个税/其他" value={taxAndOtherDeduction} sign="-" />
@@ -1020,7 +1194,8 @@ export default function CompensationPage() {
                               <AmountDisplay amount={payroll.monthlyCost} type={2} size="medium" />
                             </div>
                             <div className="mt-2 space-y-0.5">
-                              <BreakdownLine label="考勤后应发" value={payroll.attendance.payableSalary} strong />
+                              <BreakdownLine label="应发工资" value={payroll.attendance.payableSalary} strong />
+                              {payroll.overtime.totalPay > 0 && <BreakdownLine label="其中加班费" value={payroll.overtime.totalPay} />}
                               <BreakdownLine label="公司五险" value={payroll.socialCompanyAmount} sign="+" />
                               <BreakdownLine label="公司公积金" value={payroll.housingCompanyAmount} sign="+" />
                               <BreakdownLine label="公司承担合计" value={payroll.companyContribution} sign="+" />
@@ -1038,6 +1213,8 @@ export default function CompensationPage() {
                               <span>缺卡 {payroll.attendance.missingPunches} 次</span>
                               <span>缺勤 {payroll.attendance.absenceDays} 天</span>
                               <span>扣减 {currencyShort(payroll.attendance.attendanceDeduction)}</span>
+                              <span>加班 {payroll.overtime.totalHours} 小时</span>
+                              <span>加班费 {currencyShort(payroll.overtime.totalPay)}</span>
                             </div>
                             <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
                               <div className="flex items-center justify-between gap-2">
@@ -1135,7 +1312,7 @@ export default function CompensationPage() {
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card style={{ borderRadius: 12 }} title="深圳五险政策">
+          <Card style={{ borderRadius: 12 }} title="深圳五险一金政策">
             <div className="grid gap-3 md:grid-cols-2">
               {policyRows.map((row) => (
                 <div
@@ -1218,21 +1395,39 @@ export default function CompensationPage() {
               </div>
               <NumberField label="其他个人扣减" value={compensationForm.personalDeduction} onChange={(value) => updateForm("personalDeduction", value)} />
             </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">国家加班费口径</div>
+              <Tag color="orange">工作日150% / 休息日未调休200% / 法定节假日300%</Tag>
+            </div>
             <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <NumberField label="加班工资基数 ≥2520" value={compensationForm.overtimeBase} onChange={(value) => updateForm("overtimeBase", value)} />
+              <NumberField label="工作日延时小时" value={compensationForm.weekdayOvertimeHours} onChange={(value) => updateForm("weekdayOvertimeHours", value)} />
+              <NumberField label="休息日未调休小时" value={compensationForm.restDayOvertimeHours} onChange={(value) => updateForm("restDayOvertimeHours", value)} />
+              <NumberField label="法定节假日小时" value={compensationForm.holidayOvertimeHours} onChange={(value) => updateForm("holidayOvertimeHours", value)} />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>标准计薪天数</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>制度工作日</div>
+                <div className="mt-1 font-semibold">{projectedPayroll.attendance.monthlyWorkDays} 天</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月计薪天数</div>
                 <div className="mt-1 font-semibold">{projectedPayroll.attendance.standardDays} 天</div>
               </div>
               <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>本月计薪天数</div>
-                <div className="mt-1 font-semibold">{projectedPayroll.attendance.paidDays} 天</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>加班小时工资</div>
+                <div className="mt-1 font-semibold">{currencyText(projectedPayroll.overtime.hourlyRate)}</div>
               </div>
               <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>考勤扣减</div>
-                <div className="mt-1 font-semibold">{currencyText(projectedPayroll.attendance.attendanceDeduction)}</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>加班合计</div>
+                <div className="mt-1 font-semibold">{projectedPayroll.overtime.totalHours} 小时</div>
               </div>
               <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>考勤后应发</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>加班费</div>
+                <div className="mt-1 font-semibold">{currencyText(projectedPayroll.overtime.totalPay)}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>应发工资</div>
                 <div className="mt-1 font-semibold">{currencyText(projectedPayroll.attendance.payableSalary)}</div>
               </div>
             </div>
@@ -1240,7 +1435,7 @@ export default function CompensationPage() {
 
           <div>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="font-medium">深圳五险口径</div>
+              <div className="font-medium">深圳社保口径</div>
               <Tag color="arcoblue">按当前公开上下限自动校正</Tag>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
@@ -1275,8 +1470,8 @@ export default function CompensationPage() {
               <NumberField label="医疗基数 6727-33633" value={compensationForm.medicalBase} onChange={(value) => updateForm("medicalBase", value)} />
               <NumberField label="生育基数 6727-33633" value={compensationForm.maternityBase} onChange={(value) => updateForm("maternityBase", value)} />
               <NumberField label="失业基数 2520-44265" value={compensationForm.unemploymentBase} onChange={(value) => updateForm("unemploymentBase", value)} />
-              <NumberField label="工伤基数 不低于2520" value={compensationForm.workInjuryBase} onChange={(value) => updateForm("workInjuryBase", value)} />
-              <NumberField label="工伤公司费率 %" value={compensationForm.workInjuryCompanyRate} precision={2} onChange={(value) => updateForm("workInjuryCompanyRate", value)} />
+              <NumberField label="工伤基数 ≥2520，无上限" value={compensationForm.workInjuryBase} onChange={(value) => updateForm("workInjuryBase", value)} />
+              <NumberField label="工伤行业基准费率 0.2%-1.4%" value={compensationForm.workInjuryCompanyRate} precision={2} onChange={(value) => updateForm("workInjuryCompanyRate", value)} />
             </div>
           </div>
 
@@ -1320,9 +1515,9 @@ export default function CompensationPage() {
           <div>
             <div className="mb-3 font-medium">公积金口径</div>
             <div className="grid gap-3 md:grid-cols-3">
-              <NumberField label="公积金基数" value={compensationForm.housingFundBase} onChange={(value) => updateForm("housingFundBase", value)} />
-              <NumberField label="个人比例" value={compensationForm.housingFundPersonalRate} onChange={(value) => updateForm("housingFundPersonalRate", value)} />
-              <NumberField label="公司比例" value={compensationForm.housingFundCompanyRate} onChange={(value) => updateForm("housingFundCompanyRate", value)} />
+              <NumberField label="公积金基数 2520-44265" value={compensationForm.housingFundBase} onChange={(value) => updateForm("housingFundBase", value)} />
+              <NumberField label="个人比例 5%-12%" value={compensationForm.housingFundPersonalRate} onChange={(value) => updateForm("housingFundPersonalRate", value)} />
+              <NumberField label="公司比例 5%-12%" value={compensationForm.housingFundCompanyRate} onChange={(value) => updateForm("housingFundCompanyRate", value)} />
             </div>
           </div>
         </div>

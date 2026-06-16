@@ -125,6 +125,12 @@ export interface Employee {
   profileVerifiedAt?: string | null;
   profileVerifiedBy?: number | null;
   salary: number;
+  overtimeBase: number;
+  weekdayOvertimeHours: number;
+  restDayOvertimeHours: number;
+  holidayOvertimeHours: number;
+  overtimePay: number;
+  overtimePolicyNote?: string | null;
   socialInsurance: number;
   housingFund: number;
   taxEstimate: number;
@@ -411,6 +417,12 @@ export interface EmployeePayload {
   profileVerifiedAt?: string | null;
   profileVerifiedBy?: number | null;
   salary: number;
+  overtimeBase?: number;
+  weekdayOvertimeHours?: number;
+  restDayOvertimeHours?: number;
+  holidayOvertimeHours?: number;
+  overtimePay?: number;
+  overtimePolicyNote?: string | null;
   socialInsurance: number;
   housingFund: number;
   taxEstimate: number;

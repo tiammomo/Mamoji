@@ -196,7 +196,7 @@ public class PayrollService {
         item.departmentName = employee.departmentName;
         item.period = period;
         item.salary = money(employee.salary);
-        item.payableSalary = money(employee.salary);
+        item.payableSalary = money(employee.salary).add(money(employee.overtimePay));
         item.socialPersonalAmount = money(employee.socialInsurancePersonalAmount);
         item.socialCompanyAmount = money(employee.socialInsuranceCompanyAmount);
         item.housingPersonalAmount = money(employee.housingFundPersonalAmount);
@@ -227,6 +227,13 @@ public class PayrollService {
         snapshot.put("housingFundPersonalRate", moneyText(employee.housingFundPersonalRate));
         snapshot.put("housingFundCompanyRate", moneyText(employee.housingFundCompanyRate));
         snapshot.put("salary", moneyText(item.salary));
+        snapshot.put("overtimeBase", moneyText(employee.overtimeBase));
+        snapshot.put("weekdayOvertimeHours", moneyText(employee.weekdayOvertimeHours));
+        snapshot.put("restDayOvertimeHours", moneyText(employee.restDayOvertimeHours));
+        snapshot.put("holidayOvertimeHours", moneyText(employee.holidayOvertimeHours));
+        snapshot.put("overtimePay", moneyText(employee.overtimePay));
+        snapshot.put("overtimePolicyNote", employee.overtimePolicyNote);
+        snapshot.put("payableSalary", moneyText(item.payableSalary));
         snapshot.put("netPay", moneyText(item.netPay));
         snapshot.put("companyCost", moneyText(item.companyCost));
         try {

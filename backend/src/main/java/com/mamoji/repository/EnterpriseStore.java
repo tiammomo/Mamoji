@@ -57,6 +57,8 @@ public class EnterpriseStore {
     private static final BigDecimal SHENZHEN_MEDICAL_MAX_BASE = new BigDecimal("33633");
     private static final BigDecimal SHENZHEN_UNEMPLOYMENT_MIN_BASE = new BigDecimal("2520");
     private static final BigDecimal SHENZHEN_UNEMPLOYMENT_MAX_BASE = new BigDecimal("44265");
+    private static final BigDecimal SHENZHEN_HOUSING_FUND_MIN_BASE = new BigDecimal("2520");
+    private static final BigDecimal SHENZHEN_HOUSING_FUND_MAX_BASE = new BigDecimal("44265");
     private static final BigDecimal DEFAULT_PENSION_PERSONAL_RATE = new BigDecimal("8");
     private static final BigDecimal DEFAULT_PENSION_COMPANY_RATE = new BigDecimal("16");
     private static final BigDecimal DEFAULT_LOCAL_SUPPLEMENT_PENSION_COMPANY_RATE = new BigDecimal("1");
@@ -68,8 +70,27 @@ public class EnterpriseStore {
     private static final BigDecimal DEFAULT_UNEMPLOYMENT_PERSONAL_RATE = new BigDecimal("0.2");
     private static final BigDecimal DEFAULT_UNEMPLOYMENT_COMPANY_RATE = new BigDecimal("0.8");
     private static final BigDecimal DEFAULT_WORK_INJURY_COMPANY_RATE = new BigDecimal("0.2");
+    private static final BigDecimal MAX_WORK_INJURY_COMPANY_RATE = new BigDecimal("1.4");
+    private static final BigDecimal MIN_HOUSING_FUND_RATE = new BigDecimal("5");
     private static final BigDecimal DEFAULT_HOUSING_FUND_RATE = new BigDecimal("12");
+    private static final BigDecimal MAX_HOUSING_FUND_RATE = new BigDecimal("12");
+    private static final BigDecimal OVERTIME_MONTHLY_PAID_DAYS = new BigDecimal("21.75");
+    private static final BigDecimal STANDARD_DAILY_WORK_HOURS = new BigDecimal("8");
+    private static final BigDecimal WEEKDAY_OVERTIME_RATE = new BigDecimal("1.5");
+    private static final BigDecimal REST_DAY_OVERTIME_RATE = new BigDecimal("2");
+    private static final BigDecimal HOLIDAY_OVERTIME_RATE = new BigDecimal("3");
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+    private static final String DEMO_COMPANY_CREDIT_CODE = "DEMO-COMPANY-CREDIT-CODE";
+    private static final int[] COMPENSATION_BENCHMARK_SALARIES = {
+        3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
+        15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000
+    };
+    private static final String[] COMPENSATION_BENCHMARK_HIRE_DATES = {
+        "2026-06-01", "2026-05-20", "2026-05-10", "2026-04-22",
+        "2026-04-08", "2026-03-18", "2026-03-05", "2026-02-25",
+        "2026-02-14", "2026-01-30", "2026-01-12", "2025-12-20",
+        "2025-11-18", "2025-10-16", "2025-09-12", "2025-08-08"
+    };
 
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
@@ -112,6 +133,7 @@ public class EnterpriseStore {
         ensureTaxItemDefaults();
         if (!isBootstrapMode()) {
             ensureHouseholdSubject();
+            ensureCompensationBenchmarkEmployees();
             ensureEntityTransferSeed();
             ensureReceiptVoucherSeed();
         }
@@ -211,6 +233,12 @@ public class EnterpriseStore {
                 profile_verified_at TEXT,
                 profile_verified_by INTEGER,
                 salary TEXT NOT NULL,
+                overtime_base TEXT NOT NULL DEFAULT '0',
+                weekday_overtime_hours TEXT NOT NULL DEFAULT '0',
+                rest_day_overtime_hours TEXT NOT NULL DEFAULT '0',
+                holiday_overtime_hours TEXT NOT NULL DEFAULT '0',
+                overtime_pay TEXT NOT NULL DEFAULT '0',
+                overtime_policy_note TEXT,
                 social_insurance TEXT NOT NULL,
                 housing_fund TEXT NOT NULL,
                 tax_estimate TEXT NOT NULL,
@@ -267,6 +295,12 @@ public class EnterpriseStore {
         ensureColumn("employees", "material_status", "TEXT");
         ensureColumn("employees", "profile_verified_at", "TEXT");
         ensureColumn("employees", "profile_verified_by", "INTEGER");
+        ensureColumn("employees", "overtime_base", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "weekday_overtime_hours", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "rest_day_overtime_hours", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "holiday_overtime_hours", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "overtime_pay", "TEXT NOT NULL DEFAULT '0'");
+        ensureColumn("employees", "overtime_policy_note", "TEXT");
         ensureColumn("employees", "social_insurance_base", "TEXT NOT NULL DEFAULT '0'");
         ensureColumn("employees", "social_insurance_personal_rate", "TEXT NOT NULL DEFAULT '0'");
         ensureColumn("employees", "social_insurance_company_rate", "TEXT NOT NULL DEFAULT '0'");
@@ -656,7 +690,7 @@ public class EnterpriseStore {
             return;
         }
 
-        Company company = company(owner.id, "深圳市示例电商科技有限公司", "DEMO-COMPANY-CREDIT-CODE", "软件与信息技术服务", "小规模纳税人", "CNY");
+        Company company = company(owner.id, "深圳市示例电商科技有限公司", DEMO_COMPANY_CREDIT_CODE, "软件与信息技术服务", "小规模纳税人", "CNY");
         Department management = department(company.id, "管理层", "CEO", "30000");
         Department finance = department(company.id, "财务行政", "FIN-ADMIN", "42000");
         Department product = department(company.id, "产品研发", "RND", "120000");
@@ -699,6 +733,86 @@ public class EnterpriseStore {
         taxItem(company.id, "2026-Q2 企业所得税预缴", "2026-Q2", "corporate_income_tax", "45200", "2260", "0", "2026-07-15", "pending", "按季度利润估算");
         taxItem(company.id, "2026-06 个税代扣代缴", "2026-06", "personal_income_tax", "74000", "6800", "1200", "2026-07-15", "pending", "按当前员工薪资样例估算");
         taxItem(company.id, "2026-Q2 附加税费确认", "2026-Q2", "surcharge", "0", "0", "0", "2026-07-15", "estimated", "增值税为零时附加税费同步为零");
+    }
+
+    private void ensureCompensationBenchmarkEmployees() {
+        companies.values().stream()
+            .filter(this::isDemoCompany)
+            .forEach(this::ensureCompensationBenchmarkEmployees);
+    }
+
+    private void ensureCompensationBenchmarkEmployees(Company company) {
+        Department benchmarkDepartment = departments.values().stream()
+            .filter(department -> department.companyId == company.id)
+            .filter(department -> "薪酬样例".equals(department.name))
+            .min(Comparator.comparing(department -> department.id))
+            .orElseGet(() -> department(company.id, "薪酬样例", "PAY-SAMPLE", "780000"));
+        long operatorUserId = coreStore.users.containsKey(company.ownerId)
+            ? company.ownerId
+            : coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)).map(user -> user.id).orElse(0L);
+
+        for (int i = 0; i < COMPENSATION_BENCHMARK_SALARIES.length; i += 1) {
+            int salary = COMPENSATION_BENCHMARK_SALARIES[i];
+            String email = String.format(Locale.ROOT, "salary.sample.%05d@mamoji.local", salary);
+            boolean exists = employees.values().stream()
+                .anyMatch(employee -> employee.companyId == company.id && email.equalsIgnoreCase(employee.email));
+            if (exists) {
+                continue;
+            }
+            Employee benchmarkEmployee = employee(
+                company.id,
+                null,
+                benchmarkDepartment.id,
+                "薪酬样例 " + salary + "元",
+                email,
+                String.format(Locale.ROOT, "139%08d", salary),
+                "工资档位 " + salary + " 元",
+                "full_time",
+                "active",
+                "employee",
+                "self",
+                COMPENSATION_BENCHMARK_HIRE_DATES[i],
+                null,
+                String.valueOf(salary),
+                "0",
+                "0",
+                "0",
+                "0",
+                "样例联系人 13900000000"
+            );
+            benchmarkEmployee.employeeNo = String.format(Locale.ROOT, "PAY-SAMPLE-%05d", salary);
+            benchmarkEmployee.jobLevel = "薪酬测算样例";
+            benchmarkEmployee.workLocation = "深圳";
+            benchmarkEmployee.resumeSummary = salary + " 元工资档位样例，用于观察个人到账、公司缴费和公司总成本。";
+            benchmarkEmployee.materialStatus = "complete";
+            saveEmployee(benchmarkEmployee);
+            if (operatorUserId > 0) {
+                event(company.id, benchmarkEmployee.id, "onboard", benchmarkEmployee.hireDate, "薪酬档位样例入职", operatorUserId);
+            }
+        }
+        retainOnlyCompensationBenchmarkEmployees(company);
+    }
+
+    private void retainOnlyCompensationBenchmarkEmployees(Company company) {
+        List<Long> employeeIdsToRemove = employees.values().stream()
+            .filter(employee -> employee.companyId == company.id)
+            .filter(employee -> !isCompensationBenchmarkEmployee(employee))
+            .map(employee -> employee.id)
+            .toList();
+        if (employeeIdsToRemove.isEmpty()) {
+            return;
+        }
+        jdbc.update("DELETE FROM payroll_run_items WHERE run_id IN (SELECT id FROM payroll_runs WHERE company_id = ?)", company.id);
+        jdbc.update("DELETE FROM payroll_runs WHERE company_id = ?", company.id);
+        employeeIdsToRemove.forEach(this::deleteEmployee);
+    }
+
+    private boolean isDemoCompany(Company company) {
+        return DEMO_COMPANY_CREDIT_CODE.equals(company.creditCode) || "深圳市示例电商科技有限公司".equals(company.name);
+    }
+
+    private boolean isCompensationBenchmarkEmployee(Employee employee) {
+        return employee.email != null && employee.email.toLowerCase(Locale.ROOT).startsWith("salary.sample.");
     }
 
     private void ensureHouseholdSubject() {
@@ -909,8 +1023,8 @@ public class EnterpriseStore {
             boolean updated = hydrateEmployeePayroll(employee);
             if (updated) {
                 employee.updatedAt = InMemoryStore.now();
-                saveEmployee(employee);
             }
+            saveEmployee(employee);
         });
     }
 
@@ -1403,6 +1517,12 @@ public class EnterpriseStore {
         employee.socialInsurance = money(socialInsurance);
         employee.housingFund = money(housingFund);
         employee.taxEstimate = money(taxEstimate);
+        employee.overtimeBase = employee.salary;
+        employee.weekdayOvertimeHours = BigDecimal.ZERO;
+        employee.restDayOvertimeHours = BigDecimal.ZERO;
+        employee.holidayOvertimeHours = BigDecimal.ZERO;
+        employee.overtimePay = BigDecimal.ZERO;
+        employee.overtimePolicyNote = overtimePolicyNote();
         employee.socialInsuranceBase = employee.salary;
         employee.socialInsurancePersonalRate = DEFAULT_PENSION_PERSONAL_RATE;
         employee.socialInsuranceCompanyRate = percentageOf(employee.socialInsurance, employee.socialInsuranceBase, DEFAULT_PENSION_COMPANY_RATE);
@@ -1433,12 +1553,13 @@ public class EnterpriseStore {
             INSERT INTO employees (
                 company_id, user_id, department_id, name, email, phone, position, employment_type, status,
                 access_role, access_scope, hire_date, leave_date, salary, social_insurance, housing_fund, tax_estimate,
+                overtime_base, weekday_overtime_hours, rest_day_overtime_hours, holiday_overtime_hours, overtime_pay, overtime_policy_note,
                 social_insurance_base, social_insurance_personal_rate, social_insurance_company_rate, social_insurance_personal_amount,
                 social_insurance_company_amount, housing_fund_base, housing_fund_personal_rate, housing_fund_company_rate,
                 housing_fund_personal_amount, housing_fund_company_amount, personal_deduction, net_pay_estimate,
                 social_insurance_region, hukou_type, medical_tier, pension_base, medical_base, unemployment_base, work_injury_base,
                 maternity_base, work_injury_company_rate, social_insurance_policy_note, monthly_cost, emergency_contact, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindEmployee(ps, employee));
         employees.put(employee.id, employee);
         attachDepartmentNames();
@@ -1455,7 +1576,8 @@ public class EnterpriseStore {
                 probation_start_date = ?, probation_end_date = ?, contract_start_date = ?, contract_end_date = ?, contract_type = ?,
                 contract_status = ?, education_level = ?, graduation_school = ?, major = ?, graduation_date = ?, graduation_year = ?,
                 graduate_status = ?, skill_tags = ?, resume_summary = ?, material_status = ?, profile_verified_at = ?, profile_verified_by = ?,
-                salary = ?,
+                salary = ?, overtime_base = ?, weekday_overtime_hours = ?, rest_day_overtime_hours = ?, holiday_overtime_hours = ?,
+                overtime_pay = ?, overtime_policy_note = ?,
                 social_insurance = ?, housing_fund = ?, tax_estimate = ?, social_insurance_base = ?, social_insurance_personal_rate = ?,
                 social_insurance_company_rate = ?, social_insurance_personal_amount = ?, social_insurance_company_amount = ?,
                 housing_fund_base = ?, housing_fund_personal_rate = ?, housing_fund_company_rate = ?, housing_fund_personal_amount = ?,
@@ -1470,7 +1592,9 @@ public class EnterpriseStore {
             employee.probationStartDate, employee.probationEndDate, employee.contractStartDate, employee.contractEndDate, employee.contractType,
             employee.contractStatus, employee.educationLevel, employee.graduationSchool, employee.major, employee.graduationDate, employee.graduationYear,
             employee.graduateStatus, employee.skillTags, employee.resumeSummary, employee.materialStatus, employee.profileVerifiedAt, employee.profileVerifiedBy,
-            moneyText(employee.salary), moneyText(employee.socialInsurance), moneyText(employee.housingFund),
+            moneyText(employee.salary), moneyText(employee.overtimeBase), moneyText(employee.weekdayOvertimeHours),
+            moneyText(employee.restDayOvertimeHours), moneyText(employee.holidayOvertimeHours), moneyText(employee.overtimePay),
+            employee.overtimePolicyNote, moneyText(employee.socialInsurance), moneyText(employee.housingFund),
             moneyText(employee.taxEstimate), moneyText(employee.socialInsuranceBase), moneyText(employee.socialInsurancePersonalRate),
             moneyText(employee.socialInsuranceCompanyRate), moneyText(employee.socialInsurancePersonalAmount),
             moneyText(employee.socialInsuranceCompanyAmount), moneyText(employee.housingFundBase),
@@ -1481,6 +1605,20 @@ public class EnterpriseStore {
             moneyText(employee.unemploymentBase), moneyText(employee.workInjuryBase), moneyText(employee.maternityBase),
             moneyText(employee.workInjuryCompanyRate), employee.socialInsurancePolicyNote, moneyText(employee.monthlyCost), employee.emergencyContact,
             employee.updatedAt, employee.id);
+        attachDepartmentNames();
+    }
+
+    public void deleteEmployee(long id) {
+        jdbc.update("UPDATE departments SET manager_employee_id = NULL WHERE manager_employee_id = ?", id);
+        jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", id);
+        jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", id);
+        jdbc.update("DELETE FROM employment_events WHERE employee_id = ?", id);
+        jdbc.update("DELETE FROM audit_logs WHERE entity_type = 'employee' AND entity_id = ?", id);
+        jdbc.update("DELETE FROM payroll_run_items WHERE employee_id = ?", id);
+        jdbc.update("DELETE FROM employees WHERE id = ?", id);
+        employees.remove(id);
+        employmentEvents.entrySet().removeIf(entry -> entry.getValue().employeeId == id);
+        auditLogs.entrySet().removeIf(entry -> "employee".equals(entry.getValue().entityType) && entry.getValue().entityId == id);
         attachDepartmentNames();
     }
 
@@ -2129,6 +2267,12 @@ public class EnterpriseStore {
         employee.profileVerifiedAt = rs.getString("profile_verified_at");
         employee.profileVerifiedBy = nullableLong(rs, "profile_verified_by");
         employee.salary = money(rs.getString("salary"));
+        employee.overtimeBase = money(rs.getString("overtime_base"));
+        employee.weekdayOvertimeHours = money(rs.getString("weekday_overtime_hours"));
+        employee.restDayOvertimeHours = money(rs.getString("rest_day_overtime_hours"));
+        employee.holidayOvertimeHours = money(rs.getString("holiday_overtime_hours"));
+        employee.overtimePay = money(rs.getString("overtime_pay"));
+        employee.overtimePolicyNote = rs.getString("overtime_policy_note");
         employee.socialInsurance = money(rs.getString("social_insurance"));
         employee.housingFund = money(rs.getString("housing_fund"));
         employee.taxEstimate = money(rs.getString("tax_estimate"));
@@ -2344,35 +2488,41 @@ public class EnterpriseStore {
         ps.setString(12, employee.hireDate);
         ps.setString(13, employee.leaveDate);
         ps.setString(14, moneyText(employee.salary));
-        ps.setString(15, moneyText(employee.socialInsurance));
-        ps.setString(16, moneyText(employee.housingFund));
-        ps.setString(17, moneyText(employee.taxEstimate));
-        ps.setString(18, moneyText(employee.socialInsuranceBase));
-        ps.setString(19, moneyText(employee.socialInsurancePersonalRate));
-        ps.setString(20, moneyText(employee.socialInsuranceCompanyRate));
-        ps.setString(21, moneyText(employee.socialInsurancePersonalAmount));
-        ps.setString(22, moneyText(employee.socialInsuranceCompanyAmount));
-        ps.setString(23, moneyText(employee.housingFundBase));
-        ps.setString(24, moneyText(employee.housingFundPersonalRate));
-        ps.setString(25, moneyText(employee.housingFundCompanyRate));
-        ps.setString(26, moneyText(employee.housingFundPersonalAmount));
-        ps.setString(27, moneyText(employee.housingFundCompanyAmount));
-        ps.setString(28, moneyText(employee.personalDeduction));
-        ps.setString(29, moneyText(employee.netPayEstimate));
-        ps.setString(30, employee.socialInsuranceRegion);
-        ps.setString(31, employee.hukouType);
-        ps.setString(32, employee.medicalTier);
-        ps.setString(33, moneyText(employee.pensionBase));
-        ps.setString(34, moneyText(employee.medicalBase));
-        ps.setString(35, moneyText(employee.unemploymentBase));
-        ps.setString(36, moneyText(employee.workInjuryBase));
-        ps.setString(37, moneyText(employee.maternityBase));
-        ps.setString(38, moneyText(employee.workInjuryCompanyRate));
-        ps.setString(39, employee.socialInsurancePolicyNote);
-        ps.setString(40, moneyText(employee.monthlyCost));
-        ps.setString(41, employee.emergencyContact);
-        ps.setString(42, employee.createdAt);
-        ps.setString(43, employee.updatedAt);
+        ps.setString(15, moneyText(employee.overtimeBase));
+        ps.setString(16, moneyText(employee.weekdayOvertimeHours));
+        ps.setString(17, moneyText(employee.restDayOvertimeHours));
+        ps.setString(18, moneyText(employee.holidayOvertimeHours));
+        ps.setString(19, moneyText(employee.overtimePay));
+        ps.setString(20, employee.overtimePolicyNote);
+        ps.setString(21, moneyText(employee.socialInsurance));
+        ps.setString(22, moneyText(employee.housingFund));
+        ps.setString(23, moneyText(employee.taxEstimate));
+        ps.setString(24, moneyText(employee.socialInsuranceBase));
+        ps.setString(25, moneyText(employee.socialInsurancePersonalRate));
+        ps.setString(26, moneyText(employee.socialInsuranceCompanyRate));
+        ps.setString(27, moneyText(employee.socialInsurancePersonalAmount));
+        ps.setString(28, moneyText(employee.socialInsuranceCompanyAmount));
+        ps.setString(29, moneyText(employee.housingFundBase));
+        ps.setString(30, moneyText(employee.housingFundPersonalRate));
+        ps.setString(31, moneyText(employee.housingFundCompanyRate));
+        ps.setString(32, moneyText(employee.housingFundPersonalAmount));
+        ps.setString(33, moneyText(employee.housingFundCompanyAmount));
+        ps.setString(34, moneyText(employee.personalDeduction));
+        ps.setString(35, moneyText(employee.netPayEstimate));
+        ps.setString(36, employee.socialInsuranceRegion);
+        ps.setString(37, employee.hukouType);
+        ps.setString(38, employee.medicalTier);
+        ps.setString(39, moneyText(employee.pensionBase));
+        ps.setString(40, moneyText(employee.medicalBase));
+        ps.setString(41, moneyText(employee.unemploymentBase));
+        ps.setString(42, moneyText(employee.workInjuryBase));
+        ps.setString(43, moneyText(employee.maternityBase));
+        ps.setString(44, moneyText(employee.workInjuryCompanyRate));
+        ps.setString(45, employee.socialInsurancePolicyNote);
+        ps.setString(46, moneyText(employee.monthlyCost));
+        ps.setString(47, employee.emergencyContact);
+        ps.setString(48, employee.createdAt);
+        ps.setString(49, employee.updatedAt);
     }
 
     private void bindEmployeeCertificate(PreparedStatement ps, EmployeeCertificate certificate) throws SQLException {
@@ -2544,8 +2694,19 @@ public class EnterpriseStore {
             employee.socialInsurancePolicyNote = policyNote;
             updated = true;
         }
+        String overtimePolicyNote = overtimePolicyNote();
+        if (!sameText(employee.overtimePolicyNote, overtimePolicyNote)) {
+            employee.overtimePolicyNote = overtimePolicyNote;
+            updated = true;
+        }
 
         List<String> warnings = new ArrayList<>();
+        BigDecimal overtimeBase = boundedBase("加班工资", firstPositive(employee.overtimeBase, salary),
+            SHENZHEN_UNEMPLOYMENT_MIN_BASE, null, warnings);
+        BigDecimal weekdayOvertimeHours = nonNegative(employee.weekdayOvertimeHours);
+        BigDecimal restDayOvertimeHours = nonNegative(employee.restDayOvertimeHours);
+        BigDecimal holidayOvertimeHours = nonNegative(employee.holidayOvertimeHours);
+        BigDecimal overtimePay = overtimePay(overtimeBase, weekdayOvertimeHours, restDayOvertimeHours, holidayOvertimeHours);
         BigDecimal pensionBase = boundedBase("养老保险", firstPositive(employee.pensionBase, firstPositive(employee.socialInsuranceBase, salary)),
             SHENZHEN_PENSION_MIN_BASE, SHENZHEN_PENSION_MAX_BASE, warnings);
         BigDecimal medicalBase = boundedBase("医疗保险", firstPositive(employee.medicalBase, firstPositive(employee.socialInsuranceBase, salary)),
@@ -2555,9 +2716,18 @@ public class EnterpriseStore {
         BigDecimal maternityBase = boundedBase("生育保险", firstPositive(employee.maternityBase, medicalBase),
             SHENZHEN_MEDICAL_MIN_BASE, SHENZHEN_MEDICAL_MAX_BASE, warnings);
         BigDecimal workInjuryBase = max(firstPositive(employee.workInjuryBase, salary), SHENZHEN_UNEMPLOYMENT_MIN_BASE);
-        BigDecimal workInjuryCompanyRate = isZeroOrLess(employee.workInjuryCompanyRate)
-            ? DEFAULT_WORK_INJURY_COMPANY_RATE
-            : money(employee.workInjuryCompanyRate);
+        BigDecimal housingFundBase = boundedBase("住房公积金", firstPositive(employee.housingFundBase, salary),
+            SHENZHEN_HOUSING_FUND_MIN_BASE, SHENZHEN_HOUSING_FUND_MAX_BASE, warnings);
+        BigDecimal workInjuryCompanyRate = boundedRate("工伤公司费率",
+            firstPositive(employee.workInjuryCompanyRate, DEFAULT_WORK_INJURY_COMPANY_RATE),
+            DEFAULT_WORK_INJURY_COMPANY_RATE, MAX_WORK_INJURY_COMPANY_RATE, warnings);
+        BigDecimal housingFundPersonalRate = boundedRate("公积金个人比例",
+            firstPositive(employee.housingFundPersonalRate, DEFAULT_HOUSING_FUND_RATE),
+            MIN_HOUSING_FUND_RATE, MAX_HOUSING_FUND_RATE, warnings);
+        BigDecimal housingFundCompanyRate = boundedRate("公积金公司比例",
+            firstPositive(employee.housingFundCompanyRate, percentageOf(firstPositive(employee.housingFundCompanyAmount, employee.housingFund),
+                housingFundBase, DEFAULT_HOUSING_FUND_RATE)),
+            MIN_HOUSING_FUND_RATE, MAX_HOUSING_FUND_RATE, warnings);
 
         if (!sameMoney(employee.pensionBase, pensionBase)) {
             employee.pensionBase = pensionBase;
@@ -2583,18 +2753,36 @@ public class EnterpriseStore {
             employee.workInjuryCompanyRate = workInjuryCompanyRate;
             updated = true;
         }
-
-        if (isZeroOrLess(employee.housingFundBase)) {
-            employee.housingFundBase = salary;
+        if (!sameMoney(employee.housingFundBase, housingFundBase)) {
+            employee.housingFundBase = housingFundBase;
             updated = true;
         }
-        if (isZeroOrLess(employee.housingFundPersonalRate)) {
-            employee.housingFundPersonalRate = DEFAULT_HOUSING_FUND_RATE;
+        if (!sameMoney(employee.housingFundPersonalRate, housingFundPersonalRate)) {
+            employee.housingFundPersonalRate = housingFundPersonalRate;
             updated = true;
         }
-        if (isZeroOrLess(employee.housingFundCompanyRate)) {
-            employee.housingFundCompanyRate = percentageOf(firstPositive(employee.housingFundCompanyAmount, employee.housingFund),
-                employee.housingFundBase, DEFAULT_HOUSING_FUND_RATE);
+        if (!sameMoney(employee.housingFundCompanyRate, housingFundCompanyRate)) {
+            employee.housingFundCompanyRate = housingFundCompanyRate;
+            updated = true;
+        }
+        if (!sameMoney(employee.overtimeBase, overtimeBase)) {
+            employee.overtimeBase = overtimeBase;
+            updated = true;
+        }
+        if (!sameMoney(employee.weekdayOvertimeHours, weekdayOvertimeHours)) {
+            employee.weekdayOvertimeHours = weekdayOvertimeHours;
+            updated = true;
+        }
+        if (!sameMoney(employee.restDayOvertimeHours, restDayOvertimeHours)) {
+            employee.restDayOvertimeHours = restDayOvertimeHours;
+            updated = true;
+        }
+        if (!sameMoney(employee.holidayOvertimeHours, holidayOvertimeHours)) {
+            employee.holidayOvertimeHours = holidayOvertimeHours;
+            updated = true;
+        }
+        if (!sameMoney(employee.overtimePay, overtimePay)) {
+            employee.overtimePay = overtimePay;
             updated = true;
         }
         if (employee.taxEstimate == null) {
@@ -2639,15 +2827,16 @@ public class EnterpriseStore {
         socialInsuranceItems.add(socialInsuranceItem(
             "workInjury", "工伤保险", "工伤", workInjuryBase, SHENZHEN_UNEMPLOYMENT_MIN_BASE, null,
             BigDecimal.ZERO, workInjuryCompanyRate,
-            "广东省级统筹八档行业基准费率，深圳 2024-07 起 0.2%-1.4%，个人不缴", "2024-07-01 起"
+            "深圳工伤基数不低于 2520，普通单位按职工工资总额计缴；行业基准费率 0.2%-1.4%，个人不缴", "2024-07-01 起"
         ));
 
         BigDecimal socialPersonalAmount = socialPersonalAmount(socialInsuranceItems);
         BigDecimal socialCompanyAmount = socialCompanyAmount(socialInsuranceItems);
         BigDecimal housingPersonalAmount = contribution(employee.housingFundBase, employee.housingFundPersonalRate);
         BigDecimal housingCompanyAmount = contribution(employee.housingFundBase, employee.housingFundCompanyRate);
-        BigDecimal monthlyCost = salary.add(socialCompanyAmount).add(housingCompanyAmount);
-        BigDecimal netPayEstimate = salary
+        BigDecimal payableSalary = salary.add(overtimePay);
+        BigDecimal monthlyCost = payableSalary.add(socialCompanyAmount).add(housingCompanyAmount);
+        BigDecimal netPayEstimate = payableSalary
             .subtract(socialPersonalAmount)
             .subtract(housingPersonalAmount)
             .subtract(money(employee.taxEstimate))
@@ -2765,6 +2954,19 @@ public class EnterpriseStore {
         return safeValue;
     }
 
+    private static BigDecimal boundedRate(String label, BigDecimal value, BigDecimal min, BigDecimal max, List<String> warnings) {
+        BigDecimal safeValue = money(value);
+        if (safeValue.compareTo(min) < 0) {
+            warnings.add(label + "低于当前下限，已按 " + moneyText(min) + "% 计算");
+            return min;
+        }
+        if (safeValue.compareTo(max) > 0) {
+            warnings.add(label + "高于当前上限，已按 " + moneyText(max) + "% 计算");
+            return max;
+        }
+        return safeValue;
+    }
+
     private static BigDecimal clamp(BigDecimal value, BigDecimal min, BigDecimal max) {
         BigDecimal safeValue = money(value);
         if (safeValue.compareTo(min) < 0) {
@@ -2803,7 +3005,19 @@ public class EnterpriseStore {
     }
 
     private static String shenzhenPolicyNote() {
-        return "深圳五险演示政策：养老 2025-07 至 2026-06 基数 4775-27549；医保/生育 2026 年基数 6727-33633；失业 2025-07 至 2026-06 基数 2520-44265；工伤按行业费率 0.2%-1.4%。";
+        return "深圳五险一金演示政策：养老 2025-07 至 2026-06 基数 4775-27549；医保/生育 2026 年基数 6727-33633；失业 2025-07 至 2026-06 基数 2520-44265；工伤基数不低于 2520，普通单位无单人工资上限，行业基准费率 0.2%-1.4%；公积金 2025-07 至 2026-06 基数 2520-44265。";
+    }
+
+    private static String overtimePolicyNote() {
+        return "国家加班费演示政策：工作日延时 150%，休息日未调休 200%，法定节假日 300%；日工资=月工资收入/21.75，小时工资=月工资收入/(21.75×8)。";
+    }
+
+    private static BigDecimal overtimePay(BigDecimal base, BigDecimal weekdayHours, BigDecimal restDayHours, BigDecimal holidayHours) {
+        BigDecimal hourlyRate = money(base).divide(OVERTIME_MONTHLY_PAID_DAYS.multiply(STANDARD_DAILY_WORK_HOURS), 6, RoundingMode.HALF_UP);
+        BigDecimal weekdayPay = hourlyRate.multiply(nonNegative(weekdayHours)).multiply(WEEKDAY_OVERTIME_RATE);
+        BigDecimal restDayPay = hourlyRate.multiply(nonNegative(restDayHours)).multiply(REST_DAY_OVERTIME_RATE);
+        BigDecimal holidayPay = hourlyRate.multiply(nonNegative(holidayHours)).multiply(HOLIDAY_OVERTIME_RATE);
+        return weekdayPay.add(restDayPay).add(holidayPay).setScale(2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal contribution(BigDecimal base, BigDecimal rate) {
@@ -2825,6 +3039,11 @@ public class EnterpriseStore {
     private static BigDecimal firstPositive(BigDecimal first, BigDecimal second) {
         BigDecimal safeFirst = money(first);
         return safeFirst.signum() > 0 ? safeFirst : money(second);
+    }
+
+    private static BigDecimal nonNegative(BigDecimal value) {
+        BigDecimal safeValue = money(value);
+        return safeValue.signum() < 0 ? BigDecimal.ZERO : safeValue;
     }
 
     private static boolean isZeroOrLess(BigDecimal value) {
