@@ -2,7 +2,7 @@ name: ${MAMOJI_COMPOSE_PROJECT_NAME:-mamoji-prod}
 
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:${MAMOJI_CADDY_VERSION:-2.11.4-alpine}
     restart: unless-stopped
     environment:
       MAMOJI_PUBLIC_HOST: ${MAMOJI_PUBLIC_HOST:?MAMOJI_PUBLIC_HOST is required}
@@ -31,6 +31,8 @@ services:
       MAMOJI_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${MAMOJI_POSTGRES_DB:?MAMOJI_POSTGRES_DB is required}
       MAMOJI_DATASOURCE_USERNAME: ${MAMOJI_POSTGRES_USER:?MAMOJI_POSTGRES_USER is required}
       MAMOJI_DATASOURCE_PASSWORD: ${MAMOJI_POSTGRES_PASSWORD:?MAMOJI_POSTGRES_PASSWORD is required}
+      MAMOJI_RUNTIME_ENVIRONMENT: ${MAMOJI_RUNTIME_ENVIRONMENT:-production}
+      MAMOJI_SCHEMA_COMPATIBILITY_ENABLED: ${MAMOJI_SCHEMA_COMPATIBILITY_ENABLED:-false}
       MAMOJI_DB_POOL_MAX_SIZE: ${MAMOJI_DB_POOL_MAX_SIZE:-20}
       MAMOJI_DB_POOL_MIN_IDLE: ${MAMOJI_DB_POOL_MIN_IDLE:-4}
       MAMOJI_BOOTSTRAP_MODE: ${MAMOJI_BOOTSTRAP_MODE:-bootstrap}
@@ -121,7 +123,7 @@ services:
       retries: 12
 
   minio:
-    image: quay.io/minio/minio:${MAMOJI_MINIO_VERSION:-latest}
+    image: quay.io/minio/minio:${MAMOJI_MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -137,7 +139,7 @@ services:
       retries: 12
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:${MAMOJI_PROMETHEUS_VERSION:-v3.12.0}
     restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

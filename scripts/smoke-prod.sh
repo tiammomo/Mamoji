@@ -45,21 +45,51 @@ async function expectOk(label, promise) {
 
 async function main() {
   await expectOk("health", fetch(healthUrl));
-  await expectOk("login page", fetch(loginPageUrl));
+  const loginPage = await expectOk("login page", fetch(loginPageUrl));
+  const loginPageHtml = await loginPage.text();
+  if (registrationMode === "invite" && loginPageHtml.includes("test@mamoji.com / 123456")) {
+    throw new Error("production login page must not display demo credentials");
+  }
+  const meBefore = await fetch(apiBaseUrl + "/auth/me");
+  if (meBefore.status !== 401) {
+    throw new Error("unauthenticated /auth/me expected HTTP 401, got " + meBefore.status);
+  }
+  const preflight = await fetch(apiBaseUrl + "/auth/login", {
+    method: "OPTIONS",
+    headers: {
+      Origin: baseUrl,
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type"
+    }
+  });
+  if (!preflight.ok) {
+    throw new Error("CORS preflight failed with HTTP " + preflight.status);
+  }
   const login = await expectOk("login", fetch(apiBaseUrl + "/auth/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ email, password })
   }));
   const session = await login.json();
   if (!session.token || !session.tokenExpiresAt) {
     throw new Error("login did not return token and tokenExpiresAt");
   }
+  if (session.token.length < 40) {
+    throw new Error("login returned a weak-looking token");
+  }
+  if (JSON.stringify(session).includes("passwordHash")) {
+    throw new Error("login response leaked passwordHash");
+  }
   const headers = { Authorization: "Bearer " + session.token };
-  await expectOk("me", fetch(apiBaseUrl + "/auth/me", { headers }));
+  const me = await expectOk("me", fetch(apiBaseUrl + "/auth/me", { headers }));
+  if ((await me.text()).includes("passwordHash")) {
+    throw new Error("/auth/me leaked passwordHash");
+  }
   await expectOk("employees", fetch(apiBaseUrl + "/enterprise/employees", { headers }));
   await expectOk("payroll runs", fetch(apiBaseUrl + "/payroll-runs", { headers }));
   await expectOk("tax compliance", fetch(apiBaseUrl + "/enterprise/tax-compliance", { headers }));
+  await expectOk("backup status", fetch(apiBaseUrl + "/backup/status", { headers }));
+  await expectOk("notifications summary", fetch(apiBaseUrl + "/notifications/summary", { headers }));
   await expectOk("audit logs", fetch(apiBaseUrl + "/audit-logs?size=1", { headers }));
   if (registrationMode === "invite") {
     const blockedRegister = await fetch(apiBaseUrl + "/auth/register", {

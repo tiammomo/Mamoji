@@ -9,7 +9,9 @@ import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.PasswordHasher;
+import java.security.SecureRandom;
 import java.time.OffsetDateTime;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,6 +31,7 @@ import static com.mamoji.service.support.DomainSupport.touch;
 @Service
 public class AuthService {
     private static final long SESSION_HOURS = 12;
+    private static final int SESSION_TOKEN_BYTES = 32;
 
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
@@ -36,6 +39,7 @@ public class AuthService {
     private final PasswordHasher passwordHasher;
     private final LoginSecurityService loginSecurityService;
     private final OutboxEventService outboxEventService;
+    private final SecureRandom secureRandom = new SecureRandom();
     private final String registrationMode;
     private final int passwordMinLength;
     private final boolean passwordRequireComplexity;
@@ -211,11 +215,17 @@ public class AuthService {
     }
 
     private Map<String, Object> authenticated(User user) {
-        String token = UUID.randomUUID().toString();
+        String token = sessionToken();
         String expiresAt = OffsetDateTime.now().plusHours(SESSION_HOURS).toString();
         store.rememberToken(token, user.id, expiresAt);
         enterpriseStore.auditLog(0, "auth_session", user.id, "login", "用户登录: " + user.email, user.id, user.nickname);
         return Map.of("token", token, "tokenExpiresAt", expiresAt, "user", user);
+    }
+
+    private String sessionToken() {
+        byte[] bytes = new byte[SESSION_TOKEN_BYTES];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private RegistrationInvite invitationForRegistration(String email, String token) {

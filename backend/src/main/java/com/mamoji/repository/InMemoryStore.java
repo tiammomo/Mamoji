@@ -14,12 +14,15 @@ import com.mamoji.domain.Models.User;
 import com.mamoji.service.support.PasswordHasher;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -733,11 +736,12 @@ public class InMemoryStore {
     }
 
     public void rememberToken(String token, long userId, String expiresAt) {
-        tokens.put(token, new AuthSession(userId, expiresAt));
+        String tokenKey = tokenStorageKey(token);
+        tokens.put(tokenKey, new AuthSession(userId, expiresAt));
         jdbc.update("""
             INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)
             ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
-            """, token, userId, now(), expiresAt);
+            """, tokenKey, userId, now(), expiresAt);
     }
 
     public void revokeToken(String authorizationHeader) {
@@ -745,8 +749,10 @@ public class InMemoryStore {
             return;
         }
         String token = authorizationHeader.substring(7);
+        String tokenKey = tokenStorageKey(token);
+        tokens.remove(tokenKey);
         tokens.remove(token);
-        jdbc.update("DELETE FROM auth_tokens WHERE token = ?", token);
+        jdbc.update("DELETE FROM auth_tokens WHERE token IN (?, ?)", tokenKey, token);
     }
 
     public void deleteAccount(long id) {
@@ -789,13 +795,29 @@ public class InMemoryStore {
             return Optional.empty();
         }
         String token = authorizationHeader.substring(7);
-        AuthSession session = tokens.get(token);
+        String tokenKey = tokenStorageKey(token);
+        String storedTokenKey = tokenKey;
+        AuthSession session = tokens.get(tokenKey);
+        if (session == null) {
+            storedTokenKey = token;
+            session = tokens.get(token);
+        }
         if (session == null || session.expired()) {
-            tokens.remove(token);
-            jdbc.update("DELETE FROM auth_tokens WHERE token = ?", token);
+            tokens.remove(storedTokenKey);
+            jdbc.update("DELETE FROM auth_tokens WHERE token = ?", storedTokenKey);
             return Optional.empty();
         }
         return Optional.ofNullable(users.get(session.userId()));
+    }
+
+    private String tokenStorageKey(String token) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(token.getBytes(StandardCharsets.UTF_8));
+            return "sha256:" + Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Token hashing failed", ex);
+        }
     }
 
     public Optional<User> findUserByEmail(String email) {

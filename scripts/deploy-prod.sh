@@ -12,6 +12,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" "$ROOT_DIR/scripts/check-prod-env.sh"
+
 if [[ "$SKIP_BACKUP" != "true" ]]; then
   ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" "$ROOT_DIR/scripts/backup-prod.sh"
 fi

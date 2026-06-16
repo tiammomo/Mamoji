@@ -35,6 +35,10 @@ management:
         include: health,info,prometheus
 
 mamoji:
+  runtime:
+    environment: ${MAMOJI_RUNTIME_ENVIRONMENT:local}
+  schema:
+    compatibility-enabled: ${MAMOJI_SCHEMA_COMPATIBILITY_ENABLED:true}
   bootstrap:
     mode: ${MAMOJI_BOOTSTRAP_MODE:demo}
     admin-email: ${MAMOJI_BOOTSTRAP_ADMIN_EMAIL:test@mamoji.com}
@@ -66,6 +70,21 @@ mamoji:
       batch-size: ${MAMOJI_OUTBOX_CONSUMER_BATCH_SIZE:20}
       max-attempts: ${MAMOJI_OUTBOX_CONSUMER_MAX_ATTEMPTS:8}
       stale-lock-minutes: ${MAMOJI_OUTBOX_CONSUMER_STALE_LOCK_MINUTES:10}
+  notifications:
+    enabled: ${MAMOJI_NOTIFICATIONS_ENABLED:true}
+    reminder:
+      enabled: ${MAMOJI_NOTIFICATION_REMINDERS_ENABLED:true}
+      fixed-delay-ms: ${MAMOJI_NOTIFICATION_REMINDER_FIXED_DELAY_MS:60000}
+      tax-lookahead-days: ${MAMOJI_NOTIFICATION_TAX_LOOKAHEAD_DAYS:7}
+      people-lookahead-days: ${MAMOJI_NOTIFICATION_PEOPLE_LOOKAHEAD_DAYS:14}
+      receipt-lookahead-days: ${MAMOJI_NOTIFICATION_RECEIPT_LOOKAHEAD_DAYS:7}
+    delivery:
+      enabled: ${MAMOJI_NOTIFICATION_DELIVERY_ENABLED:true}
+      fixed-delay-ms: ${MAMOJI_NOTIFICATION_DELIVERY_FIXED_DELAY_MS:10000}
+      batch-size: ${MAMOJI_NOTIFICATION_DELIVERY_BATCH_SIZE:20}
+      max-attempts: ${MAMOJI_NOTIFICATION_DELIVERY_MAX_ATTEMPTS:6}
+      stale-lock-minutes: ${MAMOJI_NOTIFICATION_DELIVERY_STALE_LOCK_MINUTES:10}
+      timeout-seconds: ${MAMOJI_NOTIFICATION_DELIVERY_TIMEOUT_SECONDS:5}
   object-storage:
     enabled: ${MAMOJI_OBJECT_STORAGE_ENABLED:false}
     provider: minio

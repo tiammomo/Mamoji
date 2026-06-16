@@ -227,12 +227,15 @@ scripts/deploy-prod.sh
 生产部署要点：
 
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`：只初始化管理员、公司主体和管理员员工档案，不生成演示数据。
+- `MAMOJI_RUNTIME_ENVIRONMENT=production`：启用生产启动 guard，发现演示配置、弱密钥或本地来源会直接拒绝启动。
+- `MAMOJI_SCHEMA_COMPATIBILITY_ENABLED=false`：生产只接受 Flyway 管理的正式 schema，不在启动时做兼容补列。
 - `MAMOJI_REGISTRATION_MODE=invite`：生产默认邀请制注册。
 - `MAMOJI_ALLOWED_ORIGINS`：只填写生产前端域名。
 - `MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`：首次管理员、注册、改密均执行强密码策略。
 - `MAMOJI_OBJECT_STORAGE_ENABLED=true`：附件写入 MinIO 私有 bucket。
 - `MAMOJI_OUTBOX_ENABLED=true`：业务事件先进入 `outbox_events`，由本地消费者处理。
 - `MAMOJI_PROMETHEUS_PORT=127.0.0.1:39090`：Prometheus 默认只绑定本机。
+- `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`：生产使用明确版本，不使用 `latest`。
 
 生产 Compose 对外只暴露 Caddy 的 `80/443`。后端、前端、PostgreSQL、MinIO 和 Prometheus 默认走 Compose 内网或本机绑定。
 
@@ -255,6 +258,16 @@ scripts/deploy-prod.sh
 - 审计日志覆盖登录、邀请、权限、员工、薪酬、税务、票据和公司主体变更。
 - MinIO bucket 建议保持私有，通过后端生成短时效签名 URL。
 
+## 通知与提醒
+
+Mamoji 当前不依赖 RabbitMQ。通知能力由数据库 Outbox、站内通知表和本地投递器组成：
+
+1. 业务动作先写入 `outbox_events`。
+2. Outbox 消费器把薪酬、票据、税务、人员、账户等事件转成站内通知。
+3. 定时提醒器生成税务截止日、员工合同/试用期、票据凭证到期提醒。
+4. 用户可在 `/settings` 配置通知开关、最低级别、静音类型和外部 Webhook。
+5. 外部投递支持通用 JSON、飞书机器人和企业微信机器人，失败会写入 `notification_deliveries` 并自动重试。
+
 ## 异步事件与 RocketMQ 策略
 
 当前不直接引入 RocketMQ。项目先采用数据库 Outbox 模式：
@@ -271,10 +284,10 @@ scripts/deploy-prod.sh
 
 ## 验证命令
 
-后端编译：
+后端测试：
 
 ```bash
-mvn --settings docker/maven-settings.xml -f backend/pom.xml -DskipTests compile
+mvn --settings docker/maven-settings.xml -f backend/pom.xml test
 ```
 
 后端打包：
@@ -287,13 +300,15 @@ mvn --settings docker/maven-settings.xml -f backend/pom.xml -DskipTests package
 
 ```bash
 cd frontend
+npm audit --omit=dev --registry=https://registry.npmjs.org
 npm run lint
 npm run build
 ```
 
-生产 Compose 配置检查：
+生产配置检查：
 
 ```bash
+ENV_FILE=.env.production scripts/check-prod-env.sh
 docker compose -f docker-compose.prod.yml --env-file .env.production.example config >/tmp/mamoji-compose.yml
 ```
 
@@ -315,6 +330,13 @@ scripts/smoke-prod.sh
 ```bash
 docker compose exec -T postgres psql -U mamoji -d mamoji \
   -c "SELECT status, count(*) FROM outbox_events GROUP BY status ORDER BY status;"
+```
+
+查询通知投递状态：
+
+```bash
+docker compose exec -T postgres psql -U mamoji -d mamoji \
+  -c "SELECT status, count(*) FROM notification_deliveries GROUP BY status ORDER BY status;"
 ```
 
 ## 项目结构
