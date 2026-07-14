@@ -37,4 +37,14 @@ public class BackupController {
     ) {
         return service.validate(authorization, file);
     }
+
+    @PostMapping("/restore")
+    public Map<String, Object> restore(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam("file") MultipartFile file,
+        @RequestParam(value = "confirmation", defaultValue = "") String confirmation,
+        @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun
+    ) {
+        return service.restore(authorization, file, confirmation, dryRun);
+    }
 }

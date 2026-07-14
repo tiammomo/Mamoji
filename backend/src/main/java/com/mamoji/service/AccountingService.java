@@ -6,6 +6,8 @@ import com.mamoji.common.PayloadReader;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
+import com.mamoji.domain.Models.Company;
+import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
@@ -19,7 +21,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import org.springframework.http.HttpStatus;
@@ -50,18 +54,29 @@ public class AccountingService {
     }
 
     public List<Account> listAccounts(String authorization) {
+        return listAccounts(authorization, null);
+    }
+
+    public List<Account> listAccounts(String authorization, Long companyId) {
         User user = requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
         return store.accounts.values().stream()
             .filter(account -> account.userId == user.id)
+            .filter(account -> Objects.equals(account.companyId, company.id))
             .peek(this::attachAccountMetrics)
             .sorted(Comparator.comparing(account -> account.id))
             .toList();
     }
 
     public Account getAccount(String authorization, long id) {
+        return getAccount(authorization, id, null);
+    }
+
+    public Account getAccount(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
         Account account = require(store.accounts.get(id), "Account not found");
-        assertOwner(account.userId, user.id);
+        Company company = accessControl.resolveCompany(user, companyId == null ? account.companyId : companyId);
+        assertScopedOwner(account.userId, account.companyId, user.id, company.id);
         attachAccountMetrics(account);
         return account;
     }
@@ -69,9 +84,11 @@ public class AccountingService {
     @Transactional
     public Account createAccount(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
+        Company company = resolveCompany(user, body);
         Account account = store.account(
             user.id,
-            defaultLedgerId(user.id).orElse(null),
+            company.id,
+            defaultLedgerId(user, company),
             textOr(body.get("name"), "新账户"),
             textOr(body.get("type"), "cash"),
             nullableText(body.get("subType")),
@@ -81,15 +98,24 @@ public class AccountingService {
         account.includeInNetWorth = bool(body.get("includeInNetWorth"), true);
         applyAccountFields(account, body);
         store.saveAccount(account);
-        audit(0, "account", account.id, "create", "创建资金账户: " + account.name, user);
+        audit(company.id, "account", account.id, "create", "创建资金账户: " + account.name, user);
         attachAccountMetrics(account);
         return account;
     }
 
     @Transactional
     public Account updateAccount(String authorization, long id, Map<String, Object> body) {
-        Account account = getAccount(authorization, id);
+        return updateAccount(authorization, id, null, body);
+    }
+
+    @Transactional
+    public Account updateAccount(String authorization, long id, Long companyId, Map<String, Object> body) {
         User user = requireUser(authorization);
+        Account existing = store.accountForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? existing.companyId : companyId);
+        assertScopedOwner(existing.userId, existing.companyId, user.id, company.id);
+        Account account = copyAccount(existing);
         if (body.containsKey("name")) {
             account.name = text(body.get("name"));
         }
@@ -104,6 +130,9 @@ public class AccountingService {
         }
         if (body.containsKey("balance")) {
             account.balance = number(body.get("balance"), account.balance);
+            if (!body.containsKey("availableBalance")) {
+                account.availableBalance = nullToZero(existing.availableBalance).add(account.balance.subtract(existing.balance));
+            }
         }
         if (body.containsKey("includeInNetWorth")) {
             account.includeInNetWorth = bool(body.get("includeInNetWorth"), account.includeInNetWorth);
@@ -111,25 +140,36 @@ public class AccountingService {
         applyAccountFields(account, body);
         touch(account);
         store.saveAccount(account);
-        audit(0, "account", account.id, "update", "更新资金账户: " + account.name, user);
+        audit(account.companyId, "account", account.id, "update", "更新资金账户: " + account.name, user);
         attachAccountMetrics(account);
         return account;
     }
 
     @Transactional
     public void deleteAccount(String authorization, long id) {
-        Account account = getAccount(authorization, id);
+        deleteAccount(authorization, id, null);
+    }
+
+    @Transactional
+    public void deleteAccount(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        boolean used = store.transactions.values().stream().anyMatch(tx -> tx.accountId == account.id);
-        if (used) {
+        Account account = store.accountForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? account.companyId : companyId);
+        assertScopedOwner(account.userId, account.companyId, user.id, company.id);
+        if (store.accountHasTransactions(account.id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Account has transactions");
         }
         store.deleteAccount(id);
-        audit(0, "account", account.id, "delete", "删除资金账户: " + account.name, user);
+        audit(account.companyId, "account", account.id, "delete", "删除资金账户: " + account.name, user);
     }
 
     public Map<String, Object> accountSummary(String authorization) {
-        List<Account> accounts = listAccounts(authorization);
+        return accountSummary(authorization, null);
+    }
+
+    public Map<String, Object> accountSummary(String authorization, Long companyId) {
+        List<Account> accounts = listAccounts(authorization, companyId);
         BigDecimal liabilities = accounts.stream()
             .filter(account -> account.includeInNetWorth)
             .filter(account -> account.type.equals("debt") || account.type.equals("credit"))
@@ -175,25 +215,39 @@ public class AccountingService {
     }
 
     public List<Category> listCategories(String authorization, String type) {
+        return listCategories(authorization, type, null);
+    }
+
+    public List<Category> listCategories(String authorization, String type, Long companyId) {
         User user = requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
         return store.categories.values().stream()
             .filter(category -> category.userId == user.id)
+            .filter(category -> Objects.equals(category.companyId, company.id))
             .filter(category -> type == null || type.isBlank() || category.type.equals(type))
             .sorted(Comparator.comparing(category -> category.id))
             .toList();
     }
 
     public Category getCategory(String authorization, long id) {
+        return getCategory(authorization, id, null);
+    }
+
+    public Category getCategory(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
         Category category = require(store.categories.get(id), "Category not found");
-        assertOwner(category.userId, user.id);
+        Company company = accessControl.resolveCompany(user, companyId == null ? category.companyId : companyId);
+        assertScopedOwner(category.userId, category.companyId, user.id, company.id);
         return category;
     }
 
+    @Transactional
     public Category createCategory(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
+        Company company = resolveCompany(user, body);
         return store.category(
             user.id,
+            company.id,
             textOr(body.get("name"), "新分类"),
             textOr(body.get("icon"), "💡"),
             textOr(body.get("color"), "#6366f1"),
@@ -202,7 +256,17 @@ public class AccountingService {
     }
 
     public Category updateCategory(String authorization, long id, Map<String, Object> body) {
-        Category category = getCategory(authorization, id);
+        return updateCategory(authorization, id, null, body);
+    }
+
+    @Transactional
+    public Category updateCategory(String authorization, long id, Long companyId, Map<String, Object> body) {
+        User user = requireUser(authorization);
+        Category existing = store.categoryForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? existing.companyId : companyId);
+        assertScopedOwner(existing.userId, existing.companyId, user.id, company.id);
+        Category category = copyCategory(existing);
         if (body.containsKey("name")) {
             category.name = text(body.get("name"));
         }
@@ -221,19 +285,29 @@ public class AccountingService {
     }
 
     public void deleteCategory(String authorization, long id) {
-        Category category = getCategory(authorization, id);
-        boolean used = store.transactions.values().stream().anyMatch(tx -> tx.categoryId == category.id);
-        if (used) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Category has transactions");
+        deleteCategory(authorization, id, null);
+    }
+
+    @Transactional
+    public void deleteCategory(String authorization, long id, Long companyId) {
+        User user = requireUser(authorization);
+        Category category = store.categoryForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? category.companyId : companyId);
+        assertScopedOwner(category.userId, category.companyId, user.id, company.id);
+        if (store.categoryHasAccountingReferences(category.id)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Category is used by transactions or budgets");
         }
         store.deleteCategory(id);
     }
 
     public PagedResponse<Budget> listBudgets(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
         store.attachBudgetData();
         List<Budget> budgets = store.budgets.values().stream()
             .filter(budget -> budget.userId == user.id)
+            .filter(budget -> Objects.equals(budget.companyId, company.id))
             .filter(filterBudget(params))
             .sorted(Comparator.comparing(budget -> budget.id))
             .toList();
@@ -241,40 +315,76 @@ public class AccountingService {
     }
 
     public List<Budget> activeBudgets(String authorization) {
-        return listBudgets(authorization, Map.of("status", "1", "size", "200")).content;
+        return activeBudgets(authorization, null);
+    }
+
+    public List<Budget> activeBudgets(String authorization, Long companyId) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("status", "1");
+        params.put("size", "200");
+        if (companyId != null) {
+            params.put("companyId", String.valueOf(companyId));
+        }
+        return listBudgets(authorization, params).content;
     }
 
     public Budget getBudget(String authorization, long id) {
+        return getBudget(authorization, id, null);
+    }
+
+    public Budget getBudget(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
         store.attachBudgetData();
         Budget budget = require(store.budgets.get(id), "Budget not found");
-        assertOwner(budget.userId, user.id);
+        Company company = accessControl.resolveCompany(user, companyId == null ? budget.companyId : companyId);
+        assertScopedOwner(budget.userId, budget.companyId, user.id, company.id);
         return budget;
     }
 
+    @Transactional
     public Budget createBudget(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
+        Company company = resolveCompany(user, body);
+        BigDecimal amount = positiveAmount(body.get("amount"), "amount");
+        Long categoryId = optionalLong(body.get("categoryId")).orElse(null);
+        validateBudgetCategory(user, company.id, categoryId);
+        String startDate = validDate(textOr(body.get("startDate"), LocalDate.now().withDayOfMonth(1).toString()), "startDate");
+        String endDate = validDate(textOr(body.get("endDate"), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString()), "endDate");
+        if (endDate.compareTo(startDate) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must not be before startDate");
+        }
         Budget budget = store.budget(
             user.id,
-            defaultLedgerId(user.id).orElse(null),
-            optionalLong(body.get("categoryId")).orElse(null),
+            company.id,
+            defaultLedgerId(user, company),
+            categoryId,
             textOr(body.get("name"), "预算"),
-            String.valueOf(number(body.get("amount"), BigDecimal.ZERO)),
-            textOr(body.get("startDate"), LocalDate.now().withDayOfMonth(1).toString()),
-            textOr(body.get("endDate"), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString()),
+            String.valueOf(amount),
+            startDate,
+            endDate,
             intValue(body.get("warningThreshold"), 85)
         );
-        store.refreshBudgetData();
+        store.refreshBudgetDataAfterCommit();
         return budget;
     }
 
     public Budget updateBudget(String authorization, long id, Map<String, Object> body) {
-        Budget budget = getBudget(authorization, id);
+        return updateBudget(authorization, id, null, body);
+    }
+
+    @Transactional
+    public Budget updateBudget(String authorization, long id, Long companyId, Map<String, Object> body) {
+        User user = requireUser(authorization);
+        Budget existing = store.budgetForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Budget not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? existing.companyId : companyId);
+        assertScopedOwner(existing.userId, existing.companyId, user.id, company.id);
+        Budget budget = copyBudget(existing);
         if (body.containsKey("name")) {
             budget.name = text(body.get("name"));
         }
         if (body.containsKey("amount")) {
-            budget.amount = number(body.get("amount"), budget.amount);
+            budget.amount = positiveAmount(body.get("amount"), "amount");
         }
         if (body.containsKey("startDate")) {
             budget.startDate = text(body.get("startDate"));
@@ -288,64 +398,154 @@ public class AccountingService {
         if (body.containsKey("categoryId")) {
             budget.categoryId = optionalLong(body.get("categoryId")).orElse(null);
         }
+        validateBudgetCategory(user, budget.companyId, budget.categoryId);
+        budget.startDate = validDate(budget.startDate, "startDate");
+        budget.endDate = validDate(budget.endDate, "endDate");
+        if (budget.endDate.compareTo(budget.startDate) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must not be before startDate");
+        }
         if (body.containsKey("status")) {
             budget.status = intValue(body.get("status"), budget.status);
         }
         touch(budget);
         store.saveBudget(budget);
-        store.refreshBudgetData();
+        store.refreshBudgetDataAfterCommit();
         return budget;
     }
 
     public void deleteBudget(String authorization, long id) {
-        Budget budget = getBudget(authorization, id);
+        deleteBudget(authorization, id, null);
+    }
+
+    @Transactional
+    public void deleteBudget(String authorization, long id, Long companyId) {
+        User user = requireUser(authorization);
+        Budget budget = store.budgetForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Budget not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? budget.companyId : companyId);
+        assertScopedOwner(budget.userId, budget.companyId, user.id, company.id);
+        if (store.budgetHasTransactions(budget.id)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Budget has transactions");
+        }
         store.deleteBudget(budget.id);
     }
 
     public PagedResponse<TransactionRecord> listTransactions(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
-        List<TransactionRecord> txs = store.transactions.values().stream()
+        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
+        return store.queryTransactions(user.id, company.id, params, PageRequest.from(params));
+    }
+
+    public Map<String, Object> transactionSummary(String authorization, Map<String, String> params) {
+        User user = requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
+        BigDecimal income = BigDecimal.ZERO;
+        BigDecimal expense = BigDecimal.ZERO;
+        BigDecimal refund = BigDecimal.ZERO;
+        BigDecimal pendingCollection = BigDecimal.ZERO;
+        BigDecimal customerRefund = BigDecimal.ZERO;
+        BigDecimal severance = BigDecimal.ZERO;
+        long rows = 0;
+        long largeCount = 0;
+        long reviewCount = 0;
+
+        List<TransactionRecord> transactions = store.transactions.values().stream()
             .filter(tx -> tx.userId == user.id)
+            .filter(tx -> Objects.equals(tx.companyId, company.id))
             .peek(store::attachTransactionRelations)
             .filter(filterTransaction(params))
-            .sorted(TRANSACTION_ORDER)
             .toList();
-        return PagedResponse.of(txs, PageRequest.from(params));
+        for (TransactionRecord tx : transactions) {
+            rows += 1;
+            if (tx.type == 1) income = income.add(tx.amount);
+            if (tx.type == 2) expense = expense.add(tx.amount);
+            if (tx.type == 3) refund = refund.add(tx.amount);
+            String searchable = transactionSearchText(tx);
+            boolean pending = tx.type == 1 && containsAny(searchable, "待回款", "应收", "未回款", "尾款", "分期", "验收后", "交付后", "回款中");
+            boolean customerRefundRow = tx.type == 2 && containsAny(searchable, "客户退款", "退款给客户", "收入退款", "订单退款", "项目退款", "退货退款", "服务退款");
+            boolean severanceRow = tx.type == 2 && containsAny(searchable, "裁员", "离职补偿", "经济补偿", "遣散", "n+1", "n+ 1", "补偿金", "解除劳动");
+            if (pending) pendingCollection = pendingCollection.add(tx.amount);
+            if (customerRefundRow) customerRefund = customerRefund.add(tx.amount);
+            if (severanceRow) severance = severance.add(tx.amount);
+            boolean large = tx.amount.compareTo(new BigDecimal("10000")) >= 0;
+            if (large) largeCount += 1;
+            if (large || (tx.type == 2 && tx.isRefundable) || pending || customerRefundRow || severanceRow || text(tx.note).isBlank()) {
+                reviewCount += 1;
+            }
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("income", income);
+        summary.put("expense", expense);
+        summary.put("refund", refund);
+        summary.put("pendingCollection", pendingCollection);
+        summary.put("customerRefund", customerRefund);
+        summary.put("severance", severance);
+        summary.put("netCollectedIncome", income.subtract(customerRefund));
+        summary.put("net", income.add(refund).subtract(expense));
+        summary.put("rows", rows);
+        summary.put("largeCount", largeCount);
+        summary.put("reviewCount", reviewCount);
+        return summary;
     }
 
     public TransactionRecord getTransaction(String authorization, long id) {
+        return getTransaction(authorization, id, null);
+    }
+
+    public TransactionRecord getTransaction(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        TransactionRecord tx = requireTransaction(user, id);
+        TransactionRecord tx = requireTransaction(user, id, companyId);
         store.attachTransactionRelations(tx);
         return tx;
     }
 
+    @Transactional
     public Map<String, Object> createTransaction(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
+        Company company = resolveCompany(user, body);
+        int type = intValue(body.get("type"), 2);
+        if (type != 1 && type != 2) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be income(1) or expense(2)");
+        }
+        BigDecimal amount = positiveAmount(body.get("amount"), "amount");
+        long categoryId = requiredId(body.get("categoryId"), "categoryId");
+        long accountId = requiredId(body.get("accountId"), "accountId");
+        String date = validDate(textOr(body.get("date"), LocalDate.now().toString()), "date");
+        Account lockedAccount = store.accountForUpdate(accountId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
+        TransactionRelations relations = validateRelationOwnership(user, company.id, accountId, categoryId, lockedAccount, type);
+        Long ledgerId = resolveLedgerId(user, company, relations.account());
         TransactionRecord tx = store.transaction(
             user.id,
-            defaultLedgerId(user.id).orElse(null),
-            intValue(body.get("type"), 2),
-            String.valueOf(number(body.get("amount"), BigDecimal.ZERO)),
-            longValue(body.get("categoryId"), 0),
-            longValue(body.get("accountId"), 0),
-            textOr(body.get("date"), LocalDate.now().toString()),
+            company.id,
+            ledgerId,
+            type,
+            String.valueOf(amount),
+            categoryId,
+            accountId,
+            date,
             textOr(body.get("note"), "")
         );
-        validateRelationOwnership(user, tx);
         tx.budgetId = matchingBudgetId(tx).orElse(null);
         store.saveTransaction(tx);
-        applyToAccount(tx, 1);
-        store.refreshBudgetData();
+        saveAdjustedAccount(relations.account(), tx, 1);
+        store.refreshBudgetDataAfterCommit();
+        audit(company.id, "transaction", tx.id, "create", "创建交易: " + tx.note, user);
         return Map.of("transaction", tx, "risk", riskFor(tx));
     }
 
+    @Transactional
     public TransactionRecord updateTransaction(String authorization, long id, Map<String, Object> body) {
         User user = requireUser(authorization);
-        TransactionRecord tx = requireTransaction(user, id);
-        applyToAccount(tx, -1);
+        TransactionRecord current = requireTransactionForUpdate(user, id, optionalLong(body.get("companyId")).orElse(null));
+        if (current.type == 3) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Refund transactions cannot be edited");
+        }
+        Company company = accessControl.resolveCompany(user, current.companyId);
+        TransactionRecord tx = copyTransaction(current);
         if (body.containsKey("amount")) {
-            tx.amount = number(body.get("amount"), tx.amount);
+            tx.amount = positiveAmount(body.get("amount"), "amount");
         }
         if (body.containsKey("categoryId")) {
             tx.categoryId = longValue(body.get("categoryId"), tx.categoryId);
@@ -354,70 +554,136 @@ public class AccountingService {
             tx.accountId = longValue(body.get("accountId"), tx.accountId);
         }
         if (body.containsKey("date")) {
-            tx.date = text(body.get("date"));
+            tx.date = validDate(text(body.get("date")), "date");
         }
         if (body.containsKey("note")) {
             tx.note = text(body.get("note"));
         }
-        validateRelationOwnership(user, tx);
+        if (current.refundedAmount.compareTo(BigDecimal.ZERO) > 0
+            && (tx.accountId != current.accountId
+                || tx.categoryId != current.categoryId
+                || !Objects.equals(tx.date, current.date))) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Account, category, and date cannot change after a transaction has refunds"
+            );
+        }
+        if (tx.refundedAmount.compareTo(tx.amount) > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction amount cannot be lower than refunded amount");
+        }
+        Map<Long, Account> lockedAccounts = lockAccounts(current.accountId, tx.accountId);
+        Account oldAccount = lockedAccounts.get(current.accountId);
+        Account newAccount = lockedAccounts.get(tx.accountId);
+        validateRelationOwnership(user, company.id, tx.accountId, tx.categoryId, newAccount, tx.type);
         store.attachTransactionRelations(tx);
+        tx.familyId = resolveLedgerId(user, company, newAccount);
         tx.budgetId = matchingBudgetId(tx).orElse(null);
         tx.isRefundable = tx.type == 2 && tx.refundedAmount.compareTo(tx.amount) < 0;
         touch(tx);
         store.saveTransaction(tx);
-        applyToAccount(tx, 1);
-        store.refreshBudgetData();
+        if (oldAccount.id == newAccount.id) {
+            Account adjusted = copyAccount(oldAccount);
+            adjustAccount(adjusted, current, -1);
+            adjustAccount(adjusted, tx, 1);
+            store.saveAccount(adjusted);
+        } else {
+            saveAdjustedAccount(oldAccount, current, -1);
+            saveAdjustedAccount(newAccount, tx, 1);
+        }
+        store.refreshBudgetDataAfterCommit();
+        audit(company.id, "transaction", tx.id, "update", "更新交易: " + tx.note, user);
         return tx;
     }
 
+    @Transactional
     public void deleteTransaction(String authorization, long id) {
+        deleteTransaction(authorization, id, null);
+    }
+
+    @Transactional
+    public void deleteTransaction(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        TransactionRecord tx = requireTransaction(user, id);
-        applyToAccount(tx, -1);
+        TransactionRecord tx = requireTransactionForUpdate(user, id, companyId);
+        Company company = accessControl.resolveCompany(user, tx.companyId);
+        if (tx.type != 3 && store.transactionHasRefunds(tx.id)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction has refunds and cannot be deleted");
+        }
+        TransactionRecord original = null;
+        if (tx.type == 3 && tx.originalTransactionId != null) {
+            original = store.transactionForUpdate(tx.originalTransactionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Original transaction no longer exists"));
+        }
+        Account account = store.accountForUpdate(tx.accountId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Transaction account no longer exists"));
+        saveAdjustedAccount(account, tx, -1);
+        if (original != null) {
+            TransactionRecord updatedOriginal = copyTransaction(original);
+            updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.subtract(tx.amount).max(BigDecimal.ZERO);
+            updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
+            touch(updatedOriginal);
+            store.saveTransaction(updatedOriginal);
+        }
         store.deleteTransaction(id);
-        store.refreshBudgetData();
+        store.refreshBudgetDataAfterCommit();
+        audit(company.id, "transaction", tx.id, "delete", "删除交易: " + tx.note, user);
     }
 
     public List<TransactionRecord> refundableTransactions(String authorization) {
+        return refundableTransactions(authorization, null);
+    }
+
+    public List<TransactionRecord> refundableTransactions(String authorization, Long companyId) {
         User user = requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
         return store.transactions.values().stream()
             .filter(tx -> tx.userId == user.id)
+            .filter(tx -> Objects.equals(tx.companyId, company.id))
             .filter(tx -> tx.type == 2 && tx.isRefundable)
             .peek(store::attachTransactionRelations)
             .sorted(TRANSACTION_ORDER)
             .toList();
     }
 
+    @Transactional
     public Map<String, Object> refundTransaction(String authorization, long id, Map<String, Object> body) {
         User user = requireUser(authorization);
-        TransactionRecord original = requireTransaction(user, id);
+        TransactionRecord original = requireTransactionForUpdate(user, id, optionalLong(body.get("companyId")).orElse(null));
+        Company company = accessControl.resolveCompany(user, original.companyId);
         if (original.type != 2) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only expense transactions can be refunded");
         }
-        BigDecimal refundAmount = number(body.get("amount"), BigDecimal.ZERO);
+        BigDecimal refundAmount = positiveAmount(body.get("amount"), "amount");
         BigDecimal remaining = original.amount.subtract(original.refundedAmount);
         if (refundAmount.compareTo(BigDecimal.ZERO) <= 0 || refundAmount.compareTo(remaining) > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid refund amount");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Refund amount exceeds remaining refundable amount");
         }
+        String refundDate = validDate(textOr(body.get("date"), LocalDate.now().toString()), "date");
+        Account account = store.accountForUpdate(original.accountId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Transaction account no longer exists"));
+        validateRelationOwnership(user, company.id, original.accountId, original.categoryId, account, original.type);
         TransactionRecord refund = store.transaction(
             user.id,
+            company.id,
             original.familyId,
             3,
             String.valueOf(refundAmount),
             original.categoryId,
             original.accountId,
-            textOr(body.get("date"), LocalDate.now().toString()),
+            refundDate,
             textOr(body.get("note"), "Refund for #" + original.id)
         );
         refund.originalTransactionId = original.id;
         refund.isRefundable = false;
-        original.refundedAmount = original.refundedAmount.add(refundAmount);
-        original.isRefundable = original.refundedAmount.compareTo(original.amount) < 0;
-        touch(original);
+        refund.budgetId = original.budgetId;
+        TransactionRecord updatedOriginal = copyTransaction(original);
+        updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.add(refundAmount);
+        updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
+        touch(updatedOriginal);
         store.saveTransaction(refund);
-        store.saveTransaction(original);
-        applyToAccount(refund, 1);
-        store.refreshBudgetData();
+        store.saveTransaction(updatedOriginal);
+        saveAdjustedAccount(account, refund, 1);
+        store.refreshBudgetDataAfterCommit();
+        audit(company.id, "transaction", refund.id, "refund", "退款交易 #" + original.id, user);
         return Map.of("transaction", refund, "risk", riskFor(refund));
     }
 
@@ -482,7 +748,7 @@ public class AccountingService {
         long transactionCount = 0;
         String lastTransactionDate = null;
         for (TransactionRecord tx : store.transactions.values()) {
-            if (tx.accountId != account.id || tx.userId != account.userId) {
+            if (tx.accountId != account.id || tx.userId != account.userId || !Objects.equals(tx.companyId, account.companyId)) {
                 continue;
             }
             transactionCount++;
@@ -490,16 +756,18 @@ public class AccountingService {
                 lastTransactionDate = tx.date;
             }
             if (sameMonth(tx.date, current)) {
-                if (tx.type == 1 || tx.type == 3) {
+                if (tx.type == 1) {
                     monthlyIncome = monthlyIncome.add(tx.amount);
                 } else if (tx.type == 2) {
                     monthlyExpense = monthlyExpense.add(tx.amount);
+                } else if (tx.type == 3) {
+                    monthlyExpense = monthlyExpense.subtract(tx.amount);
                 }
             }
         }
         account.monthlyIncome = monthlyIncome;
-        account.monthlyExpense = monthlyExpense;
-        account.currentMonthNetFlow = monthlyIncome.subtract(monthlyExpense);
+        account.monthlyExpense = monthlyExpense.max(BigDecimal.ZERO);
+        account.currentMonthNetFlow = monthlyIncome.subtract(account.monthlyExpense);
         account.transactionCount = transactionCount;
         account.lastTransactionDate = lastTransactionDate;
         if (account.availableBalance == null) {
@@ -566,45 +834,90 @@ public class AccountingService {
         return accessControl.requireUser(authorization);
     }
 
-    private User requireAdmin(String authorization) {
-        return accessControl.requireAdmin(authorization);
-    }
-
-    private TransactionRecord requireTransaction(User user, long id) {
+    private TransactionRecord requireTransaction(User user, long id, Long companyId) {
         TransactionRecord tx = require(store.transactions.get(id), "Transaction not found");
-        assertOwner(tx.userId, user.id);
+        Company company = accessControl.resolveCompany(user, companyId == null ? tx.companyId : companyId);
+        assertScopedOwner(tx.userId, tx.companyId, user.id, company.id);
         return tx;
     }
 
-    private void validateRelationOwnership(User user, TransactionRecord tx) {
-        Account account = require(store.accounts.get(tx.accountId), "Account not found");
-        Category category = require(store.categories.get(tx.categoryId), "Category not found");
-        assertOwner(account.userId, user.id);
-        assertOwner(category.userId, user.id);
-        store.attachTransactionRelations(tx);
+    private TransactionRecord requireTransactionForUpdate(User user, long id, Long companyId) {
+        TransactionRecord tx = store.transactionForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? tx.companyId : companyId);
+        assertScopedOwner(tx.userId, tx.companyId, user.id, company.id);
+        return tx;
     }
 
-    private void applyToAccount(TransactionRecord tx, int direction) {
-        Account account = store.accounts.get(tx.accountId);
-        if (account == null) {
-            return;
+    private TransactionRelations validateRelationOwnership(
+        User user,
+        long companyId,
+        long accountId,
+        long categoryId,
+        Account account,
+        int transactionType
+    ) {
+        if (account == null || account.id != accountId) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required");
         }
+        Category category = store.categoryForUpdate(categoryId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
+        assertScopedOwner(account.userId, account.companyId, user.id, companyId);
+        assertScopedOwner(category.userId, category.companyId, user.id, companyId);
+        String expectedCategoryType = transactionType == 1 ? "income" : "expense";
+        if (!expectedCategoryType.equals(category.type)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Category type does not match transaction type");
+        }
+        return new TransactionRelations(account, category);
+    }
+
+    private Map<Long, Account> lockAccounts(long firstId, long secondId) {
+        long low = Math.min(firstId, secondId);
+        long high = Math.max(firstId, secondId);
+        Account first = store.accountForUpdate(low)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
+        Map<Long, Account> result = new LinkedHashMap<>();
+        result.put(first.id, first);
+        if (high != low) {
+            Account second = store.accountForUpdate(high)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
+            result.put(second.id, second);
+        }
+        return result;
+    }
+
+    private void saveAdjustedAccount(Account source, TransactionRecord tx, int direction) {
+        Account adjusted = copyAccount(source);
+        adjustAccount(adjusted, tx, direction);
+        store.saveAccount(adjusted);
+    }
+
+    private void adjustAccount(Account account, TransactionRecord tx, int direction) {
         BigDecimal delta = tx.amount.multiply(BigDecimal.valueOf(direction));
         if (tx.type == 1 || tx.type == 3) {
             account.balance = account.balance.add(delta);
         } else if (tx.type == 2) {
             account.balance = account.balance.subtract(delta);
         }
+        account.availableBalance = nullToZero(account.availableBalance);
+        if (tx.type == 1 || tx.type == 3) {
+            account.availableBalance = account.availableBalance.add(delta);
+        } else if (tx.type == 2) {
+            account.availableBalance = account.availableBalance.subtract(delta);
+        }
+        account.riskLevel = accountRisk(account);
         touch(account);
-        store.saveAccount(account);
     }
 
     private Optional<Long> matchingBudgetId(TransactionRecord tx) {
         return store.budgets.values().stream()
             .filter(budget -> budget.userId == tx.userId)
+            .filter(budget -> Objects.equals(budget.companyId, tx.companyId))
+            .filter(budget -> budget.ledgerId == null || Objects.equals(budget.ledgerId, tx.familyId))
             .filter(budget -> budget.status != 0)
             .filter(budget -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
             .filter(budget -> tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0)
+            .sorted(Comparator.comparing(budget -> budget.id))
             .map(budget -> budget.id)
             .findFirst();
     }
@@ -618,8 +931,11 @@ public class AccountingService {
         BigDecimal categoryLast = BigDecimal.ZERO;
         long dailyExpenseCount = 0;
         long duplicateCount = 0;
-        for (TransactionRecord item : store.transactions.values()) {
-            if (item.userId != tx.userId) {
+        List<TransactionRecord> riskTransactions = new ArrayList<>(store.transactions.values());
+        riskTransactions.removeIf(item -> item.id == tx.id);
+        riskTransactions.add(tx);
+        for (TransactionRecord item : riskTransactions) {
+            if (item.userId != tx.userId || !Objects.equals(item.companyId, tx.companyId)) {
                 continue;
             }
             store.attachTransactionRelations(item);
@@ -629,6 +945,8 @@ public class AccountingService {
             }
             if (currentMonth && item.type == 2) {
                 expense = expense.add(item.amount);
+            } else if (currentMonth && item.type == 3) {
+                expense = expense.subtract(item.amount);
             }
             if (item.type == 2 && item.date.equals(tx.date)) {
                 dailyExpenseCount++;
@@ -643,10 +961,17 @@ public class AccountingService {
             }
             if (item.categoryId == tx.categoryId && item.type == 2 && currentMonth) {
                 categoryCurrent = categoryCurrent.add(item.amount);
+            } else if (item.categoryId == tx.categoryId && item.type == 3 && currentMonth) {
+                categoryCurrent = categoryCurrent.subtract(item.amount);
             } else if (item.categoryId == tx.categoryId && item.type == 2 && sameMonth(item.date, previousMonth)) {
                 categoryLast = categoryLast.add(item.amount);
+            } else if (item.categoryId == tx.categoryId && item.type == 3 && sameMonth(item.date, previousMonth)) {
+                categoryLast = categoryLast.subtract(item.amount);
             }
         }
+        expense = expense.max(BigDecimal.ZERO);
+        categoryCurrent = categoryCurrent.max(BigDecimal.ZERO);
+        categoryLast = categoryLast.max(BigDecimal.ZERO);
         List<String> flags = new ArrayList<>();
         String level = "low";
         if (tx.amount.compareTo(new BigDecimal("5000")) >= 0 && tx.type == 2) {
@@ -708,6 +1033,17 @@ public class AccountingService {
         };
     }
 
+    private String transactionSearchText(TransactionRecord tx) {
+        return (text(tx.note) + " " + text(tx.categoryName) + " " + text(tx.accountName)).toLowerCase(Locale.ROOT);
+    }
+
+    private boolean containsAny(String value, String... needles) {
+        for (String needle : needles) {
+            if (value.contains(needle)) return true;
+        }
+        return false;
+    }
+
     private Predicate<Budget> filterBudget(Map<String, String> params) {
         return budget -> {
             if (params.get("status") != null && budget.status != intParam(params, "status", budget.status)) {
@@ -724,17 +1060,107 @@ public class AccountingService {
         };
     }
 
-    private Optional<Long> defaultLedgerId(long userId) {
+    private long defaultLedgerId(User user, Company company) {
         return store.ledgers.values().stream()
-            .filter(ledger -> ledger.ownerId == userId && ledger.isDefault)
+            .filter(ledger -> ledger.ownerId == user.id)
+            .filter(ledger -> Objects.equals(ledger.companyId, company.id))
+            .sorted(Comparator.comparing((Ledger ledger) -> !ledger.isDefault).thenComparing(ledger -> ledger.id))
             .map(ledger -> ledger.id)
             .findFirst()
-            .or(() -> store.ledgers.values().stream().filter(ledger -> ledger.ownerId == userId).map(ledger -> ledger.id).findFirst());
+            .orElseGet(() -> store.ensureCompanyAccountingWorkspace(user.id, company.id, company.currency, company.name).id);
     }
 
-    private void assertOwner(long ownerId, long currentUserId) {
-        if (ownerId != currentUserId) {
+    private Long resolveLedgerId(User user, Company company, Account account) {
+        if (account.ledgerId != null) {
+            Ledger ledger = store.ledgers.get(account.ledgerId);
+            if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Account ledger is outside the selected company");
+            }
+            return ledger.id;
+        }
+        return defaultLedgerId(user, company);
+    }
+
+    private Company resolveCompany(User user, Map<String, ?> values) {
+        return accessControl.resolveCompany(user, optionalLong(values.get("companyId")).orElse(null));
+    }
+
+    private void assertScopedOwner(long ownerId, Long recordCompanyId, long currentUserId, long companyId) {
+        if (ownerId != currentUserId || !Objects.equals(recordCompanyId, companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
+        }
+    }
+
+    private void validateBudgetCategory(User user, long companyId, Long categoryId) {
+        if (categoryId == null) {
+            return;
+        }
+        Category category = store.categoryForUpdate(categoryId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
+        assertScopedOwner(category.userId, category.companyId, user.id, companyId);
+        if (!"expense".equals(category.type)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Budget category must be an expense category");
+        }
+    }
+
+    private BigDecimal positiveAmount(Object value, String field) {
+        final BigDecimal amount;
+        try {
+            amount = number(value, BigDecimal.ZERO);
+        } catch (NumberFormatException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be a number");
+        }
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be positive");
+        }
+        return amount;
+    }
+
+    private long requiredId(Object value, String field) {
+        final long id;
+        try {
+            id = longValue(value, 0);
+        } catch (NumberFormatException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be a valid id");
+        }
+        if (id <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " is required");
+        }
+        return id;
+    }
+
+    private String validDate(String value, String field) {
+        try {
+            return LocalDate.parse(value).toString();
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must use yyyy-MM-dd format");
+        }
+    }
+
+    private Account copyAccount(Account source) {
+        return copyModel(source, new Account());
+    }
+
+    private Category copyCategory(Category source) {
+        return copyModel(source, new Category());
+    }
+
+    private Budget copyBudget(Budget source) {
+        return copyModel(source, new Budget());
+    }
+
+    private TransactionRecord copyTransaction(TransactionRecord source) {
+        return copyModel(source, new TransactionRecord());
+    }
+
+    private <T> T copyModel(T source, T target) {
+        try {
+            for (var field : source.getClass().getFields()) {
+                field.set(target, field.get(source));
+            }
+            return target;
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("Failed to copy accounting model", ex);
         }
     }
 
@@ -816,6 +1242,9 @@ public class AccountingService {
 
     private static BigDecimal decimalParam(Map<String, String> params, String key, BigDecimal fallback) {
         return PayloadReader.decimalParam(params, key, fallback);
+    }
+
+    private record TransactionRelations(Account account, Category category) {
     }
 
     private static BigDecimal nullToZero(BigDecimal value) {

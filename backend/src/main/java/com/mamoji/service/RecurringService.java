@@ -2,6 +2,7 @@ package com.mamoji.service;
 
 import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.User;
+import com.mamoji.domain.Models.Company;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -12,18 +13,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.intValue;
 import static com.mamoji.common.PayloadReader.nullableText;
 import static com.mamoji.common.PayloadReader.number;
 import static com.mamoji.common.PayloadReader.optionalInt;
+import static com.mamoji.common.PayloadReader.optionalLong;
 import static com.mamoji.common.PayloadReader.text;
-import static com.mamoji.service.support.DomainSupport.assertOwner;
-import static com.mamoji.service.support.DomainSupport.require;
 
 @Service
 public class RecurringService {
@@ -38,18 +40,28 @@ public class RecurringService {
     }
 
     public List<RecurringItem> listRecurring(String authorization) {
-        long userId = accessControl.requireUser(authorization).id;
+        return listRecurring(authorization, null);
+    }
+
+    public List<RecurringItem> listRecurring(String authorization, Long companyId) {
+        User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
+        long userId = user.id;
         return store.recurringItems.values().stream()
             .filter(item -> item.userId == userId)
+            .filter(item -> Objects.equals(item.companyId, company.id))
             .sorted(Comparator.comparing(item -> item.nextExecution))
             .toList();
     }
 
+    @Transactional
     public RecurringItem createRecurring(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
         RecurringItem item = new RecurringItem();
         item.id = UUID.randomUUID().toString();
         item.userId = user.id;
+        item.companyId = company.id;
         applyRecurring(item, body);
         item.status = 1;
         item.executionCount = 0;
@@ -58,34 +70,74 @@ public class RecurringService {
         return item;
     }
 
+    @Transactional
     public RecurringItem updateRecurring(String authorization, String id, Map<String, Object> body) {
-        RecurringItem item = requireRecurring(authorization, id);
+        RecurringItem item = copyRecurring(requireRecurringForUpdate(
+            authorization,
+            id,
+            optionalLong(body.get("companyId")).orElse(null)
+        ));
         applyRecurring(item, body);
         item.nextExecution = nextExecution(item);
         store.saveRecurring(item);
         return item;
     }
 
+    @Transactional
     public void deleteRecurring(String authorization, String id) {
-        RecurringItem item = requireRecurring(authorization, id);
+        deleteRecurring(authorization, id, null);
+    }
+
+    @Transactional
+    public void deleteRecurring(String authorization, String id, Long companyId) {
+        RecurringItem item = requireRecurringForUpdate(authorization, id, companyId);
         store.deleteRecurring(item.id);
     }
 
+    @Transactional
     public Map<String, Object> toggleRecurring(String authorization, String id) {
-        RecurringItem item = requireRecurring(authorization, id);
+        return toggleRecurring(authorization, id, null);
+    }
+
+    @Transactional
+    public Map<String, Object> toggleRecurring(String authorization, String id, Long companyId) {
+        RecurringItem item = copyRecurring(requireRecurringForUpdate(authorization, id, companyId));
         item.status = item.status == 1 ? 0 : 1;
         store.saveRecurring(item);
         return Map.of("success", true, "status", item.status);
     }
 
+    @Transactional
     public Map<String, Object> executeRecurring(String authorization, String id) {
-        RecurringItem item = requireRecurring(authorization, id);
-        long userId = accessControl.requireUser(authorization).id;
+        return executeRecurring(authorization, id, null);
+    }
+
+    @Transactional
+    public Map<String, Object> executeRecurring(String authorization, String id, Long companyId) {
+        RecurringItem item = copyRecurring(requireRecurringForUpdate(authorization, id, companyId));
+        User user = accessControl.requireUser(authorization);
+        if (item.status != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Recurring item is disabled");
+        }
+        if (item.endDate != null && LocalDate.now().isAfter(LocalDate.parse(item.endDate))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Recurring item has ended");
+        }
+        if (LocalDate.now().toString().equals(item.lastExecuted)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Recurring item has already been executed today");
+        }
+        long userId = user.id;
+        List<com.mamoji.domain.Models.Account> accounts = accountingService.listAccounts(authorization, item.companyId);
+        if (accounts.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before executing a recurring item");
+        }
+        long categoryId = defaultCategoryId(userId, item.companyId, item.type)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Create a matching category before executing a recurring item"));
         Map<String, Object> body = new HashMap<>();
+        body.put("companyId", item.companyId);
         body.put("type", item.type);
         body.put("amount", item.amount);
-        body.put("categoryId", defaultCategoryId(userId, item.type).orElse(1L));
-        body.put("accountId", accountingService.listAccounts(authorization).get(0).id);
+        body.put("categoryId", categoryId);
+        body.put("accountId", accounts.get(0).id);
         body.put("date", LocalDate.now().toString());
         body.put("note", item.note == null ? item.name : item.note);
         Map<String, Object> result = accountingService.createTransaction(authorization, body);
@@ -96,10 +148,14 @@ public class RecurringService {
         return result;
     }
 
-    private RecurringItem requireRecurring(String authorization, String id) {
-        long userId = accessControl.requireUser(authorization).id;
-        RecurringItem item = require(store.recurringItems.get(id), "Recurring item not found");
-        assertOwner(item.userId, userId);
+    private RecurringItem requireRecurringForUpdate(String authorization, String id, Long companyId) {
+        User user = accessControl.requireUser(authorization);
+        RecurringItem item = store.recurringForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Recurring item not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? item.companyId : companyId);
+        if (item.userId != user.id || !Objects.equals(item.companyId, company.id)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
+        }
         return item;
     }
 
@@ -187,11 +243,23 @@ public class RecurringService {
         };
     }
 
-    private Optional<Long> defaultCategoryId(long userId, int type) {
+    private Optional<Long> defaultCategoryId(long userId, long companyId, int type) {
         String typeName = type == 1 ? "income" : "expense";
         return store.categories.values().stream()
-            .filter(category -> category.userId == userId && category.type.equals(typeName))
+            .filter(category -> category.userId == userId && Objects.equals(category.companyId, companyId) && category.type.equals(typeName))
             .map(category -> category.id)
             .findFirst();
+    }
+
+    private RecurringItem copyRecurring(RecurringItem source) {
+        RecurringItem copy = new RecurringItem();
+        try {
+            for (var field : RecurringItem.class.getFields()) {
+                field.set(copy, field.get(source));
+            }
+            return copy;
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("Failed to copy recurring item", ex);
+        }
     }
 }

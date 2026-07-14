@@ -3,6 +3,7 @@ package com.mamoji.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.repository.InMemoryStore;
+import com.mamoji.service.support.WebhookUrlValidator;
 import jakarta.annotation.PostConstruct;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -31,6 +32,7 @@ public class NotificationDeliveryService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final WebhookUrlValidator webhookUrlValidator;
     private final OkHttpClient client;
     private final boolean enabled;
     private final int batchSize;
@@ -40,6 +42,7 @@ public class NotificationDeliveryService {
     public NotificationDeliveryService(
         JdbcTemplate jdbc,
         TransactionTemplate transactionTemplate,
+        WebhookUrlValidator webhookUrlValidator,
         @Value("${mamoji.notifications.delivery.enabled:true}") boolean enabled,
         @Value("${mamoji.notifications.delivery.batch-size:20}") int batchSize,
         @Value("${mamoji.notifications.delivery.max-attempts:6}") int maxAttempts,
@@ -48,15 +51,19 @@ public class NotificationDeliveryService {
     ) {
         this.jdbc = jdbc;
         this.transactionTemplate = transactionTemplate;
+        this.webhookUrlValidator = webhookUrlValidator;
         this.enabled = enabled;
         this.batchSize = Math.max(1, batchSize);
         this.maxAttempts = Math.max(1, maxAttempts);
         this.staleLockMinutes = Math.max(1, staleLockMinutes);
         int timeout = Math.max(2, timeoutSeconds);
         this.client = new OkHttpClient.Builder()
+            .dns(webhookUrlValidator.validatingDns())
             .connectTimeout(timeout, TimeUnit.SECONDS)
             .readTimeout(timeout, TimeUnit.SECONDS)
             .callTimeout(timeout + 2L, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build();
     }
 
@@ -255,8 +262,10 @@ public class NotificationDeliveryService {
             throw new IllegalStateException("Webhook is not configured for user " + userId);
         }
         String url = targets.get(0).url().strip();
-        if (!url.startsWith("https://") && !url.startsWith("http://")) {
-            throw new IllegalStateException("Webhook URL must start with http:// or https://");
+        try {
+            url = webhookUrlValidator.requireSafeUrl(url).toASCIIString();
+        } catch (WebhookUrlValidator.UnsafeWebhookUrlException ex) {
+            throw new IllegalStateException(ex.getMessage(), ex);
         }
         return new WebhookTarget(userId, true, targets.get(0).provider(), url);
     }

@@ -2,17 +2,22 @@ package com.mamoji.service;
 
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.LedgerMember;
+import com.mamoji.domain.Models.Company;
+import com.mamoji.domain.Models.User;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.longValue;
+import static com.mamoji.common.PayloadReader.optionalLong;
 import static com.mamoji.common.PayloadReader.textOr;
 import static com.mamoji.service.support.DomainSupport.require;
 
@@ -27,33 +32,58 @@ public class LedgerService {
     }
 
     public List<Ledger> listLedgers(String authorization) {
-        long userId = accessControl.requireUser(authorization).id;
+        return listLedgers(authorization, null);
+    }
+
+    public List<Ledger> listLedgers(String authorization, Long companyId) {
+        User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
+        long userId = user.id;
         return store.ledgers.values().stream()
+            .filter(ledger -> Objects.equals(ledger.companyId, company.id))
             .filter(ledger -> ledger.ownerId == userId || isLedgerMember(ledger.id, userId))
             .sorted(Comparator.comparing(ledger -> ledger.id))
             .toList();
     }
 
     public Ledger defaultLedger(String authorization) {
-        long userId = accessControl.requireUser(authorization).id;
-        return defaultLedgerId(userId)
+        return defaultLedger(authorization, null);
+    }
+
+    public Ledger defaultLedger(String authorization, Long companyId) {
+        User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, companyId);
+        return defaultLedgerId(user.id, company.id)
             .map(id -> store.ledgers.get(id))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Default ledger not found"));
     }
 
     public Ledger getLedger(String authorization, long id) {
-        long userId = accessControl.requireUser(authorization).id;
+        return getLedger(authorization, id, null);
+    }
+
+    public Ledger getLedger(String authorization, long id, Long companyId) {
+        User user = accessControl.requireUser(authorization);
+        long userId = user.id;
         Ledger ledger = require(store.ledgers.get(id), "Ledger not found");
+        Company company = accessControl.resolveCompany(user, companyId == null ? ledger.companyId : companyId);
+        if (!Objects.equals(ledger.companyId, company.id)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ledger is outside the selected company");
+        }
         if (ledger.ownerId != userId && !isLedgerMember(ledger.id, userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No access to ledger");
         }
         return ledger;
     }
 
+    @Transactional
     public Ledger createLedger(String authorization, Map<String, Object> body) {
-        long userId = accessControl.requireUser(authorization).id;
+        User user = accessControl.requireUser(authorization);
+        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        long userId = user.id;
         Ledger ledger = store.ledger(
             userId,
+            company.id,
             textOr(body.get("name"), "新账本"),
             textOr(body.get("description"), ""),
             textOr(body.get("currency"), "CNY"),
@@ -92,12 +122,16 @@ public class LedgerService {
         store.deleteLedgerMember(ledgerId, userId);
     }
 
-    private Optional<Long> defaultLedgerId(long userId) {
+    private Optional<Long> defaultLedgerId(long userId, long companyId) {
         return store.ledgers.values().stream()
+            .filter(ledger -> Objects.equals(ledger.companyId, companyId))
             .filter(ledger -> ledger.ownerId == userId && ledger.isDefault)
             .map(ledger -> ledger.id)
             .findFirst()
-            .or(() -> store.ledgers.values().stream().filter(ledger -> ledger.ownerId == userId).map(ledger -> ledger.id).findFirst());
+            .or(() -> store.ledgers.values().stream()
+                .filter(ledger -> ledger.ownerId == userId && Objects.equals(ledger.companyId, companyId))
+                .map(ledger -> ledger.id)
+                .findFirst());
     }
 
     private boolean isLedgerMember(long ledgerId, long userId) {

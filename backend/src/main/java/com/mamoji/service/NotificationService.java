@@ -14,6 +14,7 @@ import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
+import com.mamoji.service.support.WebhookUrlValidator;
 import jakarta.annotation.PostConstruct;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -39,6 +40,7 @@ public class NotificationService {
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final NotificationDeliveryService deliveryService;
+    private final WebhookUrlValidator webhookUrlValidator;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
     private final boolean reminderEnabled;
@@ -52,6 +54,7 @@ public class NotificationService {
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         NotificationDeliveryService deliveryService,
+        WebhookUrlValidator webhookUrlValidator,
         @Value("${mamoji.notifications.enabled:true}") boolean enabled,
         @Value("${mamoji.notifications.reminder.enabled:true}") boolean reminderEnabled,
         @Value("${mamoji.notifications.reminder.tax-lookahead-days:7}") int taxLookaheadDays,
@@ -63,6 +66,7 @@ public class NotificationService {
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.deliveryService = deliveryService;
+        this.webhookUrlValidator = webhookUrlValidator;
         this.enabled = enabled;
         this.reminderEnabled = reminderEnabled;
         this.taxLookaheadDays = Math.max(1, taxLookaheadDays);
@@ -175,8 +179,11 @@ public class NotificationService {
             : current.webhookUrl();
         String minSeverity = normalizeSeverity(text(body.get("minSeverity"), current.minSeverity()));
         List<String> mutedTypes = body.containsKey("mutedTypes") ? parseTypes(body.get("mutedTypes")) : current.mutedTypes();
-        if (webhookEnabled && webhookUrl != null && !webhookUrl.startsWith("https://") && !webhookUrl.startsWith("http://")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook URL must start with http:// or https://");
+        if (webhookUrl != null && (webhookEnabled || body.containsKey("webhookUrl"))) {
+            webhookUrl = safeWebhookUrl(webhookUrl);
+        }
+        if (webhookEnabled && webhookUrl == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook URL is required when webhook delivery is enabled");
         }
         String now = InMemoryStore.now();
         jdbc.update("""
@@ -212,6 +219,7 @@ public class NotificationService {
         if (!preference.webhookEnabled() || preference.webhookUrl() == null || preference.webhookUrl().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook is not configured");
         }
+        safeWebhookUrl(preference.webhookUrl());
         deliveryService.sendTestWebhook(preference);
         return Map.of("success", true);
     }
@@ -781,6 +789,14 @@ public class NotificationService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private String safeWebhookUrl(String value) {
+        try {
+            return webhookUrlValidator.requireSafeUrl(value).toASCIIString();
+        } catch (WebhookUrlValidator.UnsafeWebhookUrlException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
     }
 
     private record NotificationDraft(

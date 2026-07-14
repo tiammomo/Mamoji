@@ -10,6 +10,7 @@ import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
 import java.math.BigDecimal;
@@ -38,17 +39,20 @@ import static com.mamoji.service.support.DomainSupport.touch;
 @Service
 public class EnterpriseManagementService {
     private final EnterpriseStore enterpriseStore;
+    private final InMemoryStore coreStore;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
     private final OutboxEventService outboxEventService;
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
+        InMemoryStore coreStore,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
         OutboxEventService outboxEventService
     ) {
         this.enterpriseStore = enterpriseStore;
+        this.coreStore = coreStore;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
         this.outboxEventService = outboxEventService;
@@ -114,6 +118,7 @@ public class EnterpriseManagementService {
         applyCompanyFields(company, body);
         touch(company);
         enterpriseStore.saveCompany(company);
+        coreStore.ensureCompanyAccountingWorkspace(user.id, company.id, company.currency, company.name);
         audit(company.id, "company", company.id, "create", "创建公司主体: " + company.name, user);
         return company;
     }
@@ -269,8 +274,9 @@ public class EnterpriseManagementService {
 
     @Transactional
     public TaxItem createTaxItem(String authorization, Map<String, Object> body) {
-        User user = accessControl.requireFinanceManager(authorization);
+        User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        accessControl.requireFinanceManager(user, company.id);
         TaxItem item = enterpriseStore.taxItem(
             company.id,
             textOr(body.get("name"), "新税务事项"),
@@ -293,11 +299,10 @@ public class EnterpriseManagementService {
 
     @Transactional
     public TaxItem updateTaxItem(String authorization, long id, Map<String, Object> body) {
-        User user = accessControl.requireFinanceManager(authorization);
+        User user = accessControl.requireUser(authorization);
         TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
-        if (!accessControl.canAccessCompany(user, item.companyId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
-        }
+        accessControl.resolveCompany(user, item.companyId);
+        accessControl.requireFinanceManager(user, item.companyId);
         applyTaxItemFields(item, body);
         syncTaxItemDerivedFields(item, !body.containsKey("status"));
         touch(item);
@@ -308,11 +313,10 @@ public class EnterpriseManagementService {
 
     @Transactional
     public void deleteTaxItem(String authorization, long id) {
-        User user = accessControl.requireFinanceManager(authorization);
+        User user = accessControl.requireUser(authorization);
         TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
-        if (!accessControl.canAccessCompany(user, item.companyId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
-        }
+        accessControl.resolveCompany(user, item.companyId);
+        accessControl.requireFinanceManager(user, item.companyId);
         audit(item.companyId, "tax_item", item.id, "delete", "删除税费事项: " + item.name, user);
         enterpriseStore.deleteTaxItem(id);
     }
@@ -560,7 +564,7 @@ public class EnterpriseManagementService {
             accessControl.requirePayrollManager(operator, companyId);
         }
         if (body.containsKey("accessRole") || body.containsKey("accessScope")) {
-            if (!accessControl.hasCompanyRole(operator, companyId, "founder")) {
+            if (!accessControl.hasCompanyManagementRole(operator, companyId, "founder")) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Founder permission required");
             }
         }

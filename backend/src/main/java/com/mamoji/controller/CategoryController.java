@@ -27,9 +27,10 @@ public class CategoryController {
     @GetMapping
     public List<Category> list(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam(value = "type", required = false) String type
+        @RequestParam(value = "type", required = false) String type,
+        @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.listCategories(authorization, type);
+        return service.listCategories(authorization, type, companyId);
     }
 
     @PostMapping
@@ -44,13 +45,18 @@ public class CategoryController {
     public Category update(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
+        @RequestParam(value = "companyId", required = false) Long companyId,
         @RequestBody Map<String, Object> body
     ) {
-        return service.updateCategory(authorization, id, body);
+        return service.updateCategory(authorization, id, companyId, body);
     }
 
     @DeleteMapping("/{id}")
-    public void delete(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable long id) {
-        service.deleteCategory(authorization, id);
+    public void delete(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        service.deleteCategory(authorization, id, companyId);
     }
 }

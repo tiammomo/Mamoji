@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 @RequestMapping("/api/v1/ledgers")
@@ -24,18 +25,28 @@ public class LedgerController {
     }
 
     @GetMapping
-    public List<Ledger> list(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.listLedgers(authorization);
+    public List<Ledger> list(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return service.listLedgers(authorization, companyId);
     }
 
     @GetMapping("/default")
-    public Ledger defaultLedger(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.defaultLedger(authorization);
+    public Ledger defaultLedger(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return service.defaultLedger(authorization, companyId);
     }
 
     @GetMapping("/{id}")
-    public Ledger get(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable long id) {
-        return service.getLedger(authorization, id);
+    public Ledger get(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @PathVariable long id,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return service.getLedger(authorization, id, companyId);
     }
 
     @PostMapping

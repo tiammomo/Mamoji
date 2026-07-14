@@ -2,6 +2,8 @@ package com.mamoji.repository;
 
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
+import com.mamoji.common.PageRequest;
+import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
@@ -33,12 +35,19 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
+@DependsOn("singleInstanceDatabaseGuard")
 public class InMemoryStore {
     public final Map<Long, User> users = new ConcurrentHashMap<>();
     public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
@@ -60,10 +69,12 @@ public class InMemoryStore {
     private final String bootstrapAdminNickname;
     private final int passwordMinLength;
     private final boolean passwordRequireComplexity;
+    private final TransactionTemplate requiresNewTransaction;
 
     public InMemoryStore(
         JdbcTemplate jdbc,
         PasswordHasher passwordHasher,
+        PlatformTransactionManager transactionManager,
         @Value("${mamoji.schema.compatibility-enabled:false}") boolean schemaCompatibilityEnabled,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
@@ -74,6 +85,8 @@ public class InMemoryStore {
     ) {
         this.jdbc = jdbc;
         this.passwordHasher = passwordHasher;
+        this.requiresNewTransaction = new TransactionTemplate(transactionManager);
+        this.requiresNewTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.schemaCompatibilityEnabled = schemaCompatibilityEnabled;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
@@ -112,6 +125,7 @@ public class InMemoryStore {
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
                 sub_type TEXT,
@@ -149,9 +163,11 @@ public class InMemoryStore {
         ensureColumn("accounts", "purpose", "TEXT");
         ensureColumn("accounts", "reconciliation_status", "TEXT NOT NULL DEFAULT 'pending'");
         ensureColumn("accounts", "risk_level", "TEXT NOT NULL DEFAULT 'low'");
+        ensureColumn("accounts", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS categories (
                 id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER,
                 name TEXT NOT NULL,
                 icon TEXT NOT NULL,
                 color TEXT NOT NULL,
@@ -162,9 +178,11 @@ public class InMemoryStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("categories", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS budgets (
                 id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER,
                 name TEXT NOT NULL,
                 amount TEXT NOT NULL,
                 start_date TEXT NOT NULL,
@@ -184,9 +202,11 @@ public class InMemoryStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("budgets", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER,
                 user_id INTEGER NOT NULL,
                 family_id INTEGER,
                 type INTEGER NOT NULL,
@@ -203,9 +223,11 @@ public class InMemoryStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("transactions", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS ledgers (
                 id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 currency TEXT NOT NULL,
@@ -216,6 +238,7 @@ public class InMemoryStore {
                 updated_at TEXT NOT NULL
             )
             """);
+        ensureColumn("ledgers", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS ledger_members (
                 id BIGSERIAL PRIMARY KEY,
@@ -230,6 +253,7 @@ public class InMemoryStore {
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS recurring_items (
                 id TEXT PRIMARY KEY,
+                company_id INTEGER,
                 user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 type INTEGER NOT NULL,
@@ -248,6 +272,7 @@ public class InMemoryStore {
                 note TEXT
             )
             """);
+        ensureColumn("recurring_items", "company_id", "BIGINT");
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS auth_tokens (
                 token TEXT PRIMARY KEY,
@@ -296,17 +321,23 @@ public class InMemoryStore {
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_type ON accounts(user_id, type)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_reconciliation ON accounts(user_id, reconciliation_status)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_risk ON accounts(user_id, risk_level)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_company_user_status ON accounts(company_id, user_id, status)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_categories_user_type ON categories(user_id, type)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_categories_company_user_type ON categories(company_id, user_id, type)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_user_status_dates ON budgets(user_id, status, start_date, end_date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_category_dates ON budgets(category_id, start_date, end_date)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_company_user_dates ON budgets(company_id, user_id, start_date, end_date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_type_date ON transactions(user_id, type, date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_category_date ON transactions(category_id, date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_budget ON transactions(budget_id)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_company_user_date ON transactions(company_id, user_id, date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledgers_owner_default ON ledgers(owner_id, is_default)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledgers_company_owner_default ON ledgers(company_id, owner_id, is_default)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledger_members_ledger_user ON ledger_members(ledger_id, user_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_user_status_next ON recurring_items(user_id, status, next_execution)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_company_user_status_next ON recurring_items(company_id, user_id, status, next_execution)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_registration_invites_email ON registration_invites(email, accepted_at, expires_at)");
@@ -341,6 +372,89 @@ public class InMemoryStore {
 
         budgets.values().forEach(this::attachCategory);
         transactions.values().forEach(this::attachTransactionRelations);
+    }
+
+    /** Reload the process-local compatibility view after a controlled restore. */
+    public synchronized void reloadFromDatabase() {
+        loadAll();
+    }
+
+    /**
+     * Database-backed transaction pagination. The compatibility maps remain in
+     * place for legacy write paths, while high-volume list reads no longer load
+     * and sort the full transaction table in the application process.
+     */
+    public PagedResponse<TransactionRecord> queryTransactions(
+        long userId,
+        long companyId,
+        Map<String, String> params,
+        PageRequest pageRequest
+    ) {
+        StringBuilder from = new StringBuilder("""
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            WHERE t.user_id = ? AND t.company_id = ?
+            """);
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(userId);
+        arguments.add(companyId);
+        addLongCondition(from, arguments, "t.type", params.get("type"));
+        addLongCondition(from, arguments, "t.category_id", params.get("categoryId"));
+        addLongCondition(from, arguments, "t.account_id", params.get("accountId"));
+        addTextBoundary(from, arguments, "t.date >= ?", params.get("startDate"));
+        addTextBoundary(from, arguments, "t.date <= ?", params.get("endDate"));
+        addDecimalBoundary(from, arguments, "CAST(t.amount AS NUMERIC) >= ?", params.get("minAmount"));
+        addDecimalBoundary(from, arguments, "CAST(t.amount AS NUMERIC) <= ?", params.get("maxAmount"));
+        String keyword = Objects.toString(params.get("keyword"), "").trim().toLowerCase(Locale.ROOT);
+        if (!keyword.isBlank()) {
+            from.append(" AND (LOWER(t.note) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ? OR LOWER(COALESCE(a.name, '')) LIKE ?)");
+            String pattern = "%" + keyword + "%";
+            arguments.add(pattern);
+            arguments.add(pattern);
+            arguments.add(pattern);
+        }
+
+        Long total = jdbc.queryForObject("SELECT COUNT(*) " + from, Long.class, arguments.toArray());
+        List<Object> pageArguments = new ArrayList<>(arguments);
+        pageArguments.add(pageRequest.size());
+        pageArguments.add((long) pageRequest.page() * pageRequest.size());
+        List<TransactionRecord> content = jdbc.query(
+            "SELECT t.* " + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
+            (rs, rowNum) -> mapTransaction(rs),
+            pageArguments.toArray()
+        );
+        content.forEach(this::attachTransactionRelations);
+        long totalElements = total == null ? 0 : total;
+        int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
+        return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
+    }
+
+    private void addLongCondition(StringBuilder sql, List<Object> arguments, String column, String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) return;
+        try {
+            sql.append(" AND ").append(column).append(" = ?");
+            arguments.add(Long.parseLong(rawValue));
+        } catch (NumberFormatException ignored) {
+            // Invalid filters match no rows instead of broadening the query.
+            sql.append(" AND 1 = 0");
+        }
+    }
+
+    private void addTextBoundary(StringBuilder sql, List<Object> arguments, String condition, String value) {
+        if (value == null || value.isBlank()) return;
+        sql.append(" AND ").append(condition);
+        arguments.add(value);
+    }
+
+    private void addDecimalBoundary(StringBuilder sql, List<Object> arguments, String condition, String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) return;
+        try {
+            sql.append(" AND ").append(condition);
+            arguments.add(new BigDecimal(rawValue));
+        } catch (NumberFormatException ignored) {
+            sql.append(" AND 1 = 0");
+        }
     }
 
     private void seedInitialData() {
@@ -477,8 +591,14 @@ public class InMemoryStore {
     }
 
     public Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
+        Long companyId = ledgerId == null ? null : Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+        return account(userId, companyId, ledgerId, name, type, subType, bank, balance);
+    }
+
+    public Account account(long userId, Long companyId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
         Account account = new Account();
         account.userId = userId;
+        account.companyId = companyId;
         account.ledgerId = ledgerId;
         account.name = name;
         account.type = type;
@@ -504,16 +624,21 @@ public class InMemoryStore {
             INSERT INTO accounts (
                 name, type, sub_type, bank, account_no, opening_bank, currency, balance, available_balance,
                 credit_limit, frozen_amount, include_in_net_worth, user_id, ledger_id, status, opened_at,
-                last_reconciled_at, owner_name, purpose, reconciliation_status, risk_level, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_reconciled_at, owner_name, purpose, reconciliation_status, risk_level, created_at, updated_at, company_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindAccountInsert(ps, account));
-        accounts.put(account.id, account);
+        afterCommit(() -> accounts.put(account.id, account));
         return account;
     }
 
     public Category category(long userId, String name, String icon, String color, String type) {
+        return category(userId, null, name, icon, color, type);
+    }
+
+    public Category category(long userId, Long companyId, String name, String icon, String color, String type) {
         Category category = new Category();
         category.userId = userId;
+        category.companyId = companyId;
         category.name = name;
         category.icon = icon;
         category.color = color;
@@ -521,16 +646,25 @@ public class InMemoryStore {
         category.status = 1;
         stamp(category);
         category.id = insert("""
-            INSERT INTO categories (name, icon, color, type, user_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO categories (name, icon, color, type, user_id, status, created_at, updated_at, company_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindCategoryInsert(ps, category));
-        categories.put(category.id, category);
+        afterCommit(() -> categories.put(category.id, category));
         return category;
     }
 
     public Budget budget(long userId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
+        Long companyId = ledgerId == null ? null : Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+        if (companyId == null && categoryId != null) {
+            companyId = Optional.ofNullable(categories.get(categoryId)).map(category -> category.companyId).orElse(null);
+        }
+        return budget(userId, companyId, ledgerId, categoryId, name, amount, startDate, endDate, warningThreshold);
+    }
+
+    public Budget budget(long userId, Long companyId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
         Budget budget = new Budget();
         budget.userId = userId;
+        budget.companyId = companyId;
         budget.ledgerId = ledgerId;
         budget.categoryId = categoryId;
         budget.name = name;
@@ -546,16 +680,28 @@ public class InMemoryStore {
         budget.id = insert("""
             INSERT INTO budgets (
                 name, amount, start_date, end_date, warning_threshold, status, spent, remaining_amount,
-                usage_rate, warning_reached, risk_level, risk_message, user_id, ledger_id, category_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                usage_rate, warning_reached, risk_level, risk_message, user_id, ledger_id, category_id, created_at, updated_at, company_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindBudgetInsert(ps, budget));
-        budgets.put(budget.id, budget);
+        afterCommit(() -> budgets.put(budget.id, budget));
         return budget;
     }
 
     public TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
+        Long companyId = Optional.ofNullable(accounts.get(accountId)).map(account -> account.companyId).orElse(null);
+        if (companyId == null) {
+            companyId = Optional.ofNullable(categories.get(categoryId)).map(category -> category.companyId).orElse(null);
+        }
+        if (companyId == null && ledgerId != null) {
+            companyId = Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+        }
+        return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note);
+    }
+
+    public TransactionRecord transaction(long userId, Long companyId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
         TransactionRecord tx = new TransactionRecord();
         tx.userId = userId;
+        tx.companyId = companyId;
         tx.familyId = ledgerId;
         tx.type = type;
         tx.amount = money(amount);
@@ -570,16 +716,21 @@ public class InMemoryStore {
         tx.id = insert("""
             INSERT INTO transactions (
                 user_id, family_id, type, amount, category_id, account_id, date, note,
-                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at, company_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindTransactionInsert(ps, tx));
-        transactions.put(tx.id, tx);
+        afterCommit(() -> transactions.put(tx.id, tx));
         return tx;
     }
 
     public Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
+        return ledger(ownerId, null, name, description, currency, isDefault);
+    }
+
+    public Ledger ledger(long ownerId, Long companyId, String name, String description, String currency, boolean isDefault) {
         Ledger ledger = new Ledger();
         ledger.ownerId = ownerId;
+        ledger.companyId = companyId;
         ledger.name = name;
         ledger.description = description == null ? "" : description;
         ledger.currency = currency == null ? "CNY" : currency;
@@ -587,10 +738,10 @@ public class InMemoryStore {
         ledger.status = 1;
         stamp(ledger);
         ledger.id = insert("""
-            INSERT INTO ledgers (name, description, currency, owner_id, is_default, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ledgers (name, description, currency, owner_id, is_default, status, created_at, updated_at, company_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindLedgerInsert(ps, ledger));
-        ledgers.put(ledger.id, ledger);
+        afterCommit(() -> ledgers.put(ledger.id, ledger));
         return ledger;
     }
 
@@ -608,8 +759,40 @@ public class InMemoryStore {
             INSERT INTO ledger_members (ledger_id, user_id, role, nickname, avatar, joined_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """, ps -> bindLedgerMemberInsert(ps, member));
-        ledgerMembers.put(member.id, member);
+        afterCommit(() -> ledgerMembers.put(member.id, member));
         return member;
+    }
+
+    public Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName) {
+        Ledger ledger = ledgers.values().stream()
+            .filter(candidate -> candidate.ownerId == ownerId)
+            .filter(candidate -> Objects.equals(candidate.companyId, companyId))
+            .filter(candidate -> candidate.isDefault)
+            .min(Comparator.comparing(candidate -> candidate.id))
+            .orElseGet(() -> ledger(
+                ownerId,
+                companyId,
+                textOr(subjectName, "经营主体") + "账本",
+                "主体默认经营账本",
+                textOr(currency, "CNY"),
+                true
+            ));
+        boolean hasOwnerMember = ledgerMembers.values().stream()
+            .anyMatch(candidate -> candidate.ledgerId == ledger.id && candidate.userId == ownerId);
+        if (!hasOwnerMember) {
+            member(ledger.id, ownerId, "owner");
+        }
+        boolean hasIncome = categories.values().stream()
+            .anyMatch(category -> category.userId == ownerId && Objects.equals(category.companyId, companyId) && "income".equals(category.type));
+        if (!hasIncome) {
+            category(ownerId, companyId, "经营收入", "💼", "#22c55e", "income");
+        }
+        boolean hasExpense = categories.values().stream()
+            .anyMatch(category -> category.userId == ownerId && Objects.equals(category.companyId, companyId) && "expense".equals(category.type));
+        if (!hasExpense) {
+            category(ownerId, companyId, "经营支出", "🧾", "#ef4444", "expense");
+        }
+        return ledger;
     }
 
     public RegistrationInvite registrationInvite(
@@ -674,65 +857,68 @@ public class InMemoryStore {
     }
 
     public void saveAccount(Account account) {
-        accounts.put(account.id, account);
         jdbc.update("""
             UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, account_no = ?, opening_bank = ?, currency = ?,
                 balance = ?, available_balance = ?, credit_limit = ?, frozen_amount = ?, include_in_net_worth = ?,
                 user_id = ?, ledger_id = ?, status = ?, opened_at = ?, last_reconciled_at = ?, owner_name = ?,
-                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ? WHERE id = ?
+                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ?, company_id = ? WHERE id = ?
             """, account.name, account.type, account.subType, account.bank, account.accountNo, account.openingBank,
             account.currency, moneyText(account.balance), moneyText(account.availableBalance), moneyText(account.creditLimit),
             moneyText(account.frozenAmount), intBool(account.includeInNetWorth), account.userId, account.ledgerId,
             account.status, account.openedAt, account.lastReconciledAt, account.ownerName, account.purpose,
-            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.id);
+            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.companyId, account.id);
+        afterCommit(() -> accounts.put(account.id, account));
     }
 
     public void saveCategory(Category category) {
-        categories.put(category.id, category);
         jdbc.update("""
-            UPDATE categories SET name = ?, icon = ?, color = ?, type = ?, user_id = ?, status = ?, created_at = ?, updated_at = ?
+            UPDATE categories SET name = ?, icon = ?, color = ?, type = ?, user_id = ?, status = ?, created_at = ?, updated_at = ?, company_id = ?
             WHERE id = ?
             """, category.name, category.icon, category.color, category.type, category.userId, category.status,
-            category.createdAt, category.updatedAt, category.id);
+            category.createdAt, category.updatedAt, category.companyId, category.id);
+        afterCommit(() -> categories.put(category.id, category));
     }
 
     public void saveBudget(Budget budget) {
-        budgets.put(budget.id, budget);
         jdbc.update("""
             UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
                 spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?, risk_level = ?, risk_message = ?,
-                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ? WHERE id = ?
+                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ?, company_id = ? WHERE id = ?
             """, budget.name, moneyText(budget.amount), budget.startDate, budget.endDate, budget.warningThreshold, budget.status,
             moneyText(budget.spent), moneyText(budget.remainingAmount), budget.usageRate, intBool(budget.warningReached),
-            budget.riskLevel, budget.riskMessage, budget.userId, budget.ledgerId, budget.categoryId, budget.createdAt, budget.updatedAt, budget.id);
+            budget.riskLevel, budget.riskMessage, budget.userId, budget.ledgerId, budget.categoryId, budget.createdAt, budget.updatedAt,
+            budget.companyId, budget.id);
+        afterCommit(() -> budgets.put(budget.id, budget));
     }
 
     public void saveTransaction(TransactionRecord tx) {
-        transactions.put(tx.id, tx);
         jdbc.update("""
             UPDATE transactions SET user_id = ?, family_id = ?, type = ?, amount = ?, category_id = ?, account_id = ?, date = ?,
-                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?
+                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?, company_id = ?
             WHERE id = ?
             """, tx.userId, tx.familyId, tx.type, moneyText(tx.amount), tx.categoryId, tx.accountId, tx.date, tx.note,
-            tx.originalTransactionId, moneyText(tx.refundedAmount), intBool(tx.isRefundable), tx.budgetId, tx.createdAt, tx.updatedAt, tx.id);
+            tx.originalTransactionId, moneyText(tx.refundedAmount), intBool(tx.isRefundable), tx.budgetId, tx.createdAt, tx.updatedAt,
+            tx.companyId, tx.id);
+        afterCommit(() -> transactions.put(tx.id, tx));
     }
 
     public void saveRecurring(RecurringItem item) {
-        recurringItems.put(item.id, item);
         jdbc.update("""
             INSERT INTO recurring_items (
                 id, user_id, name, type, amount, frequency, interval_value, day_of_week, day_of_month,
-                month_of_year, start_date, end_date, last_executed, next_execution, status, execution_count, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                month_of_year, start_date, end_date, last_executed, next_execution, status, execution_count, note, company_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 user_id = excluded.user_id, name = excluded.name, type = excluded.type, amount = excluded.amount,
                 frequency = excluded.frequency, interval_value = excluded.interval_value, day_of_week = excluded.day_of_week,
                 day_of_month = excluded.day_of_month, month_of_year = excluded.month_of_year, start_date = excluded.start_date,
                 end_date = excluded.end_date, last_executed = excluded.last_executed, next_execution = excluded.next_execution,
-                status = excluded.status, execution_count = excluded.execution_count, note = excluded.note
+                status = excluded.status, execution_count = excluded.execution_count, note = excluded.note,
+                company_id = excluded.company_id
             """, item.id, item.userId, item.name, item.type, moneyText(item.amount), item.frequency, item.interval,
             item.dayOfWeek, item.dayOfMonth, item.monthOfYear, item.startDate, item.endDate, item.lastExecuted,
-            item.nextExecution, item.status, item.executionCount, item.note);
+            item.nextExecution, item.status, item.executionCount, item.note, item.companyId);
+        afterCommit(() -> recurringItems.put(item.id, item));
     }
 
     public void rememberToken(String token, long userId, String expiresAt) {
@@ -756,28 +942,28 @@ public class InMemoryStore {
     }
 
     public void deleteAccount(long id) {
-        accounts.remove(id);
         jdbc.update("DELETE FROM accounts WHERE id = ?", id);
+        afterCommit(() -> accounts.remove(id));
     }
 
     public void deleteCategory(long id) {
-        categories.remove(id);
         jdbc.update("DELETE FROM categories WHERE id = ?", id);
+        afterCommit(() -> categories.remove(id));
     }
 
     public void deleteBudget(long id) {
-        budgets.remove(id);
         jdbc.update("DELETE FROM budgets WHERE id = ?", id);
+        afterCommit(() -> budgets.remove(id));
     }
 
     public void deleteTransaction(long id) {
-        transactions.remove(id);
         jdbc.update("DELETE FROM transactions WHERE id = ?", id);
+        afterCommit(() -> transactions.remove(id));
     }
 
     public void deleteRecurring(String id) {
-        recurringItems.remove(id);
         jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
+        afterCommit(() -> recurringItems.remove(id));
     }
 
     public void deleteUser(long id) {
@@ -786,8 +972,8 @@ public class InMemoryStore {
     }
 
     public void deleteLedgerMember(long ledgerId, long userId) {
-        ledgerMembers.values().removeIf(member -> member.ledgerId == ledgerId && member.userId == userId);
         jdbc.update("DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?", ledgerId, userId);
+        afterCommit(() -> ledgerMembers.values().removeIf(member -> member.ledgerId == ledgerId && member.userId == userId));
     }
 
     public Optional<User> currentUser(String authorizationHeader) {
@@ -824,6 +1010,77 @@ public class InMemoryStore {
         return users.values().stream().filter(user -> user.email.equalsIgnoreCase(email)).findFirst();
     }
 
+    public Optional<Account> accountForUpdate(long id) {
+        List<Account> matches = jdbc.query("SELECT * FROM accounts WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapAccount(rs), id);
+        return matches.stream().findFirst();
+    }
+
+    public Optional<Category> categoryForUpdate(long id) {
+        List<Category> matches = jdbc.query("SELECT * FROM categories WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapCategory(rs), id);
+        return matches.stream().findFirst();
+    }
+
+    public Optional<Budget> budgetForUpdate(long id) {
+        List<Budget> matches = jdbc.query("SELECT * FROM budgets WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapBudget(rs), id);
+        return matches.stream().findFirst();
+    }
+
+    public boolean accountHasTransactions(long accountId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE account_id = ?",
+            Integer.class,
+            accountId
+        );
+        return count != null && count > 0;
+    }
+
+    public boolean categoryHasAccountingReferences(long categoryId) {
+        Integer count = jdbc.queryForObject("""
+            SELECT (
+                (SELECT COUNT(*) FROM transactions WHERE category_id = ?)
+                + (SELECT COUNT(*) FROM budgets WHERE category_id = ?)
+            )
+            """, Integer.class, categoryId, categoryId);
+        return count != null && count > 0;
+    }
+
+    public boolean budgetHasTransactions(long budgetId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE budget_id = ?",
+            Integer.class,
+            budgetId
+        );
+        return count != null && count > 0;
+    }
+
+    public boolean transactionHasRefunds(long transactionId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE original_transaction_id = ?",
+            Integer.class,
+            transactionId
+        );
+        return count != null && count > 0;
+    }
+
+    public Optional<TransactionRecord> transactionForUpdate(long id) {
+        List<TransactionRecord> matches = jdbc.query(
+            "SELECT * FROM transactions WHERE id = ? FOR UPDATE",
+            (rs, rowNum) -> mapTransaction(rs),
+            id
+        );
+        matches.forEach(this::attachTransactionRelations);
+        return matches.stream().findFirst();
+    }
+
+    public Optional<RecurringItem> recurringForUpdate(String id) {
+        List<RecurringItem> matches = jdbc.query(
+            "SELECT * FROM recurring_items WHERE id = ? FOR UPDATE",
+            (rs, rowNum) -> mapRecurringItem(rs),
+            id
+        );
+        return matches.stream().findFirst();
+    }
+
     public List<TransactionRecord> sortedTransactions() {
         return transactions.values().stream()
             .sorted(Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id))
@@ -842,6 +1099,82 @@ public class InMemoryStore {
         return budgets.values().stream().sorted(Comparator.comparing(budget -> budget.id)).toList();
     }
 
+    /**
+     * Completes the V5 compatibility backfill once enterprise subjects and
+     * employee access records have been initialized. SQL migration V5 can only
+     * infer companies owned directly by a user; this pass also covers users who
+     * access their default company through an employee record.
+     */
+    public void assignUnscopedAccountingData(Map<Long, Long> defaultCompanyByUser) {
+        ledgers.values().stream().filter(ledger -> ledger.companyId == null).forEach(ledger -> {
+            ledger.companyId = defaultCompanyByUser.get(ledger.ownerId);
+            if (ledger.companyId != null) {
+                jdbc.update("UPDATE ledgers SET company_id = ? WHERE id = ? AND company_id IS NULL", ledger.companyId, ledger.id);
+            }
+        });
+        accounts.values().stream().filter(account -> account.companyId == null).forEach(account -> {
+            account.companyId = Optional.ofNullable(account.ledgerId)
+                .map(ledgers::get)
+                .map(ledger -> ledger.companyId)
+                .orElse(defaultCompanyByUser.get(account.userId));
+            if (account.companyId != null) {
+                jdbc.update("UPDATE accounts SET company_id = ? WHERE id = ? AND company_id IS NULL", account.companyId, account.id);
+            }
+        });
+        categories.values().stream().filter(category -> category.companyId == null).forEach(category -> {
+            category.companyId = defaultCompanyByUser.get(category.userId);
+            if (category.companyId != null) {
+                jdbc.update("UPDATE categories SET company_id = ? WHERE id = ? AND company_id IS NULL", category.companyId, category.id);
+            }
+        });
+        budgets.values().stream().filter(budget -> budget.companyId == null).forEach(budget -> {
+            budget.companyId = Optional.ofNullable(budget.ledgerId)
+                .map(ledgers::get)
+                .map(ledger -> ledger.companyId)
+                .orElseGet(() -> Optional.ofNullable(budget.categoryId)
+                    .map(categories::get)
+                    .map(category -> category.companyId)
+                    .orElse(defaultCompanyByUser.get(budget.userId)));
+            if (budget.companyId != null) {
+                jdbc.update("UPDATE budgets SET company_id = ? WHERE id = ? AND company_id IS NULL", budget.companyId, budget.id);
+            }
+        });
+        transactions.values().stream().filter(tx -> tx.companyId == null).forEach(tx -> {
+            tx.companyId = Optional.ofNullable(accounts.get(tx.accountId)).map(account -> account.companyId)
+                .orElseGet(() -> Optional.ofNullable(categories.get(tx.categoryId)).map(category -> category.companyId)
+                    .orElseGet(() -> Optional.ofNullable(tx.familyId).map(ledgers::get).map(ledger -> ledger.companyId)
+                        .orElse(defaultCompanyByUser.get(tx.userId))));
+            if (tx.companyId != null) {
+                jdbc.update("UPDATE transactions SET company_id = ? WHERE id = ? AND company_id IS NULL", tx.companyId, tx.id);
+            }
+        });
+        recurringItems.values().stream().filter(item -> item.companyId == null).forEach(item -> {
+            item.companyId = defaultCompanyByUser.get(item.userId);
+            if (item.companyId != null) {
+                jdbc.update("UPDATE recurring_items SET company_id = ? WHERE id = ? AND company_id IS NULL", item.companyId, item.id);
+            }
+        });
+        refreshBudgetData();
+    }
+
+    public void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+            || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
+    }
+
+    public void refreshBudgetDataAfterCommit() {
+        afterCommit(() -> requiresNewTransaction.executeWithoutResult(status -> refreshBudgetData()));
+    }
+
     public void attachBudgetData() {
         attachBudgetData(false);
     }
@@ -852,7 +1185,7 @@ public class InMemoryStore {
 
     private void attachBudgetData(boolean persist) {
         List<TransactionRecord> expenseTransactions = transactions.values().stream()
-            .filter(tx -> tx.type == 2)
+            .filter(tx -> tx.type == 2 || tx.type == 3)
             .toList();
         budgets.values().forEach(budget -> {
             BigDecimal previousSpent = budget.spent;
@@ -867,11 +1200,14 @@ public class InMemoryStore {
 
             budget.spent = expenseTransactions.stream()
                 .filter(tx -> tx.userId == budget.userId)
+                .filter(tx -> Objects.equals(tx.companyId, budget.companyId))
                 .filter(tx -> budget.ledgerId == null || Objects.equals(budget.ledgerId, tx.familyId))
                 .filter(tx -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
-                .filter(tx -> tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0)
-                .map(tx -> tx.amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .filter(tx -> (tx.type == 3 && Objects.equals(tx.budgetId, budget.id))
+                    || (tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0))
+                .map(tx -> tx.type == 3 ? tx.amount.negate() : tx.amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .max(BigDecimal.ZERO);
             attachCategory(budget);
             recalculateBudget(budget);
             if (persist && budgetComputedDataChanged(
@@ -926,12 +1262,21 @@ public class InMemoryStore {
             budget.riskMessage = "预算已超支";
             budget.status = 3;
         } else if (budget.usageRate * 100 >= budget.warningThreshold) {
+            if (budget.status == 3) {
+                budget.status = 1;
+            }
             budget.riskLevel = "high";
             budget.riskMessage = "接近预算上限";
         } else if (budget.usageRate >= 0.6) {
+            if (budget.status == 3) {
+                budget.status = 1;
+            }
             budget.riskLevel = "medium";
             budget.riskMessage = "使用进度正常偏高";
         } else {
+            if (budget.status == 3) {
+                budget.status = 1;
+            }
             budget.riskLevel = "low";
             budget.riskMessage = "预算健康";
         }
@@ -994,6 +1339,7 @@ public class InMemoryStore {
     private Account mapAccount(ResultSet rs) throws SQLException {
         Account account = new Account();
         account.id = rs.getLong("id");
+        account.companyId = nullableLong(rs, "company_id");
         account.name = rs.getString("name");
         account.type = rs.getString("type");
         account.subType = rs.getString("sub_type");
@@ -1024,6 +1370,7 @@ public class InMemoryStore {
     private Category mapCategory(ResultSet rs) throws SQLException {
         Category category = new Category();
         category.id = rs.getLong("id");
+        category.companyId = nullableLong(rs, "company_id");
         category.name = rs.getString("name");
         category.icon = rs.getString("icon");
         category.color = rs.getString("color");
@@ -1038,6 +1385,7 @@ public class InMemoryStore {
     private Budget mapBudget(ResultSet rs) throws SQLException {
         Budget budget = new Budget();
         budget.id = rs.getLong("id");
+        budget.companyId = nullableLong(rs, "company_id");
         budget.name = rs.getString("name");
         budget.amount = money(rs.getString("amount"));
         budget.startDate = rs.getString("start_date");
@@ -1061,6 +1409,7 @@ public class InMemoryStore {
     private TransactionRecord mapTransaction(ResultSet rs) throws SQLException {
         TransactionRecord tx = new TransactionRecord();
         tx.id = rs.getLong("id");
+        tx.companyId = nullableLong(rs, "company_id");
         tx.userId = rs.getLong("user_id");
         tx.familyId = nullableLong(rs, "family_id");
         tx.type = rs.getInt("type");
@@ -1081,6 +1430,7 @@ public class InMemoryStore {
     private Ledger mapLedger(ResultSet rs) throws SQLException {
         Ledger ledger = new Ledger();
         ledger.id = rs.getLong("id");
+        ledger.companyId = nullableLong(rs, "company_id");
         ledger.name = rs.getString("name");
         ledger.description = rs.getString("description");
         ledger.currency = rs.getString("currency");
@@ -1123,6 +1473,7 @@ public class InMemoryStore {
     private RecurringItem mapRecurringItem(ResultSet rs) throws SQLException {
         RecurringItem item = new RecurringItem();
         item.id = rs.getString("id");
+        item.companyId = nullableLong(rs, "company_id");
         item.userId = rs.getLong("user_id");
         item.name = rs.getString("name");
         item.type = rs.getInt("type");
@@ -1214,6 +1565,7 @@ public class InMemoryStore {
         ps.setString(21, account.riskLevel);
         ps.setString(22, account.createdAt);
         ps.setString(23, account.updatedAt);
+        setLongOrNull(ps, 24, account.companyId);
     }
 
     private void bindCategoryInsert(PreparedStatement ps, Category category) throws SQLException {
@@ -1225,6 +1577,7 @@ public class InMemoryStore {
         ps.setInt(6, category.status);
         ps.setString(7, category.createdAt);
         ps.setString(8, category.updatedAt);
+        setLongOrNull(ps, 9, category.companyId);
     }
 
     private void bindBudgetInsert(PreparedStatement ps, Budget budget) throws SQLException {
@@ -1245,6 +1598,7 @@ public class InMemoryStore {
         setLongOrNull(ps, 15, budget.categoryId);
         ps.setString(16, budget.createdAt);
         ps.setString(17, budget.updatedAt);
+        setLongOrNull(ps, 18, budget.companyId);
     }
 
     private void bindTransactionInsert(PreparedStatement ps, TransactionRecord tx) throws SQLException {
@@ -1262,6 +1616,7 @@ public class InMemoryStore {
         setLongOrNull(ps, 12, tx.budgetId);
         ps.setString(13, tx.createdAt);
         ps.setString(14, tx.updatedAt);
+        setLongOrNull(ps, 15, tx.companyId);
     }
 
     private void bindLedgerInsert(PreparedStatement ps, Ledger ledger) throws SQLException {
@@ -1273,6 +1628,7 @@ public class InMemoryStore {
         ps.setInt(6, ledger.status);
         ps.setString(7, ledger.createdAt);
         ps.setString(8, ledger.updatedAt);
+        setLongOrNull(ps, 9, ledger.companyId);
     }
 
     private void bindLedgerMemberInsert(PreparedStatement ps, LedgerMember member) throws SQLException {

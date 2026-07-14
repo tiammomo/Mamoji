@@ -21,8 +21,11 @@ public class StatsController {
     }
 
     @GetMapping("/overview")
-    public Map<String, BigDecimal> overview(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.overview(authorization);
+    public Map<String, BigDecimal> overview(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam Map<String, String> params
+    ) {
+        return service.overview(authorization, params);
     }
 
     @GetMapping("/trend")
@@ -44,14 +47,18 @@ public class StatsController {
     @GetMapping("/yearly")
     public Map<String, Object> yearly(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam(value = "year", required = false) Integer year
+        @RequestParam(value = "year", required = false) Integer year,
+        @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.yearly(authorization, year == null ? LocalDate.now().getYear() : year);
+        return service.yearly(authorization, year == null ? LocalDate.now().getYear() : year, companyId);
     }
 
     @GetMapping("/asset-liability")
-    public Map<String, Object> assetLiability(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.assetLiability(authorization);
+    public Map<String, Object> assetLiability(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return service.assetLiability(authorization, companyId);
     }
 
     @GetMapping("/comparison")
@@ -63,7 +70,10 @@ public class StatsController {
     }
 
     @GetMapping("/insights")
-    public Map<String, Object> insights(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return service.insights(authorization);
+    public Map<String, Object> insights(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam(value = "companyId", required = false) Long companyId
+    ) {
+        return service.insights(authorization, companyId);
     }
 }

@@ -26,7 +26,7 @@ spring:
   servlet:
     multipart:
       max-file-size: 10MB
-      max-request-size: 20MB
+      max-request-size: 90MB
 
 management:
   endpoints:
@@ -37,6 +37,7 @@ management:
 mamoji:
   runtime:
     environment: ${MAMOJI_RUNTIME_ENVIRONMENT:local}
+    single-instance-guard-enabled: ${MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED:true}
   schema:
     compatibility-enabled: ${MAMOJI_SCHEMA_COMPATIBILITY_ENABLED:true}
   bootstrap:
@@ -92,6 +93,7 @@ mamoji:
     access-key: ${MAMOJI_MINIO_ACCESS_KEY:minioadmin}
     secret-key: ${MAMOJI_MINIO_SECRET_KEY:minioadmin}
     bucket: ${MAMOJI_MINIO_BUCKET:mamoji}
+    region: ${MAMOJI_MINIO_REGION:us-east-1}
     external-url: ${MAMOJI_MINIO_EXTERNAL_URL:}
     presigned-url-expiry-seconds: ${MAMOJI_MINIO_PRESIGNED_URL_EXPIRY_SECONDS:600}
 

@@ -10,6 +10,7 @@ import java.util.Map;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/v1/receipts")
@@ -71,10 +73,13 @@ public class ReceiptController {
         ReceiptService.FileDownload file = service.fileDownload(authorization, id);
         return ResponseEntity.ok()
             .contentType(mediaType(file.contentType()))
-            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
                 .filename(file.fileName(), StandardCharsets.UTF_8)
                 .build()
                 .toString())
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Security-Policy", "sandbox; default-src 'none'")
+            .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
             .body(file.content());
     }
 
@@ -92,6 +97,9 @@ public class ReceiptController {
         @PathVariable long id,
         @RequestBody Map<String, Object> body
     ) {
+        if (body.containsKey("approvalStatus")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Approval status must be changed through the approval workflow");
+        }
         return service.update(authorization, id, body);
     }
 
@@ -102,6 +110,15 @@ public class ReceiptController {
         @RequestParam("file") MultipartFile file
     ) {
         return service.upload(authorization, file, params);
+    }
+
+    @PostMapping("/batch-upload")
+    public Map<String, Object> batchUpload(
+        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestParam Map<String, String> params,
+        @RequestParam("files") List<MultipartFile> files
+    ) {
+        return service.batchUpload(authorization, files, params);
     }
 
     private MediaType mediaType(String value) {

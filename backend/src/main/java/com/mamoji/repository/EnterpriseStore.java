@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -143,6 +144,7 @@ public class EnterpriseStore {
         }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
+        initializeAccountingCompanyScopes();
         attachDepartmentNames();
     }
 
@@ -601,6 +603,12 @@ public class EnterpriseStore {
         forEachRow("SELECT * FROM audit_logs", rs -> auditLogs.put(rs.getLong("id"), mapAuditLog(rs)));
     }
 
+    /** Reload the process-local compatibility view after a controlled restore. */
+    public synchronized void reloadFromDatabase() {
+        loadAll();
+        attachDepartmentNames();
+    }
+
     private void ensureColumn(String tableName, String columnName, String definition) {
         if (!schemaCompatibilityEnabled) {
             return;
@@ -627,6 +635,22 @@ public class EnterpriseStore {
             return;
         }
         ensureSeedData();
+    }
+
+    private void initializeAccountingCompanyScopes() {
+        Map<Long, Long> defaultCompanyByUser = new HashMap<>();
+        sortedCompanies().forEach(company -> defaultCompanyByUser.putIfAbsent(company.ownerId, company.id));
+        employees.values().stream()
+            .sorted(Comparator.comparing(employee -> employee.id))
+            .filter(employee -> employee.userId != null)
+            .forEach(employee -> defaultCompanyByUser.putIfAbsent(employee.userId, employee.companyId));
+        coreStore.assignUnscopedAccountingData(defaultCompanyByUser);
+        sortedCompanies().forEach(company -> coreStore.ensureCompanyAccountingWorkspace(
+            company.ownerId,
+            company.id,
+            company.currency,
+            company.name
+        ));
     }
 
     private void ensureBootstrapEnterpriseData() {
@@ -2095,13 +2119,7 @@ public class EnterpriseStore {
         if (!requiresApproval(voucher)) {
             return "not_required";
         }
-        if ("rejected".equals(voucher.status)) {
-            return "rejected";
-        }
-        if ("archived".equals(voucher.status) || "linked".equals(voucher.status) || "verified".equals(voucher.status)) {
-            return "approved";
-        }
-        return "pending";
+        return "not_submitted";
     }
 
     private String defaultAccountingStatus(ReceiptVoucher voucher) {

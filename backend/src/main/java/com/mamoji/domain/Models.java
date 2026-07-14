@@ -39,6 +39,7 @@ public final class Models {
 
     public static class Account {
         public long id;
+        public Long companyId;
         public String name;
         public String type;
         public String subType;
@@ -71,6 +72,7 @@ public final class Models {
 
     public static class Category {
         public long id;
+        public Long companyId;
         public String name;
         public String icon;
         public String color;
@@ -83,6 +85,7 @@ public final class Models {
 
     public static class Budget {
         public long id;
+        public Long companyId;
         public String name;
         public BigDecimal amount;
         public String startDate;
@@ -106,6 +109,7 @@ public final class Models {
 
     public static class TransactionRecord {
         public long id;
+        public Long companyId;
         public long userId;
         public Long familyId;
         public int type;
@@ -128,6 +132,7 @@ public final class Models {
 
     public static class Ledger {
         public long id;
+        public Long companyId;
         public String name;
         public String description;
         public String currency;
@@ -150,6 +155,7 @@ public final class Models {
 
     public static class RecurringItem {
         public String id;
+        public Long companyId;
         public String name;
         public int type;
         public BigDecimal amount;

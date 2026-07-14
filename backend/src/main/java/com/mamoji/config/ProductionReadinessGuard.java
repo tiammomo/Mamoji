@@ -1,6 +1,8 @@
 package com.mamoji.config;
 
 import jakarta.annotation.PostConstruct;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProductionReadinessGuard {
     private final boolean production;
+    private final boolean singleInstanceGuardEnabled;
     private final String bootstrapMode;
     private final String bootstrapAdminEmail;
     private final String bootstrapAdminPassword;
@@ -32,6 +35,7 @@ public class ProductionReadinessGuard {
     public ProductionReadinessGuard(
         Environment environment,
         @Value("${mamoji.runtime.environment:local}") String runtimeEnvironment,
+        @Value("${mamoji.runtime.single-instance-guard-enabled:true}") boolean singleInstanceGuardEnabled,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
         @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
@@ -50,6 +54,7 @@ public class ProductionReadinessGuard {
         @Value("${mamoji.object-storage.external-url:}") String minioExternalUrl
     ) {
         this.production = isProduction(runtimeEnvironment, environment);
+        this.singleInstanceGuardEnabled = singleInstanceGuardEnabled;
         this.bootstrapMode = value(bootstrapMode);
         this.bootstrapAdminEmail = value(bootstrapAdminEmail);
         this.bootstrapAdminPassword = value(bootstrapAdminPassword);
@@ -74,6 +79,9 @@ public class ProductionReadinessGuard {
             return;
         }
         List<String> problems = new ArrayList<>();
+        if (!singleInstanceGuardEnabled) {
+            problems.add("MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED must be true in production");
+        }
         requireEquals(problems, "MAMOJI_BOOTSTRAP_MODE", bootstrapMode, "bootstrap");
         requireEmail(problems, "MAMOJI_BOOTSTRAP_ADMIN_EMAIL", bootstrapAdminEmail);
         requireStrongSecret(problems, "MAMOJI_BOOTSTRAP_ADMIN_PASSWORD", bootstrapAdminPassword, 12);
@@ -100,7 +108,7 @@ public class ProductionReadinessGuard {
         requireStrongSecret(problems, "MAMOJI_POSTGRES_PASSWORD", datasourcePassword, 16);
         requireStrongSecret(problems, "MAMOJI_MINIO_ACCESS_KEY", minioAccessKey, 12);
         requireStrongSecret(problems, "MAMOJI_MINIO_SECRET_KEY", minioSecretKey, 16);
-        requireHttpsUrl(problems, "MAMOJI_MINIO_EXTERNAL_URL", minioExternalUrl);
+        requireHttpsOrigin(problems, "MAMOJI_MINIO_EXTERNAL_URL", minioExternalUrl);
 
         if (!problems.isEmpty()) {
             throw new IllegalStateException("Production readiness check failed: " + String.join("; ", problems));
@@ -132,9 +140,24 @@ public class ProductionReadinessGuard {
         }
     }
 
-    private void requireHttpsUrl(List<String> problems, String name, String value) {
-        if (!value.startsWith("https://") || unsafePlaceholder(value)) {
-            problems.add(name + " must be a production https:// URL");
+    private void requireHttpsOrigin(List<String> problems, String name, String value) {
+        if (unsafePlaceholder(value) || !isHttpsOrigin(value)) {
+            problems.add(name + " must be a production https:// origin without a path, query, or fragment");
+        }
+    }
+
+    private boolean isHttpsOrigin(String value) {
+        try {
+            URI uri = new URI(value);
+            String path = uri.getRawPath();
+            return "https".equalsIgnoreCase(uri.getScheme())
+                && uri.getHost() != null
+                && uri.getRawUserInfo() == null
+                && (path == null || path.isEmpty() || "/".equals(path))
+                && uri.getRawQuery() == null
+                && uri.getRawFragment() == null;
+        } catch (URISyntaxException | IllegalArgumentException ex) {
+            return false;
         }
     }
 

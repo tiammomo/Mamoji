@@ -12,14 +12,23 @@ import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.ObjectStorageService;
 import com.mamoji.service.support.ObjectStorageService.StoredObject;
+import com.mamoji.service.support.ReceiptFileValidator.InvalidReceiptFileException;
 import java.math.BigDecimal;
+import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -48,19 +57,22 @@ public class ReceiptService {
     private final InMemoryStore coreStore;
     private final ObjectStorageService objectStorageService;
     private final OutboxEventService outboxEventService;
+    private final JdbcTemplate jdbc;
 
     public ReceiptService(
         AccessControlService accessControl,
         EnterpriseStore enterpriseStore,
         InMemoryStore coreStore,
         ObjectStorageService objectStorageService,
-        OutboxEventService outboxEventService
+        OutboxEventService outboxEventService,
+        JdbcTemplate jdbc
     ) {
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
         this.coreStore = coreStore;
         this.objectStorageService = objectStorageService;
         this.outboxEventService = outboxEventService;
+        this.jdbc = jdbc;
     }
 
     public PagedResponse<ReceiptVoucher> list(String authorization, Map<String, String> params) {
@@ -176,10 +188,13 @@ public class ReceiptService {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
         String voucherType = normalizeVoucherType(textOr(body.get("voucherType"), "purchase_invoice"));
-        requireReceiptWritePermission(authorization, voucherType);
+        if (body.containsKey("approvalStatus")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Approval status is managed by the approval workflow");
+        }
+        requireReceiptCreatePermission(user, company.id, voucherType);
         ReceiptVoucher voucher = enterpriseStore.receiptVoucher(
             company.id,
-            validateTransaction(user, optionalLong(body.get("transactionId")).orElse(null)).map(tx -> tx.id).orElse(null),
+            validateTransaction(user, optionalLong(body.get("transactionId")).orElse(null), company.id).map(tx -> tx.id).orElse(null),
             textOr(body.get("voucherNo"), nextVoucherNo()),
             textOr(body.get("title"), "新票据凭证"),
             voucherType,
@@ -206,11 +221,10 @@ public class ReceiptService {
 
     @Transactional
     public ReceiptVoucher update(String authorization, long id, Map<String, Object> body) {
-        User user = accessControl.requireFinanceManager(authorization);
+        User user = accessControl.requireUser(authorization);
         ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
-        if (!accessControl.canAccessCompany(user, voucher.companyId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
-        }
+        accessControl.resolveCompany(user, voucher.companyId);
+        requireReceiptWritePermission(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
         applyVoucherFields(user, voucher, body);
         voucher.riskLevel = riskFor(voucher);
@@ -221,24 +235,55 @@ public class ReceiptService {
         return voucher;
     }
 
+    /**
+     * Workflow-only entry point. User-facing receipt endpoints deliberately do not
+     * accept approvalStatus so an approval cannot be bypassed with a direct update.
+     */
+    @Transactional
+    public ReceiptVoucher updateApprovalStatus(String authorization, long id, String approvalStatus) {
+        User user = accessControl.requireUser(authorization);
+        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        accessControl.resolveCompany(user, voucher.companyId);
+        String previousSnapshot = workflowSnapshot(voucher);
+        applyVoucherFields(user, voucher, Map.of("approvalStatus", approvalStatus));
+        voucher.riskLevel = riskFor(voucher);
+        touch(voucher);
+        enterpriseStore.saveReceiptVoucher(voucher);
+        logVoucher(user, voucher, "approval_workflow", updateSummary(previousSnapshot, voucher));
+        return voucher;
+    }
+
+    @Transactional
     public Map<String, Object> upload(String authorization, MultipartFile file, Map<String, String> params) {
         User user = accessControl.requireUser(authorization);
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt image is required");
         }
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
+        String fileHash = sha256(file);
+        List<Long> duplicateVoucherIds = jdbc.queryForList(
+            "SELECT voucher_id FROM receipt_file_hashes WHERE company_id = ? AND sha256 = ? LIMIT 1",
+            Long.class,
+            company.id,
+            fileHash
+        );
+        if (!duplicateVoucherIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate receipt file; existing voucher #" + duplicateVoucherIds.getFirst());
+        }
         String filename = file.getOriginalFilename() == null ? "receipt" : file.getOriginalFilename();
         String voucherType = normalizeVoucherType(params.getOrDefault("voucherType", "purchase_invoice"));
-        requireReceiptWritePermission(authorization, voucherType);
+        requireReceiptCreatePermission(user, company.id, voucherType);
         StoredObject storedObject;
         try {
             storedObject = objectStorageService.storeReceiptFile(company.id, file);
+        } catch (InvalidReceiptFileException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage upload failed");
         }
         ReceiptVoucher voucher = enterpriseStore.receiptVoucher(
             company.id,
-            validateTransaction(user, longParam(params, "transactionId", 0)).map(tx -> tx.id).orElse(null),
+            validateTransaction(user, longParam(params, "transactionId", 0), company.id).map(tx -> tx.id).orElse(null),
             params.getOrDefault("voucherNo", nextVoucherNo()),
             params.getOrDefault("title", filename),
             voucherType,
@@ -251,7 +296,7 @@ public class ReceiptService {
             normalizeStatus(params.getOrDefault("status", "pending_review")),
             filename,
             file.getSize(),
-            file.getContentType(),
+            storedObject.contentType(),
             "low",
             params.get("note"),
             user.id
@@ -271,12 +316,55 @@ public class ReceiptService {
         voucher.fileUrl = storedObject.url();
         voucher.riskLevel = riskFor(voucher);
         enterpriseStore.saveReceiptVoucher(voucher);
+        jdbc.update("""
+            INSERT INTO receipt_file_hashes (company_id, voucher_id, sha256, file_name, file_size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, company.id, voucher.id, fileHash, filename, file.getSize(), InMemoryStore.now());
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
         return Map.of(
             "success", true,
             "voucher", voucher,
             "message", "Receipt uploaded"
         );
+    }
+
+    @Transactional
+    public Map<String, Object> batchUpload(String authorization, List<MultipartFile> files, Map<String, String> params) {
+        if (files == null || files.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one receipt file is required");
+        }
+        if (files.size() > 8) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload at most 8 receipt files at a time");
+        }
+        List<Object> uploaded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (MultipartFile file : files) {
+            try {
+                uploaded.add(upload(authorization, file, params).get("voucher"));
+            } catch (ResponseStatusException ex) {
+                failed.add(Map.of(
+                    "fileName", Objects.toString(file.getOriginalFilename(), "receipt"),
+                    "reason", Objects.toString(ex.getReason(), "Upload failed"),
+                    "status", ex.getStatusCode().value()
+                ));
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("successCount", uploaded.size());
+        result.put("failureCount", failed.size());
+        result.put("vouchers", uploaded);
+        result.put("failures", failed);
+        return result;
+    }
+
+    private String sha256(MultipartFile file) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(file.getBytes()));
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt file could not be read");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     public List<AuditLog> auditLogs(String authorization, long id) {
@@ -296,7 +384,13 @@ public class ReceiptService {
         }
         try {
             String url = objectStorageService
-                .presignedDownloadUrl(voucher.fileStorageProvider, voucher.fileBucket, voucher.fileObjectKey, voucher.fileUrl)
+                .presignedDownloadUrl(
+                    voucher.fileStorageProvider,
+                    voucher.fileBucket,
+                    voucher.fileObjectKey,
+                    voucher.fileUrl,
+                    voucher.fileName
+                )
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt file is not stored in object storage"));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("url", url);
@@ -379,7 +473,11 @@ public class ReceiptService {
 
     private void applyVoucherFields(User user, ReceiptVoucher voucher, Map<String, Object> body) {
         if (body.containsKey("transactionId")) {
-            voucher.transactionId = validateTransaction(user, optionalLong(body.get("transactionId")).orElse(null)).map(tx -> tx.id).orElse(null);
+            voucher.transactionId = validateTransaction(
+                user,
+                optionalLong(body.get("transactionId")).orElse(null),
+                voucher.companyId
+            ).map(tx -> tx.id).orElse(null);
         }
         if (body.containsKey("voucherNo")) {
             voucher.voucherNo = textOr(body.get("voucherNo"), voucher.voucherNo);
@@ -443,6 +541,9 @@ public class ReceiptService {
         if (body.containsKey("accountingStatus")) {
             String nextAccountingStatus = normalizeAccountingStatus(textOr(body.get("accountingStatus"), voucher.accountingStatus));
             if ("posted".equals(nextAccountingStatus) && !"posted".equals(voucher.accountingStatus)) {
+                if (!Set.of("approved", "not_required").contains(voucher.approvalStatus)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete or waive approval before posting the accounting voucher");
+                }
                 voucher.accountedAt = InMemoryStore.now();
                 if (isBlank(voucher.accountingVoucherNo)) {
                     String period = isBlank(voucher.taxPeriod) ? voucher.issueDate.substring(0, 7) : voucher.taxPeriod;
@@ -487,12 +588,12 @@ public class ReceiptService {
         voucher.operatorUserId = user.id;
     }
 
-    private Optional<TransactionRecord> validateTransaction(User user, Long transactionId) {
+    private Optional<TransactionRecord> validateTransaction(User user, Long transactionId, long companyId) {
         if (transactionId == null || transactionId == 0) {
             return Optional.empty();
         }
         TransactionRecord transaction = require(coreStore.transactions.get(transactionId), "Transaction not found");
-        if (transaction.userId != user.id) {
+        if (transaction.userId != user.id || !Objects.equals(transaction.companyId, companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden transaction");
         }
         return Optional.of(transaction);
@@ -512,7 +613,7 @@ public class ReceiptService {
         if ("purchase_invoice".equals(voucher.voucherType) && ("pending".equals(voucher.deductionStatus) || "deductible".equals(voucher.deductionStatus))) {
             return "medium";
         }
-        if ("pending".equals(voucher.approvalStatus)) {
+            if ("pending".equals(voucher.approvalStatus) || "not_submitted".equals(voucher.approvalStatus)) {
             return "medium";
         }
         if ("not_started".equals(voucher.accountingStatus) && !"pending_review".equals(voucher.status)) {
@@ -581,7 +682,7 @@ public class ReceiptService {
 
     private String normalizeApprovalStatus(String value) {
         return switch (value) {
-            case "not_required", "pending", "approved", "rejected" -> value;
+            case "not_required", "not_submitted", "pending", "approved", "rejected" -> value;
             default -> "not_required";
         };
     }
@@ -604,10 +705,15 @@ public class ReceiptService {
         };
     }
 
-    private void requireReceiptWritePermission(String authorization, String voucherType) {
-        if (!"reimbursement".equals(voucherType)) {
-            accessControl.requireFinanceManager(authorization);
+    private void requireReceiptWritePermission(User user, long companyId) {
+        accessControl.requireFinanceManager(user, companyId);
+    }
+
+    private void requireReceiptCreatePermission(User user, long companyId, String voucherType) {
+        if ("reimbursement".equals(voucherType)) {
+            return;
         }
+        requireReceiptWritePermission(user, companyId);
     }
 
     private String workflowSnapshot(ReceiptVoucher voucher) {
