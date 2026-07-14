@@ -6,6 +6,7 @@ import {
   IconDelete,
   IconEdit,
   IconEmpty,
+  IconExclamationCircle,
   IconEye,
   IconFile,
   IconPlus,
@@ -13,11 +14,13 @@ import {
   IconSafe,
   IconSearch,
   IconSwap,
+  IconUpload,
 } from "@arco-design/web-react/icon";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { accountApi } from "@/lib/api/accounts";
 import { transactionApi } from "@/lib/api/transactions";
+import type { TransactionSummary } from "@/lib/api/transactions";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import PageHeader from "@/components/common/PageHeader";
@@ -25,6 +28,7 @@ import AmountDisplay from "@/components/common/AmountDisplay";
 import EmptyState from "@/components/common/EmptyState";
 import AppPagination from "@/components/common/AppPagination";
 import TransactionFormModal, { type TransactionFormMode } from "@/components/transactions/TransactionFormModal";
+import TransactionImportModal from "@/components/transactions/TransactionImportModal";
 import { formatAmount, formatDate, formatDateTime } from "@/lib/utils/format";
 import type { Account, Transaction, TransactionQuery, TransactionType } from "@/lib/types";
 
@@ -53,6 +57,19 @@ const toNumber = (value: string) => (value ? Number(value) : undefined);
 
 const transactionText = (tx: Transaction) => `${tx.note || ""} ${tx.categoryName || ""}`.toLowerCase();
 
+const requestErrorMessage = (error: unknown, fallback: string) => {
+  if (!error || typeof error !== "object") return fallback;
+  const response = "response" in error ? (error as { response?: { data?: unknown } }).response : undefined;
+  const data = response?.data;
+  if (data && typeof data === "object") {
+    const problem = data as Record<string, unknown>;
+    for (const key of ["message", "detail", "error"]) {
+      if (typeof problem[key] === "string" && problem[key]) return problem[key] as string;
+    }
+  }
+  return fallback;
+};
+
 const isPendingCollection = (tx: Transaction) =>
   tx.type === 1 && /待回款|应收|未回款|尾款|分期|验收后|交付后|回款中/.test(transactionText(tx));
 
@@ -66,6 +83,7 @@ export default function TransactionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations("transaction");
+  const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const activeSubjectType = useAppStore((state) => state.activeSubjectType);
   const isHousehold = activeSubjectType === "household";
   const { categories, fetchCategories } = useCategoryStore();
@@ -95,11 +113,12 @@ export default function TransactionsPage() {
     : toNumber(appliedMinAmount);
 
   const [data, setData] = useState<Transaction[]>([]);
-  const [summaryData, setSummaryData] = useState<Transaction[]>([]);
+  const [summaryData, setSummaryData] = useState<TransactionSummary | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [total, setTotal] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState(initialKeyword);
@@ -115,7 +134,10 @@ export default function TransactionsPage() {
   const [formMode, setFormMode] = useState<TransactionFormMode>("create");
   const [activeTransactionId, setActiveTransactionId] = useState<number | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [importVisible, setImportVisible] = useState(false);
   const hasLoadedRef = useRef(false);
+  const loadedSubjectRef = useRef<number | null>(activeCompanyId);
+  const handledActionRef = useRef("");
 
   const query = useMemo<TransactionQuery>(() => ({
     page: pageIndex,
@@ -141,11 +163,12 @@ export default function TransactionsPage() {
     pageSize,
   ]);
 
-  const summaryQuery = useMemo<TransactionQuery>(() => ({
-    ...query,
-    page: 0,
-    size: 1000,
-  }), [query]);
+  const summaryQuery = useMemo(() => {
+    const filters = { ...query };
+    delete filters.page;
+    delete filters.size;
+    return filters;
+  }, [query]);
 
   const fetchData = useCallback(async () => {
     const isInitial = !hasLoadedRef.current;
@@ -154,45 +177,57 @@ export default function TransactionsPage() {
     } else {
       setRefreshing(true);
     }
+    setLoadError(null);
     try {
       const [listRes, summaryRes] = await Promise.all([
         transactionApi.list(query),
-        transactionApi.list(summaryQuery),
+        transactionApi.summary(summaryQuery),
       ]);
       setData(listRes.data.content);
       setTotal(listRes.data.totalElements);
-      setSummaryData(summaryRes.data.content);
+      setSummaryData(summaryRes.data);
       hasLoadedRef.current = true;
     } catch {
+      setLoadError(t("loadFailed"));
       Message.error("经营流水加载失败");
     } finally {
       setInitialLoading(false);
       setRefreshing(false);
     }
-  }, [query, summaryQuery]);
+  }, [query, summaryQuery, t]);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadTransactions = async () => {
+      const subjectChanged = loadedSubjectRef.current !== activeCompanyId;
+      if (subjectChanged) {
+        loadedSubjectRef.current = activeCompanyId;
+        hasLoadedRef.current = false;
+        setData([]);
+        setSummaryData(null);
+        setTotal(0);
+        setSelectedTransaction(null);
+      }
       const isInitial = !hasLoadedRef.current;
       if (isInitial) {
         setInitialLoading(true);
       } else {
         setRefreshing(true);
       }
+      setLoadError(null);
       try {
         const [listRes, summaryRes] = await Promise.all([
           transactionApi.list(query),
-          transactionApi.list(summaryQuery),
+          transactionApi.summary(summaryQuery),
         ]);
         if (cancelled) return;
         setData(listRes.data.content);
         setTotal(listRes.data.totalElements);
-        setSummaryData(summaryRes.data.content);
+        setSummaryData(summaryRes.data);
         hasLoadedRef.current = true;
       } catch {
-        // silent
+        if (!cancelled) setLoadError(t("loadFailed"));
       } finally {
         if (!cancelled) {
           setInitialLoading(false);
@@ -207,12 +242,13 @@ export default function TransactionsPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchCategories, query, summaryQuery]);
+  }, [activeCompanyId, fetchCategories, query, summaryQuery, t]);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadAccounts = async () => {
+      setAccounts([]);
       try {
         const res = await accountApi.list();
         if (!cancelled) {
@@ -228,13 +264,34 @@ export default function TransactionsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeCompanyId]);
 
   useEffect(() => {
-    if (searchParams.get("action") !== "new") return;
+    const action = searchParams.get("action");
+    const rawTransactionId = searchParams.get("transactionId");
+    const parsedTransactionId = rawTransactionId ? Number(rawTransactionId) : null;
+    const validTransactionId = parsedTransactionId && Number.isInteger(parsedTransactionId) && parsedTransactionId > 0
+      ? parsedTransactionId
+      : null;
+    const mode: TransactionFormMode | null = action === "new"
+      ? "create"
+      : action === "edit" && validTransactionId
+        ? "edit"
+        : action === "refund" && validTransactionId
+          ? "refund"
+          : null;
+
+    if (!mode) {
+      handledActionRef.current = "";
+      return;
+    }
+
+    const actionKey = `${mode}:${validTransactionId || "new"}`;
+    if (handledActionRef.current === actionKey) return;
+    handledActionRef.current = actionKey;
     const timer = window.setTimeout(() => {
-      setFormMode("create");
-      setActiveTransactionId(null);
+      setFormMode(mode);
+      setActiveTransactionId(validTransactionId);
       setFormVisible(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -266,47 +323,24 @@ export default function TransactionsPage() {
     appliedView,
   ]);
 
-  const summary = useMemo(() => {
-    const income = summaryData.filter((tx) => tx.type === 1).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const expense = summaryData.filter((tx) => tx.type === 2).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const refund = summaryData.filter((tx) => tx.type === 3).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const pendingCollection = summaryData.filter(isPendingCollection).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const customerRefund = summaryData.filter(isCustomerRefund).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const severance = summaryData.filter(isSeverancePayment).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const largeCount = summaryData.filter((tx) => Number(tx.amount || 0) >= largeTransactionThreshold).length;
-    const reviewIds = new Set<number>();
-    summaryData.forEach((tx) => {
-      if (
-        Number(tx.amount || 0) >= largeTransactionThreshold
-        || (tx.type === 2 && tx.isRefundable)
-        || isPendingCollection(tx)
-        || isCustomerRefund(tx)
-        || isSeverancePayment(tx)
-        || !tx.note?.trim()
-      ) {
-        reviewIds.add(tx.id);
-      }
-    });
-
-    return {
-      income,
-      expense,
-      refund,
-      pendingCollection,
-      customerRefund,
-      severance,
-      netCollectedIncome: income - customerRefund,
-      net: income + refund - expense,
-      rows: summaryData.length,
-      largeCount,
-      reviewCount: reviewIds.size,
-    };
-  }, [summaryData]);
+  const summary = useMemo<TransactionSummary>(() => summaryData || ({
+    income: 0,
+    expense: 0,
+    refund: 0,
+    pendingCollection: 0,
+    customerRefund: 0,
+    severance: 0,
+    netCollectedIncome: 0,
+    net: 0,
+    rows: total,
+    largeCount: 0,
+    reviewCount: 0,
+  }), [summaryData, total]);
 
   const typeColors = useMemo<Record<number, { color: string; bg: string; label: string }>>(() => ({
     1: { color: "#10b981", bg: "#10b98120", label: t("income") },
     2: { color: "#ef4444", bg: "#ef444420", label: t("expense") },
-    3: { color: "#f59e0b", bg: "#f59e0b20", label: t("refund") },
+    3: { color: "#7c5cc4", bg: "#7c5cc41a", label: t("refund") },
   }), [t]);
 
   const viewOptions: Array<{ key: LedgerView; label: string }> = [
@@ -328,7 +362,7 @@ export default function TransactionsPage() {
     return true;
   };
 
-  const applyFilters = (nextView = viewFilter) => {
+  const applyFilters = (nextView = viewFilter, nextTypeFilter = typeFilter) => {
     if (!validateFilters()) return;
 
     const keyword = search.trim();
@@ -339,10 +373,10 @@ export default function TransactionsPage() {
     } else {
       params.delete("keyword");
     }
-    if (typeFilter === "all") {
+    if (nextTypeFilter === "all") {
       params.delete("type");
     } else {
-      params.set("type", typeFilter);
+      params.set("type", nextTypeFilter);
     }
     if (categoryFilter === "all") {
       params.delete("categoryId");
@@ -384,8 +418,10 @@ export default function TransactionsPage() {
   };
 
   const handleQuickView = (nextView: LedgerView) => {
+    const nextTypeFilter = nextView === "income" || nextView === "expense" ? "all" : typeFilter;
     setViewFilter(nextView);
-    applyFilters(nextView);
+    setTypeFilter(nextTypeFilter);
+    applyFilters(nextView, nextTypeFilter);
   };
 
   const handleReset = () => {
@@ -403,6 +439,7 @@ export default function TransactionsPage() {
   };
 
   const openForm = (mode: TransactionFormMode, transactionId?: number) => {
+    if (mode !== "create") setSelectedTransaction(null);
     setFormMode(mode);
     setActiveTransactionId(transactionId || null);
     setFormVisible(true);
@@ -412,11 +449,20 @@ export default function TransactionsPage() {
     setFormVisible(false);
     setActiveTransactionId(null);
     if (searchParams.get("action")) {
-      router.replace("/transactions", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("action");
+      params.delete("transactionId");
+      router.replace(`/transactions${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
     }
   };
 
   const refreshData = () => {
+    void fetchData();
+  };
+
+  const handleFormSuccess = () => {
+    setSelectedTransaction(null);
+    if (hasAppliedFilters) Message.info(t("savedMayBeFiltered"));
     void fetchData();
   };
 
@@ -425,20 +471,22 @@ export default function TransactionsPage() {
     setPageIndex(page - 1);
   };
 
-  const handleDelete = (id: number, closeDrawer = false) => {
+  const handleDelete = (transaction: Transaction, closeDrawer = false) => {
     Modal.confirm({
-      title: "确认删除",
-      content: "确定要删除这笔交易吗？",
+      title: transaction.type === 3 ? "确认撤销退款" : "确认删除流水",
+      content: transaction.type === 3
+        ? "撤销后会回滚原流水的已退金额，并同步恢复账户余额。确定继续吗？"
+        : "删除后会同步回滚账户余额，且无法撤销。确定继续吗？",
       onOk: async () => {
         try {
-          await transactionApi.delete(id);
-          Message.success("删除成功");
+          await transactionApi.delete(transaction.id);
+          Message.success(transaction.type === 3 ? "退款已撤销" : "流水已删除");
           if (closeDrawer) {
             setSelectedTransaction(null);
           }
           await fetchData();
-        } catch {
-          Message.error("删除失败");
+        } catch (error) {
+          Message.error(requestErrorMessage(error, transaction.type === 3 ? "退款撤销失败" : "流水删除失败"));
         }
       },
     });
@@ -456,7 +504,7 @@ export default function TransactionsPage() {
       flags.push({ key: "large", label: t("largeTransaction"), color: "red" });
     }
     if (tx.type === 2 && tx.isRefundable) {
-      flags.push({ key: "refundable", label: t("refundableTag"), color: "orange" });
+      flags.push({ key: "refundable", label: t("refundableTag"), color: "purple" });
     }
     if (isPendingCollection(tx)) {
       flags.push({ key: "pending-collection", label: "待回款", color: "arcoblue" });
@@ -468,7 +516,7 @@ export default function TransactionsPage() {
       flags.push({ key: "severance", label: "离职补偿", color: "purple" });
     }
     if (tx.refundedAmount > 0) {
-      flags.push({ key: "refunded", label: t("refundedTag"), color: "gold" });
+      flags.push({ key: "refunded", label: t("refundedTag"), color: "cyan" });
     }
     if (!tx.note?.trim()) {
       flags.push({ key: "missing-note", label: t("missingNote"), color: "gray" });
@@ -476,21 +524,11 @@ export default function TransactionsPage() {
     return flags;
   };
 
-  const receiptStatusFor = (tx: Transaction) => {
-    if (tx.type === 2) return { label: t("receiptPending"), color: "orange" };
-    if (tx.type === 3) return { label: t("receiptRefund"), color: "purple" };
-    return { label: t("receiptIncome"), color: "arcoblue" };
-  };
-
-  const taxStatusFor = (tx: Transaction) => {
-    if (tx.type === 2) return { label: t("taxExpense"), color: "gold" };
-    if (tx.type === 3) return { label: t("taxRefund"), color: "purple" };
-    return { label: t("taxIncome"), color: "green" };
-  };
-
   const renderActions = (tx: Transaction) => (
     <div className="flex items-center justify-end gap-1">
       <Button
+        aria-label={`${t("viewAction")} #${tx.id}`}
+        title={t("viewAction")}
         type="text"
         size="mini"
         icon={<IconEye />}
@@ -502,6 +540,8 @@ export default function TransactionsPage() {
       />
       {tx.type !== 3 && (
         <Button
+          aria-label={`${t("editAction")} #${tx.id}`}
+          title={t("editAction")}
           type="text"
           size="mini"
           icon={<IconEdit />}
@@ -514,6 +554,8 @@ export default function TransactionsPage() {
       )}
       {tx.type === 2 && tx.isRefundable && (
         <Button
+          aria-label={`${t("refundAction")} #${tx.id}`}
+          title={t("refundAction")}
           type="text"
           size="mini"
           icon={<IconRefresh />}
@@ -524,18 +566,19 @@ export default function TransactionsPage() {
           style={{ color: "var(--color-warning)" }}
         />
       )}
-      {tx.type !== 3 && (
-        <Button
-          type="text"
-          size="mini"
-          status="danger"
-          icon={<IconDelete />}
-          onClick={(event) => {
-            event.stopPropagation();
-            handleDelete(tx.id);
-          }}
-        />
-      )}
+      <Button
+        aria-label={`${tx.type === 3 ? "撤销退款" : t("deleteAction")} #${tx.id}`}
+        title={tx.type !== 3 && tx.refundedAmount > 0 ? "请先撤销关联退款" : tx.type === 3 ? "撤销退款" : t("deleteAction")}
+        type="text"
+        size="mini"
+        status="danger"
+        disabled={tx.type !== 3 && tx.refundedAmount > 0}
+        icon={<IconDelete />}
+        onClick={(event) => {
+          event.stopPropagation();
+          handleDelete(tx);
+        }}
+      />
     </div>
   );
 
@@ -553,26 +596,48 @@ export default function TransactionsPage() {
 
   const operatingCards = [
     {
-      label: "实收收入净额",
+      label: "备注辅助：收入净额",
       value: <AmountDisplay amount={summary.netCollectedIncome} type={summary.netCollectedIncome >= 0 ? 1 : 2} showSign size="medium" />,
       hint: `收入 ${formatAmount(summary.income)} - 客户退款 ${formatAmount(summary.customerRefund)}`,
     },
     {
-      label: "交付后待回款",
+      label: "备注命中：待回款",
       value: <AmountDisplay amount={summary.pendingCollection} type={1} size="medium" />,
       hint: "按备注中的待回款、应收、尾款、分期识别",
     },
     {
-      label: "退款冲减收入",
+      label: "备注命中：客户退款",
       value: <AmountDisplay amount={summary.customerRefund} type={2} size="medium" />,
       hint: "客户退款、订单退款、项目退款需要扣减收入",
     },
     {
-      label: "裁员/离职补偿",
+      label: "备注命中：离职补偿",
       value: <AmountDisplay amount={summary.severance} type={2} size="medium" />,
       hint: "计入人力成本复盘，不并入固定薪酬",
     },
   ];
+
+  const hasAppliedFilters = Boolean(
+    appliedKeyword
+    || appliedTypeFilter !== "all"
+    || appliedCategory !== "all"
+    || appliedAccount !== "all"
+    || appliedStartDate
+    || appliedEndDate
+    || appliedMinAmount
+    || appliedMaxAmount
+    || appliedView !== "all"
+  );
+
+  const filtersDirty = search.trim() !== appliedKeyword
+    || typeFilter !== appliedTypeFilter
+    || categoryFilter !== appliedCategory
+    || accountFilter !== appliedAccount
+    || startDate !== appliedStartDate
+    || endDate !== appliedEndDate
+    || minAmount !== appliedMinAmount
+    || maxAmount !== appliedMaxAmount
+    || viewFilter !== appliedView;
 
   const renderFlagTags = (tx: Transaction) => {
     const flags = transactionFlags(tx);
@@ -593,8 +658,9 @@ export default function TransactionsPage() {
         subtitle={isHousehold ? "家庭收入、支出、退款、账户与预算的生活台账" : t("ledgerSubtitle")}
         icon={<IconSwap />}
         extra={
-          <div className="flex items-center gap-2">
-            {refreshing && <Tag color="arcoblue">刷新中</Tag>}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {refreshing && <Tag color="arcoblue" role="status" aria-live="polite">{t("refreshing")}</Tag>}
+            <Button icon={<IconUpload />} onClick={() => setImportVisible(true)}>批量导入</Button>
             <Button
               type="primary"
               icon={<IconPlus />}
@@ -606,9 +672,9 @@ export default function TransactionsPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
+      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
-          <Card key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
+          <Card className="metric-card" key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
             <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
             <div className="mt-2">{item.value}</div>
           </Card>
@@ -616,42 +682,54 @@ export default function TransactionsPage() {
       </div>
 
       {!isHousehold && (
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {operatingCards.map((item) => (
-            <Card key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
-              <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
-              <div className="mt-2">{item.value}</div>
-              <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{item.hint}</div>
-            </Card>
-          ))}
+        <div className="mb-4">
+          <div className="mb-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+            {t("noteInferenceDisclaimer")}
+          </div>
+          <div className="context-strip grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
+            {operatingCards.map((item) => (
+              <Card key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
+                <div className="mt-2">{item.value}</div>
+                <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{item.hint}</div>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
-        <div className="mb-3 flex flex-wrap gap-2">
-          {viewOptions.map((item) => {
-            const active = viewFilter === item.key;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => handleQuickView(item.key)}
-                className="h-8 cursor-pointer rounded-lg border px-3 text-sm transition-colors"
-                style={{
-                  borderColor: active ? "rgba(99, 102, 241, 0.45)" : "var(--border-color)",
-                  backgroundColor: active ? "rgba(99, 102, 241, 0.12)" : "var(--bg-color-card)",
-                  color: active ? "var(--color-primary-dark)" : "var(--text-color-2)",
-                }}
-              >
-                {item.label}
-              </button>
-            );
-          })}
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-2" role="group" aria-label={t("quickViews")}>
+            {viewOptions.map((item) => {
+              const active = viewFilter === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => handleQuickView(item.key)}
+                  className="ledger-view-chip h-9 cursor-pointer border px-4 text-sm transition-colors"
+                  style={{
+                    borderColor: active ? "rgba(99, 102, 241, 0.45)" : "var(--border-color)",
+                    backgroundColor: active ? "rgba(99, 102, 241, 0.12)" : "var(--bg-color-card)",
+                    color: active ? "var(--color-primary-dark)" : "var(--text-color-2)",
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+          <div aria-live="polite">
+            {filtersDirty ? <Tag color="purple">{t("filtersChanged")}</Tag> : hasAppliedFilters ? <Tag color="arcoblue">{t("filtersApplied")}</Tag> : null}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,1fr)_150px_170px_180px]">
           <div className="w-full">
             <Input
+              aria-label={t("searchPlaceholder")}
               prefix={<IconSearch style={{ color: "var(--text-color-4)" }} />}
               placeholder={t("searchPlaceholder")}
               value={search}
@@ -662,7 +740,15 @@ export default function TransactionsPage() {
             />
           </div>
           <div className="w-full">
-            <Select value={typeFilter} onChange={setTypeFilter} style={{ width: "100%", borderRadius: 12 }}>
+            <Select
+              aria-label={t("allTypes")}
+              value={typeFilter}
+              onChange={(value) => {
+                setTypeFilter(value);
+                if (viewFilter === "income" || viewFilter === "expense") setViewFilter("all");
+              }}
+              style={{ width: "100%", borderRadius: 12 }}
+            >
               <Select.Option value="all">{t("allTypes")}</Select.Option>
               <Select.Option value="1">{t("income")}</Select.Option>
               <Select.Option value="2">{t("expense")}</Select.Option>
@@ -670,7 +756,7 @@ export default function TransactionsPage() {
             </Select>
           </div>
           <div className="w-full">
-            <Select value={categoryFilter} onChange={setCategoryFilter} style={{ width: "100%", borderRadius: 12 }}>
+            <Select aria-label={t("allCategories")} value={categoryFilter} onChange={setCategoryFilter} style={{ width: "100%", borderRadius: 12 }}>
               <Select.Option value="all">{t("allCategories")}</Select.Option>
               {categories.map((category) => (
                 <Select.Option key={category.id} value={String(category.id)}>
@@ -680,7 +766,7 @@ export default function TransactionsPage() {
             </Select>
           </div>
           <div className="w-full">
-            <Select value={accountFilter} onChange={setAccountFilter} style={{ width: "100%", borderRadius: 12 }}>
+            <Select aria-label={t("allAccounts")} value={accountFilter} onChange={setAccountFilter} style={{ width: "100%", borderRadius: 12 }}>
               <Select.Option value="all">{t("allAccounts")}</Select.Option>
               {accounts.map((account) => (
                 <Select.Option key={account.id} value={String(account.id)}>
@@ -694,6 +780,7 @@ export default function TransactionsPage() {
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center md:w-[356px]">
             <DatePicker
+              aria-label={t("startDate")}
               format="YYYY-MM-DD"
               value={startDate}
               onChange={(value) => setStartDate(value || "")}
@@ -701,8 +788,9 @@ export default function TransactionsPage() {
               className="w-full"
               style={{ borderRadius: 12 }}
             />
-            <span className="text-center text-sm" style={{ color: "var(--text-color-4)" }}>-</span>
+            <span aria-hidden="true" className="text-center text-sm" style={{ color: "var(--text-color-4)" }}>-</span>
             <DatePicker
+              aria-label={t("endDate")}
               format="YYYY-MM-DD"
               value={endDate}
               onChange={(value) => setEndDate(value || "")}
@@ -713,14 +801,16 @@ export default function TransactionsPage() {
           </div>
           <div className="grid w-full grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center md:w-[300px]">
             <Input
+              aria-label={t("minAmount")}
               type="number"
               value={minAmount}
               onChange={setMinAmount}
               placeholder={t("minAmount")}
               style={{ borderRadius: 12 }}
             />
-            <span className="text-center text-sm" style={{ color: "var(--text-color-4)" }}>-</span>
+            <span aria-hidden="true" className="text-center text-sm" style={{ color: "var(--text-color-4)" }}>-</span>
             <Input
+              aria-label={t("maxAmount")}
               type="number"
               value={maxAmount}
               onChange={setMaxAmount}
@@ -729,7 +819,7 @@ export default function TransactionsPage() {
             />
           </div>
           <Button type="primary" loading={refreshing} className="w-full md:w-[110px]" onClick={() => applyFilters()}>
-            {t("search")}
+            {t("applyFilters")}
           </Button>
           <Button className="w-full md:w-[110px]" onClick={handleReset}>
             {t("reset")}
@@ -737,14 +827,30 @@ export default function TransactionsPage() {
         </div>
       </Card>
 
-      {data.length === 0 && !initialLoading ? (
+      {loadError ? (
+        <Card className="mb-4" style={{ borderRadius: 12 }}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
+            <div className="flex items-start gap-2 text-sm" style={{ color: "rgb(var(--red-6))" }}>
+              <IconExclamationCircle className="mt-0.5 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+            <Button size="small" icon={<IconRefresh />} loading={refreshing} onClick={refreshData}>{t("retry")}</Button>
+          </div>
+        </Card>
+      ) : null}
+
+      {loadError && data.length === 0 ? null : data.length === 0 && !initialLoading ? (
         <Card style={{ borderRadius: 12 }}>
           <EmptyState
             icon={<IconEmpty style={{ fontSize: 56, color: "var(--text-color-4)" }} />}
-            title={isHousehold ? "暂无家庭收支" : "暂无经营流水"}
-            description={isHousehold ? "点击上方按钮记录第一笔家庭收入或支出" : "点击上方按钮录入第一笔收入或成本"}
-            actionText={isHousehold ? "记一笔" : "录入流水"}
-            onAction={() => openForm("create")}
+            title={hasAppliedFilters ? t("filteredEmptyTitle") : isHousehold ? "暂无家庭收支" : "暂无经营流水"}
+            description={hasAppliedFilters
+              ? t("filteredEmptyDescription")
+              : isHousehold
+                ? "点击上方按钮记录第一笔家庭收入或支出"
+                : "点击上方按钮录入第一笔收入或成本"}
+            actionText={hasAppliedFilters ? t("clearFilters") : isHousehold ? "记一笔" : "录入流水"}
+            onAction={hasAppliedFilters ? handleReset : () => openForm("create")}
           />
         </Card>
       ) : (
@@ -762,15 +868,15 @@ export default function TransactionsPage() {
         >
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
+              <caption className="sr-only">{t("ledgerTable")}</caption>
               <colgroup>
                 <col style={{ width: 104 }} />
-                <col style={{ width: 230 }} />
+                <col style={{ width: 250 }} />
                 <col style={{ width: 118 }} />
                 <col style={{ width: 116 }} />
                 <col style={{ width: 140 }} />
-                <col style={{ width: 96 }} />
-                <col style={{ width: 96 }} />
-                <col style={{ width: 104 }} />
+                <col style={{ width: 140 }} />
+                <col style={{ width: 120 }} />
                 <col style={{ width: 92 }} />
               </colgroup>
               <thead>
@@ -781,12 +887,11 @@ export default function TransactionsPage() {
                     t("category"),
                     t("account"),
                     t("amount"),
-                    t("receipt"),
-                    t("tax"),
+                    t("linkageStatus"),
                     t("tags"),
                     t("actions"),
                   ].map((column) => (
-                    <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>
+                    <th scope="col" key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>
                       {column}
                     </th>
                   ))}
@@ -795,13 +900,10 @@ export default function TransactionsPage() {
               <tbody>
                 {data.map((tx) => {
                   const typeConfig = typeColors[tx.type] || typeColors[2];
-                  const receipt = receiptStatusFor(tx);
-                  const tax = taxStatusFor(tx);
                   return (
                     <tr
                       key={tx.id}
-                      onClick={() => setSelectedTransaction(tx)}
-                      className="cursor-pointer border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
+                      className="border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
                       style={{ borderColor: "var(--border-color-light)" }}
                     >
                       <td className="px-4 py-4 align-middle">
@@ -811,7 +913,7 @@ export default function TransactionsPage() {
                       <td className="px-4 py-4 align-middle">
                         <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{tx.note || tx.categoryName || "未命名"}</div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Tag color={tx.type === 1 ? "green" : tx.type === 2 ? "red" : "orange"}>{typeConfig.label}</Tag>
+                          <Tag color={tx.type === 1 ? "green" : tx.type === 2 ? "red" : "purple"}>{typeConfig.label}</Tag>
                           {Number(tx.amount || 0) >= largeTransactionThreshold && (
                             <Tag color="red" title={t("largeTransactionHint", { amount: formatAmount(largeTransactionThreshold) })}>
                               {t("largeTransaction")}
@@ -829,8 +931,9 @@ export default function TransactionsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-4 align-middle"><Tag color={receipt.color}>{receipt.label}</Tag></td>
-                      <td className="px-4 py-4 align-middle"><Tag color={tax.color}>{tax.label}</Tag></td>
+                      <td className="px-4 py-4 align-middle">
+                        <Tag color="gray" title={t("linkageUnavailable")}>{t("manualReview")}</Tag>
+                      </td>
                       <td className="px-4 py-4 align-middle">
                         <div className="flex flex-wrap gap-1">{renderFlagTags(tx)}</div>
                       </td>
@@ -849,6 +952,7 @@ export default function TransactionsPage() {
                 <button
                   key={tx.id}
                   type="button"
+                  aria-label={`${t("viewAction")} #${tx.id}，${tx.note || tx.categoryName || t("unnamed")}`}
                   onClick={() => setSelectedTransaction(tx)}
                   className="transaction-item w-full cursor-pointer text-left"
                   style={{
@@ -869,7 +973,7 @@ export default function TransactionsPage() {
                         {tx.note || tx.categoryName || "未命名"}
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <Tag color={tx.type === 1 ? "green" : tx.type === 2 ? "red" : "orange"}>{typeConfig.label}</Tag>
+                        <Tag color={tx.type === 1 ? "green" : tx.type === 2 ? "red" : "purple"}>{typeConfig.label}</Tag>
                         {renderFlagTags(tx)}
                         <span className="text-xs" style={{ color: "var(--text-color-4)" }}>
                           {formatDate(tx.date)}
@@ -896,7 +1000,7 @@ export default function TransactionsPage() {
       <Drawer
         title={t("detailTitle")}
         visible={!!selectedTransaction}
-        width={440}
+        width="min(440px, 100vw)"
         footer={null}
         onCancel={() => setSelectedTransaction(null)}
       >
@@ -908,7 +1012,7 @@ export default function TransactionsPage() {
                 <AmountDisplay amount={selectedTransaction.amount} type={selectedTransaction.type} showSign size="large" />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Tag color={selectedTransaction.type === 1 ? "green" : selectedTransaction.type === 2 ? "red" : "orange"}>
+                <Tag color={selectedTransaction.type === 1 ? "green" : selectedTransaction.type === 2 ? "red" : "purple"}>
                   {(typeColors[selectedTransaction.type] || typeColors[2]).label}
                 </Tag>
                 {renderFlagTags(selectedTransaction)}
@@ -934,15 +1038,12 @@ export default function TransactionsPage() {
 
             <div>
               <div className="mb-3 text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{t("complianceInfo")}</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
-                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{t("receipt")}</div>
-                  <Tag className="mt-2" color={receiptStatusFor(selectedTransaction).color}>{receiptStatusFor(selectedTransaction).label}</Tag>
-                </div>
-                <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
-                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{t("tax")}</div>
-                  <Tag className="mt-2" color={taxStatusFor(selectedTransaction).color}>{taxStatusFor(selectedTransaction).label}</Tag>
-                </div>
+              <div
+                className="flex items-start gap-2 rounded-xl border p-3 text-xs leading-5"
+                style={{ borderColor: "var(--color-warning-border)", backgroundColor: "var(--color-warning-soft)", color: "var(--color-warning)" }}
+              >
+                <IconExclamationCircle className="mt-0.5 shrink-0" />
+                <span>{t("linkageUnavailable")}</span>
               </div>
             </div>
 
@@ -968,7 +1069,7 @@ export default function TransactionsPage() {
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {selectedTransaction.type !== 3 && (
                 <Button
                   type="primary"
@@ -986,15 +1087,15 @@ export default function TransactionsPage() {
                   {t("refundAction")}
                 </Button>
               )}
-              {selectedTransaction.type !== 3 && (
-                <Button
-                  status="danger"
-                  icon={<IconDelete />}
-                  onClick={() => handleDelete(selectedTransaction.id, true)}
-                >
-                  {t("deleteAction")}
-                </Button>
-              )}
+              <Button
+                status="danger"
+                icon={<IconDelete />}
+                disabled={selectedTransaction.type !== 3 && selectedTransaction.refundedAmount > 0}
+                title={selectedTransaction.type !== 3 && selectedTransaction.refundedAmount > 0 ? "请先撤销关联退款" : undefined}
+                onClick={() => handleDelete(selectedTransaction, true)}
+              >
+                {selectedTransaction.type === 3 ? "撤销退款" : t("deleteAction")}
+              </Button>
             </div>
           </div>
         )}
@@ -1005,7 +1106,15 @@ export default function TransactionsPage() {
         mode={formMode}
         transactionId={activeTransactionId}
         onClose={closeForm}
-        onSuccess={refreshData}
+        onSuccess={handleFormSuccess}
+      />
+      <TransactionImportModal
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        onSuccess={() => {
+          setPageIndex(0);
+          void fetchData();
+        }}
       />
     </div>
   );

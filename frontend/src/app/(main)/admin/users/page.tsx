@@ -399,9 +399,9 @@ export default function AdminUsersPage() {
         }
       />
 
-      <Row gutter={16} className="mb-6">
+      <Row gutter={16} className="metric-grid">
         <Col xs={12} md={6}>
-          <Card style={{ borderRadius: 12 }}>
+          <Card className="metric-card" style={{ borderRadius: 12 }}>
             <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>在职员工</div>
             <div className="text-2xl font-bold">{summary?.activeEmployeeCount ?? 0}</div>
             <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>
@@ -410,7 +410,7 @@ export default function AdminUsersPage() {
           </Card>
         </Col>
         <Col xs={12} md={6}>
-          <Card style={{ borderRadius: 12 }}>
+          <Card className="metric-card" style={{ borderRadius: 12 }}>
             <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>月人力成本</div>
             <AmountDisplay amount={summary?.monthlyPeopleCost || 0} type={2} size="large" />
             <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>
@@ -419,7 +419,7 @@ export default function AdminUsersPage() {
           </Card>
         </Col>
         <Col xs={12} md={6}>
-          <Card style={{ borderRadius: 12 }}>
+          <Card className="metric-card" style={{ borderRadius: 12 }}>
             <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>部门数量</div>
             <div className="text-2xl font-bold">{summary?.departmentCount ?? 0}</div>
             <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>
@@ -428,7 +428,7 @@ export default function AdminUsersPage() {
           </Card>
         </Col>
         <Col xs={12} md={6}>
-          <Card style={{ borderRadius: 12 }}>
+          <Card className="metric-card" style={{ borderRadius: 12 }}>
             <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>待处理税费</div>
             <AmountDisplay amount={summary?.pendingTaxAmount || 0} type={2} size="large" />
             <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>

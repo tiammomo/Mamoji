@@ -18,13 +18,13 @@ export default function EmptyState({
   onAction,
 }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 animate-fade-in">
-      <div className="mb-4 text-6xl">{icon}</div>
-      <h3 className="text-lg font-medium mb-2" style={{ color: "var(--text-color-2)" }}>
+    <div className="empty-state animate-fade-in" role="status">
+      <div className="empty-state-icon" aria-hidden="true">{icon}</div>
+      <h3 className="mb-2 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>
         {title}
       </h3>
       {description && (
-        <p className="text-sm mb-6" style={{ color: "var(--text-color-3)" }}>
+        <p className={`${actionText && onAction ? "mb-5" : "mb-0"} max-w-md text-center text-sm leading-6`} style={{ color: "var(--text-color-3)" }}>
           {description}
         </p>
       )}

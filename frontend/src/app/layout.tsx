@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import ArcoReact19Adapter from "./ArcoReact19Adapter";
@@ -18,8 +18,23 @@ const themeBootScript = `
 `;
 
 export const metadata: Metadata = {
-  title: "Mamoji - 企业经营助手",
-  description: "初创公司经营记账、人员管理、预算控制和税费分析系统",
+  title: {
+    default: "Mamoji · 经营与家庭资金工作台",
+    template: "%s · Mamoji",
+  },
+  description: "统一管理多主体收支、账户、预算、票据、税务与人员事项的可信经营工作台。",
+  applicationName: "Mamoji",
+  robots: { index: false, follow: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4f7fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1120" },
+  ],
 };
 
 export default async function RootLayout({

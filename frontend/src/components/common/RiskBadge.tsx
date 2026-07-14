@@ -7,7 +7,7 @@ interface RiskBadgeProps {
 
 const riskConfig: Record<string, { color: string; bg: string; label: string }> = {
   low: { color: "#10b981", bg: "#10b98120", label: "低风险" },
-  medium: { color: "#f59e0b", bg: "#f59e0b20", label: "中风险" },
+  medium: { color: "#a85a42", bg: "#a85a4218", label: "中风险" },
   high: { color: "#ef4444", bg: "#ef444420", label: "高风险" },
   critical: { color: "#dc2626", bg: "#dc262620", label: "严重" },
 };

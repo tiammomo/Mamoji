@@ -201,7 +201,7 @@ export default function OrganizationPage() {
         }
       />
 
-      <Row gutter={[16, 16]} className="mb-6">
+      <Row gutter={[16, 16]} className="metric-grid">
         <Col xs={12} md={6}>
           <MetricCard title="组织单元" value={departmentRows.length} caption="公司部门" />
         </Col>
@@ -219,7 +219,7 @@ export default function OrganizationPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={7}>
           <Card style={{ borderRadius: 12 }} title="组织视图">
-            <div className="space-y-3">
+            <div className="bi-flat-list space-y-3">
               {loading ? (
                 <div className="py-10 text-center text-sm" style={{ color: "var(--text-color-3)" }}>加载中...</div>
               ) : departmentRows.map((department) => (
@@ -407,7 +407,7 @@ function MetricCard({
   tone?: "neutral" | "expense";
 }) {
   return (
-    <Card style={{ borderRadius: 12, height: "100%" }}>
+    <Card className="metric-card" style={{ borderRadius: 12, height: "100%" }}>
       <div className="mb-2 text-sm" style={{ color: "var(--text-color-3)" }}>{title}</div>
       {amount === undefined ? (
         <div className="text-2xl font-bold">{value ?? 0}</div>

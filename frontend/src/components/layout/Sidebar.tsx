@@ -1,117 +1,24 @@
 "use client";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar } from "@arco-design/web-react";
 import {
-  IconDashboard,
-  IconFile,
-  IconHome,
-  IconSwap,
-  IconStorage,
-  IconSafe,
-  IconCalendar,
-  IconIdcard,
-  IconUserGroup,
-  IconSettings,
   IconMenuFold,
   IconMenuUnfold,
   IconDown,
   IconRight,
-  IconBranch,
-  IconTrophy,
 } from "@arco-design/web-react/icon";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
 import { useTranslations } from "next-intl";
-
-type MenuGroup = {
-  labelKey: string;
-  items: Array<{ key: string; labelKey: string; icon: ReactNode }>;
-};
-
-const companyMenuGroups: MenuGroup[] = [
-  {
-    labelKey: "workspaceGroup",
-    items: [
-      { key: "/dashboard", labelKey: "dashboard", icon: <IconHome /> },
-    ],
-  },
-  {
-    labelKey: "operationsGroup",
-    items: [
-      { key: "/operations", labelKey: "operationsOverview", icon: <IconDashboard /> },
-      { key: "/transactions", labelKey: "transactions", icon: <IconSwap /> },
-      { key: "/budgets", labelKey: "budgets", icon: <IconCalendar /> },
-      { key: "/reports", labelKey: "reports", icon: <IconStorage /> },
-      { key: "/recurring", labelKey: "recurring", icon: <IconCalendar /> },
-    ],
-  },
-  {
-    labelKey: "financeGroup",
-    items: [
-      { key: "/finance", labelKey: "financeOverview", icon: <IconDashboard /> },
-      { key: "/accounts", labelKey: "accounts", icon: <IconSafe /> },
-      { key: "/receipts", labelKey: "receipts", icon: <IconFile /> },
-    ],
-  },
-  {
-    labelKey: "taxGroup",
-    items: [
-      { key: "/tax", labelKey: "taxManagement", icon: <IconFile /> },
-    ],
-  },
-  {
-    labelKey: "hrGroup",
-    items: [
-      { key: "/hr/organization", labelKey: "organizationManagement", icon: <IconBranch /> },
-      { key: "/admin/users", labelKey: "userManagement", icon: <IconUserGroup /> },
-      { key: "/admin/compensation", labelKey: "compensationManagement", icon: <IconIdcard /> },
-      { key: "/hr/benefits", labelKey: "benefitsManagement", icon: <IconSafe /> },
-      { key: "/hr/performance", labelKey: "performanceManagement", icon: <IconTrophy /> },
-    ],
-  },
-  {
-    labelKey: "systemGroup",
-    items: [
-      { key: "/settings", labelKey: "settings", icon: <IconSettings /> },
-      { key: "/policy-center", labelKey: "policyCenter", icon: <IconFile /> },
-      { key: "/backup", labelKey: "backup", icon: <IconStorage /> },
-    ],
-  },
-];
-
-const householdMenuGroups: MenuGroup[] = [
-  {
-    labelKey: "householdWorkspaceGroup",
-    items: [
-      { key: "/dashboard", labelKey: "householdDashboard", icon: <IconHome /> },
-    ],
-  },
-  {
-    labelKey: "householdFinanceGroup",
-    items: [
-      { key: "/transactions", labelKey: "householdTransactions", icon: <IconSwap /> },
-      { key: "/accounts", labelKey: "householdAccounts", icon: <IconSafe /> },
-      { key: "/budgets", labelKey: "householdBudgets", icon: <IconCalendar /> },
-      { key: "/reports", labelKey: "householdReports", icon: <IconStorage /> },
-      { key: "/recurring", labelKey: "householdRecurring", icon: <IconCalendar /> },
-    ],
-  },
-  {
-    labelKey: "systemGroup",
-    items: [
-      { key: "/settings", labelKey: "settings", icon: <IconSettings /> },
-      { key: "/backup", labelKey: "backup", icon: <IconStorage /> },
-    ],
-  },
-];
+import { activeNavigationKey, flattenNavigation, navigationFor, type NavigationGroup } from "./navigation";
 
 const sidebarOpenGroupsStorageKey = "sidebarOpenGroups";
 
-const getSelectedGroupKey = (groups: MenuGroup[], selectedKey: string) =>
+const getSelectedGroupKey = (groups: NavigationGroup[], selectedKey: string) =>
   groups.find((group) => group.items.some((item) => item.key === selectedKey))?.labelKey || groups[0]?.labelKey || "workspaceGroup";
 
-const readStoredOpenGroups = (groups: MenuGroup[], fallback: string[]) => {
+const readStoredOpenGroups = (groups: NavigationGroup[], fallback: string[]) => {
   if (typeof window === "undefined") return fallback;
   const raw = localStorage.getItem(sidebarOpenGroupsStorageKey);
   if (!raw) return fallback;
@@ -133,26 +40,9 @@ export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, activeSubjectType } = useAppStore();
   const { user } = useAuthStore();
   const t = useTranslations("nav");
-  const menuGroups = activeSubjectType === "household" ? householdMenuGroups : companyMenuGroups;
-  const menuItems = menuGroups.flatMap((group) => group.items);
-
-  const selectedKey = pathname.startsWith("/hr/organization")
-    ? "/hr/organization"
-    : pathname.startsWith("/hr/benefits")
-    ? "/hr/benefits"
-    : pathname.startsWith("/hr/performance")
-    ? "/hr/performance"
-    : pathname.startsWith("/admin/compensation")
-    ? "/admin/compensation"
-    : pathname.startsWith("/admin/users")
-    ? "/admin/users"
-    : pathname.startsWith("/backup")
-    ? "/backup"
-    : pathname.startsWith("/policy-center")
-    ? "/policy-center"
-    : pathname.startsWith("/admin")
-    ? "/settings"
-    : menuItems.find((item) => pathname.startsWith(item.key))?.key || "/dashboard";
+  const menuGroups = navigationFor(activeSubjectType, user?.role === 1);
+  const menuItems = flattenNavigation(menuGroups);
+  const selectedKey = activeNavigationKey(pathname, menuItems);
   const selectedGroupKey = getSelectedGroupKey(menuGroups, selectedKey);
   const defaultOpenGroupKeys = [menuGroups[0]?.labelKey || "workspaceGroup", selectedGroupKey].filter((value, index, list) => list.indexOf(value) === index);
   const [openGroupKeys, setOpenGroupKeys] = useState(() => readStoredOpenGroups(menuGroups, defaultOpenGroupKeys));
@@ -179,8 +69,9 @@ export default function Sidebar() {
   };
 
   return (
-    <div
-      className="h-full flex flex-col border-r glass"
+    <aside
+      className="app-sidebar h-full flex flex-col border-r glass"
+      aria-label={t("appSubtitle")}
       style={{
         width: sidebarCollapsed ? 76 : 272,
         borderColor: "var(--border-color)",
@@ -188,7 +79,13 @@ export default function Sidebar() {
       }}
     >
       {/* Logo */}
-      <div className="flex items-center justify-between border-b px-4" style={{ height: 68, borderColor: "var(--border-color)" }}>
+      <button
+        type="button"
+        className="flex w-full cursor-pointer items-center justify-between border-0 border-b bg-transparent px-4 text-left"
+        style={{ height: 68, borderColor: "var(--border-color)" }}
+        onClick={() => router.push("/dashboard")}
+        aria-label="Mamoji"
+      >
         {!sidebarCollapsed && (
           <div className="flex items-center gap-3">
             <div
@@ -215,10 +112,10 @@ export default function Sidebar() {
             M
           </div>
         )}
-      </div>
+      </button>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 overflow-y-auto px-3 py-3" aria-label={t("appSubtitle")}>
         <div className="space-y-3">
           {menuGroups.map((group) => (
             <div key={group.labelKey} className="space-y-1">
@@ -231,6 +128,7 @@ export default function Sidebar() {
                     <button
                       type="button"
                       aria-expanded={isGroupOpen}
+                      aria-controls={`sidebar-group-${group.labelKey}`}
                       onClick={() => toggleGroup(group.labelKey)}
                       className="group/section mb-1 flex h-8 w-full cursor-pointer items-center justify-between rounded-lg border-0 bg-transparent px-2 text-left outline-none transition-all hover:bg-black/[0.025] dark:hover:bg-white/[0.04]"
                       style={{
@@ -271,7 +169,7 @@ export default function Sidebar() {
                 <div className="my-1.5 border-t" style={{ borderColor: "var(--border-color-light)" }} />
               )}
               {(sidebarCollapsed || effectiveOpenGroupKeys.includes(group.labelKey)) && (
-              <div className="space-y-1">
+              <div className="space-y-1" id={`sidebar-group-${group.labelKey}`}>
                 {group.items.map((item) => {
                   const isActive = selectedKey === item.key;
                   const label = t(item.labelKey);
@@ -324,7 +222,10 @@ export default function Sidebar() {
       {/* Collapse button */}
       <div className="p-2 border-t" style={{ borderColor: "var(--border-color)" }}>
         <button
+          type="button"
           onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? t("collapseMenu") : t("collapseMenu")}
+          title={t("collapseMenu")}
           className="flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-0 bg-transparent px-3 transition-all hover:bg-black/5 dark:hover:bg-white/5"
           style={{ color: "var(--text-color-3)" }}
         >
@@ -354,6 +255,6 @@ export default function Sidebar() {
           </div>
         </div>
       )}
-    </div>
+    </aside>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Button,
   Card,
+  DatePicker,
   Empty,
   Form,
   Grid,
@@ -30,6 +32,7 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import { receiptApi } from "@/lib/api/receipts";
+import { approvalApi } from "@/lib/api/approvals";
 import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 import type { ReceiptAuditLog, ReceiptPayload, ReceiptQuery, ReceiptSummary, ReceiptVoucher } from "@/lib/types";
@@ -88,6 +91,7 @@ const reimbursementLabels: Record<string, { label: string; color: string }> = {
 
 const approvalLabels: Record<string, { label: string; color: string }> = {
   not_required: { label: "无需审批", color: "gray" },
+  not_submitted: { label: "待发起审批", color: "arcoblue" },
   pending: { label: "待审批", color: "orange" },
   approved: { label: "已审批", color: "green" },
   rejected: { label: "审批驳回", color: "red" },
@@ -132,6 +136,7 @@ type ReceiptView = {
 };
 
 export default function ReceiptsPage() {
+  const router = useRouter();
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [filters, setFilters] = useState<ReceiptQuery>(initialFilters);
   const [view, setView] = useState<ReceiptView>({
@@ -149,8 +154,10 @@ export default function ReceiptsPage() {
   const [workflowUpdatingId, setWorkflowUpdatingId] = useState<number | null>(null);
   const [attachmentOpeningId, setAttachmentOpeningId] = useState<number | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [batchUploading, setBatchUploading] = useState(false);
   const [form] = Form.useForm();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const batchFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadData = async (nextFilters = filters, quiet = false) => {
     if (quiet) {
@@ -253,7 +260,6 @@ export default function ReceiptsPage() {
       invoiceCheckStatus: "pending",
       deductionStatus: "pending",
       reimbursementStatus: "not_applicable",
-      approvalStatus: "not_required",
       accountingStatus: "not_started",
       accountingVoucherNo: "",
       accountingEntry: "",
@@ -344,6 +350,26 @@ export default function ReceiptsPage() {
     }
   };
 
+  const submitApproval = async (voucher: ReceiptVoucher) => {
+    try {
+      setWorkflowUpdatingId(voucher.id);
+      await approvalApi.create({
+        requestType: voucher.voucherType === "reimbursement" ? "reimbursement" : "payment",
+        entityType: "receipt_voucher",
+        entityId: voucher.id,
+        title: `${voucher.voucherType === "reimbursement" ? "报销" : "付款"}审批：${voucher.title}`,
+        amount: Number(voucher.amount || 0),
+        description: [voucher.counterparty, voucher.businessPurpose, voucher.voucherNo].filter(Boolean).join(" · "),
+      });
+      Message.success("审批申请已提交，可在审批中心跟踪进度");
+      await loadData(filters, true);
+    } catch {
+      Message.error("审批申请提交失败，请检查是否已有待处理申请");
+    } finally {
+      setWorkflowUpdatingId(null);
+    }
+  };
+
   const openAttachment = async (voucher: ReceiptVoucher) => {
     if (voucher.fileStorageProvider !== "minio") {
       Message.info(voucher.fileName ? "当前附件只完成元数据归档，未写入对象存储" : "当前凭证没有可打开的附件");
@@ -363,8 +389,44 @@ export default function ReceiptsPage() {
     }
   };
 
+  const uploadBatch = async (files: File[]) => {
+    if (files.length === 0) return;
+    setBatchUploading(true);
+    try {
+      const response = await receiptApi.batchUpload(files, {
+        voucherType: "purchase_invoice",
+        direction: "expense",
+        counterparty: "待补充",
+        amount: 0,
+        taxAmount: 0,
+        issueDate: today(),
+        status: "pending_review",
+      });
+      const { successCount, failureCount, failures } = response.data;
+      if (successCount > 0) Message.success(`已归档 ${successCount} 个附件，已进入待核验队列`);
+      if (failureCount > 0) {
+        const duplicateCount = failures.filter((item) => item.status === 409).length;
+        Message.warning(`${failureCount} 个文件未导入${duplicateCount ? `，其中 ${duplicateCount} 个为重复附件` : ""}`);
+      }
+      await loadData(filters, true);
+    } catch {
+      Message.error("批量归档失败，请确认文件格式和单文件大小不超过 10 MB");
+    } finally {
+      setBatchUploading(false);
+      if (batchFileInputRef.current) batchFileInputRef.current.value = "";
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
+      <input
+        ref={batchFileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/jpeg,image/png,image/gif,image/webp,application/pdf"
+        onChange={(event) => void uploadBatch(Array.from(event.target.files || []))}
+      />
       <PageHeader
         title="票据与报销中心"
         subtitle="发票、报销单、银行回单、合同付款与税务回执统一归档"
@@ -375,6 +437,9 @@ export default function ReceiptsPage() {
             <Button icon={<IconRefresh />} onClick={() => loadData(filters, true)}>
               刷新
             </Button>
+            <Button icon={<IconUpload />} loading={batchUploading} onClick={() => batchFileInputRef.current?.click()}>
+              批量归档
+            </Button>
             <Button type="primary" icon={<IconUpload />} onClick={openCreate}>
               新增凭证
             </Button>
@@ -382,11 +447,11 @@ export default function ReceiptsPage() {
         }
       />
 
-      <Row gutter={16} className="mb-6">
+      <Row gutter={16} className="metric-grid">
         {summaryCards.map((card) => (
           <Col key={card.label} xs={12} md={6}>
-            <Card style={{ borderRadius: 12, minHeight: 148 }}>
-              <div className="flex h-full min-h-[108px] flex-col justify-between">
+            <Card className="metric-card" style={{ borderRadius: 12, minHeight: 132 }}>
+              <div className="flex h-full min-h-[92px] flex-col justify-between">
                 <div className="flex items-center justify-between">
                   <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
                   <span className="inline-flex text-xl" style={{ color: "var(--color-primary)" }}>{card.icon}</span>
@@ -410,7 +475,7 @@ export default function ReceiptsPage() {
           {initialLoading ? (
             <Skeleton />
           ) : (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="bi-segment-grid grid grid-cols-1 md:grid-cols-4">
               {[
                 ["销项发票", formatAmount(view.summary?.salesInvoiceAmount || 0), `销项税额 ${formatAmount(view.summary?.outputTaxAmount || 0)}`],
                 ["进项发票", formatAmount(view.summary?.purchaseInvoiceAmount || 0), `可抵扣 ${formatAmount(view.summary?.deductibleTaxAmount || 0)}`],
@@ -434,7 +499,7 @@ export default function ReceiptsPage() {
           {initialLoading ? (
             <Skeleton />
           ) : (
-            <div className="space-y-3">
+            <div className="bi-flat-list space-y-3">
               <div className="flex items-center justify-between rounded-lg px-4 py-3" style={{ backgroundColor: "var(--color-fill-1)" }}>
                 <span style={{ color: "var(--text-color-2)" }}>报销总额</span>
                 <strong>{formatAmount(view.summary?.reimbursementAmount || 0)}</strong>
@@ -456,7 +521,7 @@ export default function ReceiptsPage() {
         </Card>
       </div>
 
-      <Card className="mb-6" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-6" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
           <Input
             allowClear
@@ -711,15 +776,18 @@ export default function ReceiptsPage() {
                             onClick={() => updateStatus(voucher, voucher.transactionId ? "linked" : "verified")}
                           />
                         )}
-                        {voucher.approvalStatus === "pending" && (
+                        {["not_required", "not_submitted", "rejected"].includes(voucher.approvalStatus) && (
                           <Button
                             type="text"
                             size="mini"
-                            title="审批通过"
+                            title="提交审批"
                             loading={workflowUpdatingId === voucher.id}
                             icon={<IconCheckCircle />}
-                            onClick={() => updateWorkflow(voucher, { approvalStatus: "approved" }, "审批已通过")}
+                            onClick={() => submitApproval(voucher)}
                           />
+                        )}
+                        {voucher.approvalStatus === "pending" && (
+                          <Button type="text" size="mini" title="前往审批中心" onClick={() => router.push("/approvals")}>审批中</Button>
                         )}
                         {voucher.accountingStatus !== "posted" && voucher.status !== "pending_review" && (
                           <Button
@@ -835,13 +903,6 @@ export default function ReceiptsPage() {
                 ))}
               </Select>
             </FormItem>
-            <FormItem label="审批状态" field="approvalStatus">
-              <Select>
-                {Object.entries(approvalLabels).map(([value, meta]) => (
-                  <Select.Option key={value} value={value}>{meta.label}</Select.Option>
-                ))}
-              </Select>
-            </FormItem>
             <FormItem label="会计状态" field="accountingStatus">
               <Select>
                 {Object.entries(accountingLabels).map(([value, meta]) => (
@@ -859,10 +920,10 @@ export default function ReceiptsPage() {
               <Input placeholder="员工、部门或负责人" />
             </FormItem>
             <FormItem label="开具日期" field="issueDate" rules={[{ required: true, message: "请输入开具日期" }]}>
-              <Input placeholder="yyyy-MM-dd" />
+              <DatePicker format="YYYY-MM-DD" className="w-full" />
             </FormItem>
             <FormItem label="截止日期" field="dueDate">
-              <Input placeholder="yyyy-MM-dd" />
+              <DatePicker format="YYYY-MM-DD" className="w-full" allowClear />
             </FormItem>
             <FormItem label="关联流水 ID" field="transactionId">
               <InputNumber min={1} precision={0} placeholder="可选" />
@@ -872,14 +933,14 @@ export default function ReceiptsPage() {
                 ref={fileInputRef}
                 type="file"
                 className="hidden"
-                accept="image/*,.pdf"
+                accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/jpeg,image/png,image/gif,image/webp,application/pdf"
                 onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
               />
               <Button icon={<IconUpload />} onClick={() => fileInputRef.current?.click()}>
                 选择文件
               </Button>
               <span className="ml-3 text-xs" style={{ color: "var(--text-color-3)" }}>
-                {selectedFile?.name || editingVoucher?.fileName || "未选择"}
+                {selectedFile?.name || editingVoucher?.fileName || "支持 JPG、PNG、GIF、WebP、PDF，最大 10 MB"}
               </span>
               {editingVoucher && (
                 <Button
@@ -891,7 +952,7 @@ export default function ReceiptsPage() {
                   disabled={!editingVoucher.fileName}
                   onClick={() => openAttachment(editingVoucher)}
                 >
-                  打开附件
+                  下载附件
                 </Button>
               )}
             </FormItem>

@@ -14,14 +14,14 @@ interface BudgetProgressProps {
 
 const riskColors: Record<string, string> = {
   low: "#10b981",
-  medium: "#f59e0b",
+  medium: "#a85a42",
   high: "#ef4444",
   critical: "#dc2626",
 };
 
 const riskGradients: Record<string, string> = {
   low: "linear-gradient(90deg, #10b981, #059669)",
-  medium: "linear-gradient(90deg, #f59e0b, #d97706)",
+  medium: "linear-gradient(90deg, #b86a52, #8f4558)",
   high: "linear-gradient(90deg, #ef4444, #dc2626)",
   critical: "linear-gradient(90deg, #dc2626, #b91c1c)",
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, Card, Empty, Message, Progress, Skeleton, Tag } from "@arco-design/web-react";
+import { Alert, Button, Card, Empty, Message, Progress, Skeleton, Tag } from "@arco-design/web-react";
 import {
   IconArrowFall,
   IconArrowRise,
@@ -104,11 +104,16 @@ function dueText(date?: string | null) {
 
 function categoryColor(index: number, type: "income" | "expense") {
   const incomeColors = ["#10b981", "#22c55e", "#14b8a6", "#0ea5e9"];
-  const expenseColors = ["#ef4444", "#f97316", "#f59e0b", "#8b5cf6"];
+  const expenseColors = ["#e5484d", "#b86a52", "#7c5cc4", "#4f6bdc"];
   return (type === "income" ? incomeColors : expenseColors)[index % 4];
 }
 
-const loadOperationsView = async (): Promise<OperationsView> => {
+type OperationsLoadResult = {
+  view: OperationsView;
+  failedSections: string[];
+};
+
+const loadOperationsView = async (): Promise<OperationsLoadResult> => {
   const range = currentMonthRange();
   const [
     overviewResult,
@@ -130,15 +135,31 @@ const loadOperationsView = async (): Promise<OperationsView> => {
     recurringApi.list(),
   ]);
 
+  const namedResults = [
+    ["月度经营数据", overviewResult],
+    ["趋势", trendResult],
+    ["收入分类", incomeResult],
+    ["成本分类", expenseResult],
+    ["经营洞察", insightsResult],
+    ["预算", budgetsResult],
+    ["经营流水", transactionsResult],
+    ["周期事项", recurringResult],
+  ] as const;
+
   return {
-    overview: overviewResult.status === "fulfilled" ? overviewResult.value.data : null,
-    trend: trendResult.status === "fulfilled" ? trendResult.value.data : [],
-    incomeCategories: incomeResult.status === "fulfilled" ? incomeResult.value.data : [],
-    expenseCategories: expenseResult.status === "fulfilled" ? expenseResult.value.data : [],
-    insights: insightsResult.status === "fulfilled" ? insightsResult.value.data : null,
-    budgets: budgetsResult.status === "fulfilled" ? budgetsResult.value.data.content : [],
-    transactions: transactionsResult.status === "fulfilled" ? transactionsResult.value.data.content : [],
-    recurringItems: recurringResult.status === "fulfilled" ? recurringResult.value.data : [],
+    view: {
+      overview: overviewResult.status === "fulfilled" ? overviewResult.value.data : null,
+      trend: trendResult.status === "fulfilled" ? trendResult.value.data : [],
+      incomeCategories: incomeResult.status === "fulfilled" ? incomeResult.value.data : [],
+      expenseCategories: expenseResult.status === "fulfilled" ? expenseResult.value.data : [],
+      insights: insightsResult.status === "fulfilled" ? insightsResult.value.data : null,
+      budgets: budgetsResult.status === "fulfilled" ? budgetsResult.value.data.content : [],
+      transactions: transactionsResult.status === "fulfilled" ? transactionsResult.value.data.content : [],
+      recurringItems: recurringResult.status === "fulfilled" ? recurringResult.value.data : [],
+    },
+    failedSections: namedResults
+      .filter(([, result]) => result.status === "rejected")
+      .map(([name]) => name),
   };
 };
 
@@ -147,12 +168,18 @@ export default function OperationsPage() {
   const [view, setView] = useState<OperationsView>(emptyView);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [failedSections, setFailedSections] = useState<string[]>([]);
 
   const loadData = async (quiet = false) => {
     if (quiet) setRefreshing(true);
     try {
-      setView(await loadOperationsView());
-      if (quiet) Message.success("经营总览已刷新");
+      const result = await loadOperationsView();
+      setView(result.view);
+      setFailedSections(result.failedSections);
+      if (quiet) {
+        if (result.failedSections.length > 0) Message.warning("部分经营数据未能刷新");
+        else Message.success("经营总览已刷新");
+      }
     } catch {
       Message.error("经营总览加载失败");
     } finally {
@@ -166,9 +193,10 @@ export default function OperationsPage() {
 
     const load = async () => {
       setLoading(true);
-      const nextView = await loadOperationsView();
+      const result = await loadOperationsView();
       if (!cancelled) {
-        setView(nextView);
+        setView(result.view);
+        setFailedSections(result.failedSections);
         setLoading(false);
       }
     };
@@ -284,11 +312,13 @@ export default function OperationsPage() {
     }
     if (actions.length === 0) {
       actions.push({
-        title: "经营节奏稳定",
-        detail: "当前收入、预算、周期事项没有明显待处理风险",
+        title: failedSections.length > 0 ? "部分经营数据暂不可用" : "经营节奏稳定",
+        detail: failedSections.length > 0
+          ? "无法在数据不完整时判断经营状态，请先重新加载"
+          : "当前收入、预算、周期事项没有明显待处理风险",
         path: "/operations",
-        severity: "success",
-        icon: <IconCheckCircle />,
+        severity: failedSections.length > 0 ? "warning" : "success",
+        icon: failedSections.length > 0 ? <IconExclamationCircle /> : <IconCheckCircle />,
       });
     }
 
@@ -318,22 +348,31 @@ export default function OperationsPage() {
       severity,
       actions,
     };
-  }, [view]);
+  }, [failedSections.length, view]);
+
+  const healthUnavailable = ["月度经营数据", "趋势", "预算", "经营流水", "周期事项"]
+    .some((section) => failedSections.includes(section));
 
   const metricCards = [
     {
       label: "本月收入",
       value: <AmountDisplay amount={model.income} type={1} size="large" />,
-      hint: model.bestIncomeCategory ? `最大来源：${model.bestIncomeCategory.categoryName}` : "暂无收入分类",
+      hint: failedSections.includes("收入分类")
+        ? "分类数据暂不可用"
+        : model.bestIncomeCategory ? `最大来源：${model.bestIncomeCategory.categoryName}` : "暂无收入分类",
       icon: <IconArrowRise />,
       accent: "var(--color-success)",
+      unavailable: failedSections.includes("月度经营数据"),
     },
     {
       label: "本月成本",
       value: <AmountDisplay amount={model.expense} type={2} size="large" />,
-      hint: model.biggestExpenseCategory ? `最大成本：${model.biggestExpenseCategory.categoryName}` : "暂无成本分类",
+      hint: failedSections.includes("成本分类")
+        ? "分类数据暂不可用"
+        : model.biggestExpenseCategory ? `最大成本：${model.biggestExpenseCategory.categoryName}` : "暂无成本分类",
       icon: <IconArrowFall />,
       accent: "var(--color-danger)",
+      unavailable: failedSections.includes("月度经营数据"),
     },
     {
       label: "经营利润",
@@ -341,6 +380,7 @@ export default function OperationsPage() {
       hint: `利润率 ${(model.profitMargin * 100).toFixed(1)}%`,
       icon: <IconSafe />,
       accent: model.profit >= 0 ? "var(--color-success)" : "var(--color-danger)",
+      unavailable: failedSections.includes("月度经营数据"),
     },
     {
       label: "经营健康度",
@@ -348,6 +388,7 @@ export default function OperationsPage() {
       hint: statusMeta[model.severity].label,
       icon: <IconDashboard />,
       accent: model.severity === "danger" ? "var(--color-danger)" : "var(--color-primary)",
+      unavailable: healthUnavailable,
     },
   ];
 
@@ -370,10 +411,20 @@ export default function OperationsPage() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {failedSections.length > 0 && (
+        <Alert
+          className="mb-6"
+          type="warning"
+          title="部分经营数据未能加载"
+          content={`${failedSections.join("、")} 暂不可用；缺失内容不会被当作 0 或“无风险”。`}
+          action={<Button size="small" icon={<IconRefresh />} loading={refreshing} onClick={() => void loadData(true)}>重新加载</Button>}
+        />
+      )}
+
+      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         {metricCards.map((card) => (
-          <Card key={card.label} style={{ borderRadius: 12, minHeight: 150 }}>
-            <div className="flex h-full min-h-[110px] flex-col justify-between">
+          <Card className="metric-card" key={card.label} style={{ borderRadius: 12, minHeight: 136 }}>
+            <div className="flex h-full min-h-[96px] flex-col justify-between">
               <div className="flex items-start justify-between">
                 <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
                 <span className="inline-flex text-xl" style={{ color: card.accent }}>{card.icon}</span>
@@ -382,8 +433,8 @@ export default function OperationsPage() {
                 <Skeleton />
               ) : (
                 <div>
-                  <div style={{ color: "var(--text-color-1)" }}>{card.value}</div>
-                  <div className="mt-2 truncate text-xs" style={{ color: "var(--text-color-3)" }}>{card.hint}</div>
+                  <div style={{ color: "var(--text-color-1)" }}>{card.unavailable ? <span className="text-2xl font-bold">--</span> : card.value}</div>
+                  <div className="mt-2 truncate text-xs" style={{ color: "var(--text-color-3)" }}>{card.unavailable ? "数据暂不可用" : card.hint}</div>
                 </div>
               )}
             </div>
@@ -395,6 +446,12 @@ export default function OperationsPage() {
         <Card style={{ borderRadius: 12 }} title="经营健康看板">
           {loading ? (
             <Skeleton />
+          ) : healthUnavailable ? (
+            <div className="flex min-h-[224px] flex-col items-center justify-center px-6 text-center">
+              <IconExclamationCircle style={{ color: "var(--color-warning)", fontSize: 34 }} />
+              <div className="mt-4 font-semibold">暂不计算经营健康度</div>
+              <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>数据不完整，避免输出误导性结论</div>
+            </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
               <div
@@ -501,10 +558,16 @@ export default function OperationsPage() {
         </Card>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card style={{ borderRadius: 12 }} title="收入来源">
+      <div className="bi-panel-cluster bi-cluster-xl mb-6 grid grid-cols-1 xl:grid-cols-3">
+        <Card
+          className={!loading && !failedSections.includes("收入分类") && view.incomeCategories.length === 0 ? "bi-compact-empty" : undefined}
+          style={{ borderRadius: 12 }}
+          title="收入来源"
+        >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("收入分类") ? (
+            <Empty description="收入分类数据暂不可用" />
           ) : view.incomeCategories.length === 0 ? (
             <Empty description="暂无收入分类" />
           ) : (
@@ -539,9 +602,15 @@ export default function OperationsPage() {
           )}
         </Card>
 
-        <Card style={{ borderRadius: 12 }} title="成本结构">
+        <Card
+          className={!loading && !failedSections.includes("成本分类") && view.expenseCategories.length === 0 ? "bi-compact-empty" : undefined}
+          style={{ borderRadius: 12 }}
+          title="成本结构"
+        >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("成本分类") ? (
+            <Empty description="成本分类数据暂不可用" />
           ) : view.expenseCategories.length === 0 ? (
             <Empty description="暂无成本分类" />
           ) : (
@@ -579,6 +648,8 @@ export default function OperationsPage() {
         <Card style={{ borderRadius: 12 }} title="周期事项">
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("周期事项") ? (
+            <Empty description="周期事项数据暂不可用" />
           ) : model.activeRecurring.length === 0 ? (
             <Empty description="暂无启用周期事项" />
           ) : (
@@ -624,6 +695,8 @@ export default function OperationsPage() {
         >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("预算") ? (
+            <Empty description="预算数据暂不可用" />
           ) : model.budgetRisks.length === 0 ? (
             <Empty description="暂无预算风险" />
           ) : (
@@ -675,6 +748,8 @@ export default function OperationsPage() {
         >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("经营流水") ? (
+            <Empty description="经营流水暂不可用" />
           ) : view.transactions.length === 0 ? (
             <Empty description="暂无经营流水" />
           ) : (

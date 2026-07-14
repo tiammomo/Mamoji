@@ -316,10 +316,10 @@ export default function RecurringPage() {
   const summaryCards: Array<{ label: string; value: ReactNode; helper: string; icon: ReactNode; accent: string }> = [
     {
       label: "今日待办",
-      value: <span style={{ color: summary.dueTodayCount > 0 ? "#f59e0b" : "var(--text-color-1)" }}>{summary.dueTodayCount}</span>,
+      value: <span style={{ color: summary.dueTodayCount > 0 ? "var(--color-warning)" : "var(--text-color-1)" }}>{summary.dueTodayCount}</span>,
       helper: "今天需要处理",
       icon: <IconCalendar />,
-      accent: "#f59e0b",
+      accent: "#a85a42",
     },
     {
       label: "7 天内到期",
@@ -525,9 +525,9 @@ export default function RecurringPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
+      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
-          <Card key={item.label} style={{ borderRadius: 12 }}>
+          <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
             <div className="flex h-[92px] flex-col justify-between">
               <div className="flex items-center justify-between">
                 <span className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</span>
@@ -542,7 +542,7 @@ export default function RecurringPage() {
         ))}
       </div>
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="mb-3 flex flex-wrap gap-2">
           {quickViews.map((item) => {
             const active = quickView === item.key;
@@ -715,8 +715,8 @@ export default function RecurringPage() {
                           <div
                             className="mt-2 inline-flex rounded-md px-2 py-1 text-xs"
                             style={{
-                              color: dueLevel === "overdue" ? "#ef4444" : dueLevel === "soon" ? "#f59e0b" : "var(--text-color-3)",
-                              backgroundColor: dueLevel === "overdue" ? "#ef44441a" : dueLevel === "soon" ? "#f59e0b1a" : "var(--bg-color-page)",
+                              color: dueLevel === "overdue" ? "#ef4444" : dueLevel === "soon" ? "var(--color-warning)" : "var(--text-color-3)",
+                              backgroundColor: dueLevel === "overdue" ? "#ef44441a" : dueLevel === "soon" ? "var(--color-warning-soft)" : "var(--bg-color-page)",
                             }}
                           >
                             {getDueText(item)}
@@ -822,7 +822,7 @@ export default function RecurringPage() {
                 {[
                   ["周期规则", getFrequencyLabel(selectedItem), "var(--text-color-1)"],
                   ["下次执行", formatDate(selectedItem.nextExecution), "var(--text-color-1)"],
-                  ["执行提醒", getDueText(selectedItem), getDueLevel(selectedItem) === "overdue" ? "#ef4444" : "#f59e0b"],
+                  ["执行提醒", getDueText(selectedItem), getDueLevel(selectedItem) === "overdue" ? "#ef4444" : "var(--color-warning)"],
                   ["执行次数", `${selectedItem.executionCount} 次`, "var(--text-color-1)"],
                 ].map(([label, value, color]) => (
                   <div key={label} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>

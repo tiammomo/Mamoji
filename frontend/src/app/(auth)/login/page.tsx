@@ -1,178 +1,144 @@
 "use client";
-import { useState } from "react";
-import { Form, Input, Button, Message, Checkbox } from "@arco-design/web-react";
-import { IconEmail, IconLock } from "@arco-design/web-react/icon";
-import { useRouter } from "next/navigation";
-import { useAuthStore } from "@/lib/stores/authStore";
-import { useTranslations } from "next-intl";
+
+import { Suspense, useState } from "react";
+import axios from "axios";
+import { Alert, Button, Form, Input, Message } from "@arco-design/web-react";
+import { IconEmail, IconLock, IconSafe } from "@arco-design/web-react/icon";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import AuthShell from "@/components/auth/AuthShell";
+import { useAuthStore } from "@/lib/stores/authStore";
 
 const FormItem = Form.Item;
 const showDemoCredentials = process.env.NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS !== "false";
 
-export default function LoginPage() {
+type LoginValues = { email: string; password: string };
+
+function safeNextPath(requestedPath: string | null) {
+  if (!requestedPath || typeof window === "undefined") return "/dashboard";
+  try {
+    const target = new URL(requestedPath, window.location.origin);
+    if (target.origin !== window.location.origin || !target.pathname.startsWith("/")) {
+      return "/dashboard";
+    }
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return "/dashboard";
+  }
+}
+
+function loginErrorMessage(error: unknown) {
+  if (!axios.isAxiosError(error)) return "登录失败，请稍后重试";
+  if (error.response?.status === 429) return "尝试次数过多，请稍后再试";
+  if (error.response?.status === 403) return "当前账户已被限制登录，请联系管理员";
+  if (!error.response) return "无法连接服务器，请检查网络后重试";
+  return "邮箱或密码不正确";
+}
+
+function LoginContent() {
   const [loading, setLoading] = useState(false);
+  const [form] = Form.useForm<LoginValues>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login } = useAuthStore();
   const t = useTranslations("auth");
+  const sessionExpired = searchParams.get("reason") === "session_expired";
 
-  const handleSubmit = async (values: { email: string; password: string }) => {
+  const handleSubmit = async (values: LoginValues) => {
     setLoading(true);
     try {
       await login(values);
-      Message.success(t("login") + "成功");
-      router.push("/dashboard");
-    } catch {
-      Message.error("邮箱或密码错误");
+      Message.success("登录成功");
+      router.replace(safeNextPath(searchParams.get("next")));
+    } catch (error) {
+      Message.error(loginErrorMessage(error));
     } finally {
       setLoading(false);
     }
   };
 
+  const fillDemo = (email: string) => {
+    form.setFieldsValue({ email, password: "123456" });
+  };
+
   return (
-    <div className="min-h-screen flex" style={{ backgroundColor: "var(--bg-color-page)" }}>
-      {/* Left side - decorative */}
-      <div
-        className="hidden lg:flex lg:w-1/2 xl:w-3/5 relative overflow-hidden"
-        style={{ background: "var(--gradient-primary)" }}
-      >
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-white">
-          <div className="text-8xl mb-6">💰</div>
-          <h1 className="text-4xl font-bold mb-4 text-center">Mamoji</h1>
-          <p className="text-xl text-center opacity-90 max-w-md">
-            初创公司经营助手，让收入、成本、税费和人员状态一眼清晰
-          </p>
-          <div className="mt-12 grid grid-cols-3 gap-6 text-center">
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-              <div className="text-3xl mb-2">📊</div>
-              <div className="text-sm">经营分析</div>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-              <div className="text-3xl mb-2">🎯</div>
-              <div className="text-sm">预算控制</div>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-              <div className="text-3xl mb-2">🧾</div>
-              <div className="text-sm">税费提醒</div>
-            </div>
-          </div>
+    <AuthShell
+      variant="login"
+      title={t("loginTitle")}
+      description="登录后继续处理当前主体的经营事项与待办。"
+    >
+      {sessionExpired && (
+        <Alert className="mb-5" type="warning" content="会话已过期，请重新登录以继续。" />
+      )}
+
+      <Form form={form} layout="vertical" onSubmit={handleSubmit} autoComplete="on">
+        <FormItem
+          label={t("email")}
+          field="email"
+          rules={[
+            { required: true, message: "请输入邮箱" },
+            { type: "email", message: "请输入有效的邮箱" },
+          ]}
+        >
+          <Input
+            prefix={<IconEmail aria-hidden="true" />}
+            placeholder="name@company.com"
+            size="large"
+            autoComplete="email"
+          />
+        </FormItem>
+
+        <FormItem
+          label={t("password")}
+          field="password"
+          rules={[{ required: true, message: "请输入密码" }]}
+        >
+          <Input.Password
+            prefix={<IconLock aria-hidden="true" />}
+            placeholder={t("password")}
+            size="large"
+            autoComplete="current-password"
+          />
+        </FormItem>
+
+        <div className="mb-5 flex items-center gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+          <IconSafe aria-hidden="true" />
+          <span>系统会在会话失效后自动清理本地凭据。</span>
         </div>
-        {/* Decorative circles */}
-        <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-white/10" />
-        <div className="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10" />
-        <div className="absolute top-1/2 -right-20 w-32 h-32 rounded-full bg-white/10" />
+
+        <FormItem className="mb-0">
+          <Button type="primary" htmlType="submit" long size="large" loading={loading}>
+            {loading ? "正在验证…" : t("login")}
+          </Button>
+        </FormItem>
+      </Form>
+
+      <div className="auth-form-footer">
+        <span>{t("noAccount")} </span>
+        <Link href="/register">使用邀请创建账号</Link>
       </div>
 
-      {/* Right side - form */}
-      <div className="w-full lg:w-1/2 xl:w-2/5 flex items-center justify-center p-8">
-        <div className="w-full max-w-md animate-fade-in">
-          {/* Mobile logo */}
-          <div className="lg:hidden text-center mb-8">
-            <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center text-4xl mx-auto mb-4"
-              style={{ background: "var(--gradient-primary)" }}
-            >
-              💰
-            </div>
-            <h1 className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
-              Mamoji
-            </h1>
+      {showDemoCredentials && (
+        <section className="demo-account-panel" aria-label="演示账号">
+          <div>
+            <strong>体验演示环境</strong>
+            <span>一键填入本地演示账号；生产环境应关闭此区域。</span>
           </div>
-
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--text-color-1)" }}>
-              {t("loginTitle")}
-            </h2>
-            <p style={{ color: "var(--text-color-3)" }}>
-              登录公司工作台继续处理经营数据
-            </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="secondary" onClick={() => fillDemo("test@mamoji.com")}>管理员视角</Button>
+            <Button type="secondary" onClick={() => fillDemo("family@mamoji.com")}>成员视角</Button>
           </div>
+        </section>
+      )}
+    </AuthShell>
+  );
+}
 
-          <Form layout="vertical" onSubmit={handleSubmit} autoComplete="off">
-            <FormItem
-              field="email"
-              rules={[
-                { required: true, message: "请输入邮箱" },
-                { type: "email", message: "请输入有效的邮箱" },
-              ]}
-            >
-              <Input
-                prefix={<IconEmail style={{ color: "var(--text-color-4)" }} />}
-                placeholder={t("email")}
-                size="large"
-                style={{ height: 48, borderRadius: 12 }}
-              />
-            </FormItem>
-
-            <FormItem
-              field="password"
-              rules={[{ required: true, message: "请输入密码" }]}
-            >
-              <Input.Password
-                prefix={<IconLock style={{ color: "var(--text-color-4)" }} />}
-                placeholder={t("password")}
-                size="large"
-                style={{ height: 48, borderRadius: 12 }}
-              />
-            </FormItem>
-
-            <div className="flex items-center justify-between mb-6">
-              <Checkbox>记住我</Checkbox>
-              <a
-                href="#"
-                className="text-sm hover:underline"
-                style={{ color: "var(--color-primary)" }}
-              >
-                忘记密码？
-              </a>
-            </div>
-
-            <FormItem>
-              <Button
-                type="primary"
-                htmlType="submit"
-                long
-                size="large"
-                loading={loading}
-                style={{
-                  height: 48,
-                  borderRadius: 12,
-                  fontSize: 16,
-                  fontWeight: 600,
-                }}
-              >
-                {t("login")}
-              </Button>
-            </FormItem>
-          </Form>
-
-          <div className="text-center mt-6">
-            <span style={{ color: "var(--text-color-3)" }}>{t("noAccount")} </span>
-            <Link
-              href="/register"
-              className="font-medium hover:underline"
-              style={{ color: "var(--color-primary)" }}
-            >
-              {t("register")}
-            </Link>
-          </div>
-
-          {showDemoCredentials && (
-            <div
-              className="mt-8 p-4 rounded-xl text-center text-sm"
-              style={{
-                backgroundColor: "var(--bg-color-card-hover)",
-                color: "var(--text-color-3)",
-              }}
-            >
-              <div className="font-medium mb-1" style={{ color: "var(--text-color-2)" }}>
-                测试账号
-              </div>
-              <div>test@mamoji.com / 123456</div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="app-boot-screen"><div className="app-boot-mark">M</div></div>}>
+      <LoginContent />
+    </Suspense>
   );
 }

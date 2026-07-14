@@ -12,7 +12,7 @@ import type {
 export const statsApi = {
   overview: (params?: { month?: string }) =>
     client.get<OverviewStats>("/stats/overview", { params }),
-  trend: (params?: { months?: number; period?: "month" | "quarter" | "year"; limit?: number }) =>
+  trend: (params?: { months?: number; period?: "month" | "quarter" | "year"; limit?: number; endDate?: string }) =>
     client.get<TrendPoint[]>("/stats/trend", { params }),
   category: (params: { type: "income" | "expense"; startDate?: string; endDate?: string }) =>
     client.get<CategoryStat[]>("/stats/category", { params }),

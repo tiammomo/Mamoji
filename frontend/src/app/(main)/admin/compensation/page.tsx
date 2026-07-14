@@ -624,7 +624,7 @@ function MetricCard({
 }) {
   const amountType = tone === "expense" ? 2 : tone === "income" ? 1 : undefined;
   return (
-    <Card style={{ borderRadius: 12, height: "100%" }}>
+    <Card className="metric-card" style={{ borderRadius: 12, height: "100%" }}>
       <div className="text-sm mb-2" style={{ color: "var(--text-color-3)" }}>{title}</div>
       <AmountDisplay amount={amount} type={amountType} size="large" />
       <div className="text-xs mt-2" style={{ color: "var(--text-color-3)" }}>{caption}</div>
@@ -944,7 +944,7 @@ export default function CompensationPage() {
         }
       />
 
-      <Row gutter={[16, 16]} className="mb-6">
+      <Row gutter={[16, 16]} className="metric-grid">
         <Col xs={12} md={6}>
           <MetricCard
             title="公司总成本"
@@ -1010,7 +1010,7 @@ export default function CompensationPage() {
             </Button>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="bi-segment-grid mt-4 grid md:grid-cols-4">
           <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
             <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月结人数</div>
             <div className="mt-1 font-semibold">{currentPayrollRun?.employeeCount ?? employees.length} 人</div>

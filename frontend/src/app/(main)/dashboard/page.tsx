@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Card, Grid, Button, Progress, Skeleton, Tag } from "@arco-design/web-react";
+import { Alert, Card, Grid, Button, Progress, Skeleton, Tag } from "@arco-design/web-react";
 import {
   IconRight,
+  IconRefresh,
   IconArrowRise,
   IconArrowFall,
   IconCalendar,
@@ -40,6 +41,7 @@ import type {
   EnterpriseSummary,
   EntityTransfer,
   ReceiptSummary,
+  TrendPoint,
 } from "@/lib/types";
 
 const { Row, Col } = Grid;
@@ -62,12 +64,28 @@ type WorkspaceAction = {
   icon: ReactNode;
 };
 
+type DashboardStatCard = {
+  label: string;
+  value: number;
+  type?: 1 | 2;
+  suffix?: string;
+  icon: ReactNode;
+  iconColor: string;
+  iconBg: string;
+  gradient: string;
+  trend: string;
+  trendDirectionUp: boolean | null;
+  trendPositive: boolean;
+  trendTone: "neutral" | "positive" | "negative";
+  unavailable: boolean;
+};
+
 const DAY = 24 * 60 * 60 * 1000;
 
 const severityMeta: Record<WorkspaceSeverity, { label: string; color: string; accent: string }> = {
   success: { label: "正常", color: "green", accent: "#10b981" },
   notice: { label: "关注", color: "arcoblue", accent: "#3b82f6" },
-  warning: { label: "预警", color: "orange", accent: "#f59e0b" },
+  warning: { label: "预警", color: "purple", accent: "#a85a42" },
   danger: { label: "风险", color: "red", accent: "#ef4444" },
 };
 
@@ -96,6 +114,7 @@ export default function DashboardPage() {
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const activeSubjectType = useAppStore((state) => state.activeSubjectType);
   const [stats, setStats] = useState<OverviewStats | null>(null);
+  const [monthlyTrend, setMonthlyTrend] = useState<TrendPoint[]>([]);
   const [enterpriseSummary, setEnterpriseSummary] = useState<EnterpriseSummary | null>(null);
   const [recentTx, setRecentTx] = useState<Transaction[]>([]);
   const [entityTransfers, setEntityTransfers] = useState<EntityTransfer[]>([]);
@@ -105,17 +124,31 @@ export default function DashboardPage() {
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(null);
   const [recurringItems, setRecurringItems] = useState<RecurringItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failedSections, setFailedSections] = useState<string[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadDashboard = async () => {
       setLoading(true);
+      setFailedSections([]);
+      setStats(null);
+      setMonthlyTrend([]);
+      setEnterpriseSummary(null);
+      setRecentTx([]);
+      setEntityTransfers([]);
+      setAlerts([]);
+      setActiveBudgets([]);
+      setAccountSummary(null);
+      setReceiptSummary(null);
+      setRecurringItems([]);
       const transferRequest = activeCompanyId
         ? enterpriseApi.entityTransfers({ entityId: activeCompanyId })
         : enterpriseApi.entityTransfers();
       const [
         statsResult,
+        trendResult,
         enterpriseResult,
         transactionResult,
         budgetResult,
@@ -125,6 +158,7 @@ export default function DashboardPage() {
         recurringResult,
       ] = await Promise.allSettled([
         statsApi.overview(),
+        statsApi.trend({ period: "month", limit: 2 }),
         enterpriseApi.summary(),
         transactionApi.list({ page: 0, size: 8 }),
         budgetApi.active(),
@@ -138,6 +172,9 @@ export default function DashboardPage() {
 
       if (statsResult.status === "fulfilled") {
         setStats(statsResult.value.data);
+      }
+      if (trendResult.status === "fulfilled") {
+        setMonthlyTrend(trendResult.value.data);
       }
       if (enterpriseResult.status === "fulfilled") {
         setEnterpriseSummary(enterpriseResult.value.data);
@@ -165,6 +202,20 @@ export default function DashboardPage() {
       if (recurringResult.status === "fulfilled") {
         setRecurringItems(recurringResult.value.data);
       }
+      const namedResults = [
+        ["经营概览", statsResult],
+        ["经营趋势", trendResult],
+        ["主体信息", enterpriseResult],
+        ["近期流水", transactionResult],
+        ["预算", budgetResult],
+        ["主体往来", transferResult],
+        ["账户", accountResult],
+        ["票据", receiptResult],
+        ["周期事项", recurringResult],
+      ] as const;
+      setFailedSections(namedResults
+        .filter(([, result]) => result.status === "rejected")
+        .map(([name]) => name));
       setLoading(false);
     };
 
@@ -173,7 +224,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeCompanyId]);
+  }, [activeCompanyId, reloadKey]);
 
   const quickActions = [
     {
@@ -201,8 +252,8 @@ export default function DashboardPage() {
       icon: <IconFile />,
       label: t("quickTax"),
       path: "/tax",
-      color: "#f59e0b",
-      bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+      color: "#a85a42",
+      bg: "linear-gradient(135deg, #b86a52 0%, #8f4558 100%)",
     },
     {
       icon: <IconCalendar />,
@@ -220,7 +271,42 @@ export default function DashboardPage() {
     },
   ];
 
-  const statCards = [
+  const trendFor = (field: "income" | "expense" | "balance") => {
+    if (failedSections.includes("经营趋势")) {
+      return { trend: "趋势暂不可用", trendDirectionUp: null, trendPositive: true, trendTone: "neutral" as const };
+    }
+    const current = monthlyTrend.at(-1);
+    const previous = monthlyTrend.at(-2);
+    if (!current || !previous) {
+      return { trend: "暂无环比", trendDirectionUp: null, trendPositive: true, trendTone: "neutral" as const };
+    }
+    const currentValue = Number(current[field] || 0);
+    const previousValue = Number(previous[field] || 0);
+    const change = currentValue - previousValue;
+    if (previousValue === 0) {
+      return change === 0
+        ? { trend: "与上月持平", trendDirectionUp: null, trendPositive: true, trendTone: "neutral" as const }
+        : {
+            trend: "本月新增",
+            trendDirectionUp: change > 0,
+            trendPositive: field === "expense" ? change <= 0 : change >= 0,
+            trendTone: (field === "expense" ? change <= 0 : change >= 0) ? "positive" as const : "negative" as const,
+          };
+    }
+    const percent = Math.abs(change / previousValue) * 100;
+    return {
+      trend: `较上月 ${change >= 0 ? "+" : "-"}${percent.toFixed(percent >= 10 ? 0 : 1)}%`,
+      trendDirectionUp: change >= 0,
+      trendPositive: field === "expense" ? change <= 0 : change >= 0,
+      trendTone: (field === "expense" ? change <= 0 : change >= 0) ? "positive" as const : "negative" as const,
+    };
+  };
+
+  const incomeTrend = trendFor("income");
+  const expenseTrend = trendFor("expense");
+  const balanceTrend = trendFor("balance");
+
+  const statCards: DashboardStatCard[] = [
     {
       label: t("monthlyIncome"),
       value: stats?.monthlyIncome || 0,
@@ -229,8 +315,8 @@ export default function DashboardPage() {
       iconColor: "#059669",
       iconBg: "#10b98118",
       gradient: "var(--gradient-income)",
-      trend: "+12%",
-      trendUp: true,
+      unavailable: failedSections.includes("经营概览"),
+      ...incomeTrend,
     },
     {
       label: t("monthlyExpense"),
@@ -240,8 +326,8 @@ export default function DashboardPage() {
       iconColor: "#dc2626",
       iconBg: "#ef444418",
       gradient: "var(--gradient-expense)",
-      trend: "-5%",
-      trendUp: false,
+      unavailable: failedSections.includes("经营概览"),
+      ...expenseTrend,
     },
     {
       label: t("monthlyBalance"),
@@ -251,29 +337,38 @@ export default function DashboardPage() {
       iconColor: "#4f46e5",
       iconBg: "#6366f118",
       gradient: "var(--gradient-primary)",
-      trend: stats?.monthlyBalance && stats.monthlyBalance >= 0 ? "+8%" : "-3%",
-      trendUp: stats?.monthlyBalance ? stats.monthlyBalance >= 0 : true,
+      unavailable: failedSections.includes("经营概览"),
+      ...balanceTrend,
     },
     {
       label: t("budgetUsage"),
       value: stats?.budgetUsageRate ? stats.budgetUsageRate * 100 : 0,
       icon: <IconCalendar />,
-      iconColor: "#d97706",
-      iconBg: "#f59e0b18",
+      iconColor: "#a85a42",
+      iconBg: "#a85a4218",
       gradient: "var(--gradient-warning)",
       suffix: "%",
-      trend: "65%",
-      trendUp: true,
+      trend: alerts.length > 0 ? `${alerts.length} 项预警` : "预算健康",
+      trendDirectionUp: null,
+      trendPositive: alerts.length === 0,
+      trendTone: alerts.length === 0 ? "positive" as const : "negative" as const,
+      unavailable: failedSections.includes("经营概览") || failedSections.includes("预算"),
     },
   ];
   const activeEntityId = enterpriseSummary?.company?.id ?? activeCompanyId;
   const isHousehold = activeSubjectType === "household" || enterpriseSummary?.company?.entityType === "household";
+  const companyScoreUnavailable = ["经营概览", "主体信息", "近期流水", "预算", "主体往来", "账户", "票据", "周期事项"]
+    .some((section) => failedSections.includes(section));
+  const householdScoreUnavailable = ["经营概览", "近期流水", "预算", "主体往来", "账户", "周期事项"]
+    .some((section) => failedSections.includes(section));
+  const enterpriseUnavailable = failedSections.includes("主体信息");
 
   const workspaceModel = useMemo(() => {
     const monthlyIncome = stats?.monthlyIncome || 0;
     const monthlyExpense = stats?.monthlyExpense || 0;
     const monthlyProfit = stats?.monthlyBalance ?? monthlyIncome - monthlyExpense;
     const profitMargin = monthlyIncome > 0 ? monthlyProfit / monthlyIncome : 0;
+    const hasOperatingActivity = monthlyIncome > 0 || monthlyExpense > 0;
     const budgetRiskCount = alerts.length;
     const accountIssueCount = (accountSummary?.pendingReconciliationCount || 0) + (accountSummary?.highRiskCount || 0);
     const receiptIssueCount = (receiptSummary?.pendingReviewCount || 0)
@@ -303,7 +398,7 @@ export default function DashboardPage() {
 
     const operationsScore = clamp(
       100
-      - (monthlyProfit < 0 ? 28 : profitMargin < 0.15 ? 10 : 0)
+      - (monthlyProfit < 0 ? 28 : !hasOperatingActivity || profitMargin < 0.15 ? 10 : 0)
       - Math.min(budgetRiskCount * 8, 24)
       - Math.min(reviewTransactions.length * 4, 18)
       - Math.min(overdueRecurring.length * 12, 20)
@@ -334,7 +429,7 @@ export default function DashboardPage() {
       workspaceScore >= 85 ? "success" : workspaceScore >= 70 ? "notice" : workspaceScore >= 55 ? "warning" : "danger";
 
     const priorityActions: WorkspaceAction[] = [];
-    if (monthlyProfit < 0) {
+    if (!failedSections.includes("经营概览") && monthlyProfit < 0) {
       priorityActions.push({
         title: "经营利润为负",
         detail: `本月净额 ${formatAmount(monthlyProfit)}，建议复盘收入与成本结构`,
@@ -343,7 +438,24 @@ export default function DashboardPage() {
         icon: <IconExclamationCircle />,
       });
     }
-    if (budgetRiskCount > 0) {
+    if (!failedSections.includes("经营概览") && !hasOperatingActivity) {
+      priorityActions.push({
+        title: "本月暂无经营数据",
+        detail: "当前月份尚无收入或成本流水，可先确认是否需要补录",
+        path: "/transactions",
+        severity: "notice",
+        icon: <IconEdit />,
+      });
+    } else if (!failedSections.includes("经营概览") && monthlyProfit >= 0 && profitMargin < 0.15) {
+      priorityActions.push({
+        title: "经营利润率偏低",
+        detail: `本月利润率 ${(profitMargin * 100).toFixed(1)}%，建议复盘收入与成本结构`,
+        path: "/operations",
+        severity: "notice",
+        icon: <IconDashboard />,
+      });
+    }
+    if (!failedSections.includes("预算") && budgetRiskCount > 0) {
       priorityActions.push({
         title: "预算需要复核",
         detail: `${budgetRiskCount} 项预算触发预警或高风险`,
@@ -352,7 +464,7 @@ export default function DashboardPage() {
         icon: <IconCalendar />,
       });
     }
-    if (receiptIssueCount > 0) {
+    if (!failedSections.includes("票据") && receiptIssueCount > 0) {
       priorityActions.push({
         title: "票据闭环未完成",
         detail: `${receiptIssueCount} 个票据/流水匹配问题需要处理`,
@@ -361,7 +473,7 @@ export default function DashboardPage() {
         icon: <IconFile />,
       });
     }
-    if (accountIssueCount > 0) {
+    if (!failedSections.includes("账户") && accountIssueCount > 0) {
       priorityActions.push({
         title: "资金账户需对账",
         detail: `${accountIssueCount} 个账户对账或风险项待处理`,
@@ -370,7 +482,17 @@ export default function DashboardPage() {
         icon: <IconSafe />,
       });
     }
-    if ((enterpriseSummary?.pendingTaxAmount || 0) > 0) {
+    if (!failedSections.includes("账户") && !failedSections.includes("经营概览")
+      && (accountSummary?.availableBalance || 0) < monthlyExpense) {
+      priorityActions.push({
+        title: "可用资金覆盖不足",
+        detail: `可用资金低于本月成本 ${formatAmount(monthlyExpense)}`,
+        path: "/accounts",
+        severity: "warning",
+        icon: <IconSafe />,
+      });
+    }
+    if (!failedSections.includes("主体信息") && (enterpriseSummary?.pendingTaxAmount || 0) > 0) {
       priorityActions.push({
         title: "税费待处理",
         detail: `${formatAmount(enterpriseSummary?.pendingTaxAmount || 0)} · ${dueText(enterpriseSummary?.nextTaxDueDate)}`,
@@ -379,7 +501,7 @@ export default function DashboardPage() {
         icon: <IconFile />,
       });
     }
-    if (overdueRecurring.length > 0 || weekRecurring.length > 0) {
+    if (!failedSections.includes("周期事项") && (overdueRecurring.length > 0 || weekRecurring.length > 0)) {
       priorityActions.push({
         title: "周期事项临近",
         detail: `逾期 ${overdueRecurring.length} 项，7 天内 ${weekRecurring.length} 项`,
@@ -388,7 +510,41 @@ export default function DashboardPage() {
         icon: <IconCalendar />,
       });
     }
-    if (priorityActions.length === 0) {
+    if (!failedSections.includes("近期流水") && reviewTransactions.length > 0) {
+      priorityActions.push({
+        title: "经营流水需要复核",
+        detail: `${reviewTransactions.length} 笔大额、缺少备注或可退款流水待确认`,
+        path: "/transactions",
+        severity: "notice",
+        icon: <IconSwap />,
+      });
+    }
+    if (!failedSections.includes("主体信息")
+      && (onboardingCount > 0 || (enterpriseSummary?.departuresThisMonth || 0) > 0 || peopleCostRatio > 0.65)) {
+      const peopleDetails = [
+        onboardingCount > 0 ? `${onboardingCount} 人待入职` : null,
+        (enterpriseSummary?.departuresThisMonth || 0) > 0 ? `${enterpriseSummary?.departuresThisMonth || 0} 人本月离职` : null,
+        peopleCostRatio > 0.65 ? `人力成本占本月成本 ${(peopleCostRatio * 100).toFixed(0)}%` : null,
+      ].filter(Boolean).join(" · ");
+      priorityActions.push({
+        title: "人员事项需要跟进",
+        detail: peopleDetails,
+        path: "/hr/organization",
+        severity: peopleCostRatio > 0.65 ? "warning" : "notice",
+        icon: <IconUserGroup />,
+      });
+    }
+    const openEntityTransfers = entityTransfers.filter((transfer) => transfer.status !== "settled" && transfer.status !== "completed");
+    if (!failedSections.includes("主体往来") && openEntityTransfers.length > 0) {
+      priorityActions.push({
+        title: "主体往来待闭环",
+        detail: `${openEntityTransfers.length} 笔公司/家庭往来尚未结清`,
+        path: "/dashboard",
+        severity: "notice",
+        icon: <IconSwap />,
+      });
+    }
+    if (priorityActions.length === 0 && !companyScoreUnavailable) {
       priorityActions.push({
         title: "工作台状态良好",
         detail: "经营、财务、税务和 HR 暂无明显待办风险",
@@ -405,6 +561,7 @@ export default function DashboardPage() {
         detail: `${reviewTransactions.length} 笔流水待复核 · ${budgetRiskCount} 项预算预警`,
         path: "/operations",
         icon: <IconDashboard />,
+        unavailable: ["经营概览", "近期流水", "预算", "周期事项"].some((section) => failedSections.includes(section)),
       },
       {
         title: "财务管理",
@@ -412,6 +569,7 @@ export default function DashboardPage() {
         detail: `${accountIssueCount} 个账户问题 · ${receiptIssueCount} 个票据问题`,
         path: "/finance",
         icon: <IconSafe />,
+        unavailable: ["经营概览", "账户", "票据"].some((section) => failedSections.includes(section)),
       },
       {
         title: "税务合规",
@@ -419,6 +577,7 @@ export default function DashboardPage() {
         detail: `${formatAmount(enterpriseSummary?.pendingTaxAmount || 0)} 待处理 · ${dueText(enterpriseSummary?.nextTaxDueDate)}`,
         path: "/tax",
         icon: <IconFile />,
+        unavailable: failedSections.includes("主体信息"),
       },
       {
         title: "组织与人事",
@@ -426,6 +585,7 @@ export default function DashboardPage() {
         detail: `${enterpriseSummary?.activeEmployeeCount || 0} 人在职 · ${onboardingCount} 人待入职`,
         path: "/hr/organization",
         icon: <IconUserGroup />,
+        unavailable: failedSections.includes("主体信息") || failedSections.includes("经营概览"),
       },
       {
         title: "主体往来",
@@ -433,6 +593,7 @@ export default function DashboardPage() {
         detail: `${entityTransfers.length} 笔公司/家庭主体往来记录`,
         path: "/dashboard",
         icon: <IconSwap />,
+        unavailable: failedSections.includes("主体往来"),
       },
     ];
 
@@ -442,30 +603,35 @@ export default function DashboardPage() {
         done: reviewTransactions.length === 0,
         detail: reviewTransactions.length === 0 ? "近期流水无需复核" : `${reviewTransactions.length} 笔需复核`,
         path: "/transactions",
+        unavailable: failedSections.includes("近期流水"),
       },
       {
         label: "资金账户对账",
         done: accountIssueCount === 0,
         detail: accountIssueCount === 0 ? "账户状态良好" : `${accountIssueCount} 个问题`,
         path: "/accounts",
+        unavailable: failedSections.includes("账户"),
       },
       {
         label: "票据凭证闭环",
         done: receiptIssueCount === 0,
         detail: receiptIssueCount === 0 ? "凭证状态良好" : `${receiptIssueCount} 个缺口`,
         path: "/receipts",
+        unavailable: failedSections.includes("票据"),
       },
       {
         label: "税务申报关注",
         done: taxRiskCount === 0,
         detail: taxRiskCount === 0 ? "暂无税费压力" : dueText(enterpriseSummary?.nextTaxDueDate),
         path: "/tax",
+        unavailable: failedSections.includes("主体信息"),
       },
       {
         label: "人员事项跟进",
         done: onboardingCount === 0,
         detail: onboardingCount === 0 ? "暂无待入职" : `${onboardingCount} 人待入职`,
         path: "/admin/users",
+        unavailable: failedSections.includes("主体信息"),
       },
     ];
 
@@ -486,10 +652,12 @@ export default function DashboardPage() {
     alerts,
     enterpriseSummary,
     entityTransfers,
+    failedSections,
     receiptSummary,
     recentTx,
     recurringItems,
     stats,
+    companyScoreUnavailable,
   ]);
 
   const householdModel = useMemo(() => {
@@ -522,7 +690,7 @@ export default function DashboardPage() {
     const severity: WorkspaceSeverity = score >= 85 ? "success" : score >= 70 ? "notice" : score >= 55 ? "warning" : "danger";
 
     const priorityActions: WorkspaceAction[] = [];
-    if (monthlyBalance < 0) {
+    if (!failedSections.includes("经营概览") && monthlyBalance < 0) {
       priorityActions.push({
         title: "本月家庭结余为负",
         detail: `结余 ${formatAmount(monthlyBalance)}，建议复盘大额支出和固定支出`,
@@ -531,7 +699,7 @@ export default function DashboardPage() {
         icon: <IconExclamationCircle />,
       });
     }
-    if (budgetRiskCount > 0) {
+    if (!failedSections.includes("预算") && budgetRiskCount > 0) {
       priorityActions.push({
         title: "家庭预算需要关注",
         detail: `${budgetRiskCount} 项预算接近阈值或已超支`,
@@ -540,7 +708,7 @@ export default function DashboardPage() {
         icon: <IconCalendar />,
       });
     }
-    if (overdueRecurring.length > 0 || weekRecurring.length > 0) {
+    if (!failedSections.includes("周期事项") && (overdueRecurring.length > 0 || weekRecurring.length > 0)) {
       priorityActions.push({
         title: "固定事项临近",
         detail: `逾期 ${overdueRecurring.length} 项，7 天内 ${weekRecurring.length} 项`,
@@ -549,7 +717,7 @@ export default function DashboardPage() {
         icon: <IconCalendar />,
       });
     }
-    if (openTransfers.length > 0) {
+    if (!failedSections.includes("主体往来") && openTransfers.length > 0) {
       priorityActions.push({
         title: "公司/家庭往来待闭环",
         detail: `${openTransfers.length} 笔主体资金往来未完成结清`,
@@ -558,7 +726,34 @@ export default function DashboardPage() {
         icon: <IconSwap />,
       });
     }
-    if (priorityActions.length === 0) {
+    if (!failedSections.includes("近期流水") && largeTransactions.length > 0) {
+      priorityActions.push({
+        title: "大额家庭收支待确认",
+        detail: `${largeTransactions.length} 笔单笔 1 万以上收支建议复核`,
+        path: "/transactions",
+        severity: "notice",
+        icon: <IconExclamationCircle />,
+      });
+    }
+    if (!failedSections.includes("账户") && !failedSections.includes("经营概览") && availableBalance < monthlyExpense) {
+      priorityActions.push({
+        title: "家庭资金覆盖不足",
+        detail: `可用资金 ${formatAmount(availableBalance)}，低于本月支出`,
+        path: "/accounts",
+        severity: "warning",
+        icon: <IconSafe />,
+      });
+    }
+    if (!failedSections.includes("经营概览") && monthlyIncome === 0 && monthlyExpense === 0) {
+      priorityActions.push({
+        title: "本月暂无家庭收支",
+        detail: "当前月份尚无收入或支出，可从记一笔开始建立家庭资金视图",
+        path: "/transactions?action=new",
+        severity: "notice",
+        icon: <IconEdit />,
+      });
+    }
+    if (priorityActions.length === 0 && !householdScoreUnavailable) {
       priorityActions.push({
         title: "家庭资金状态良好",
         detail: "收入、支出、预算和固定事项暂无明显风险",
@@ -574,24 +769,28 @@ export default function DashboardPage() {
         done: recentTx.length > 0,
         detail: recentTx.length > 0 ? `最近 ${recentTx.length} 笔` : "本月还没有收支记录",
         path: "/transactions",
+        unavailable: failedSections.includes("近期流水"),
       },
       {
         label: "预算执行可控",
         done: budgetRiskCount === 0,
         detail: budgetRiskCount === 0 ? "暂无预算风险" : `${budgetRiskCount} 项需关注`,
         path: "/budgets",
+        unavailable: failedSections.includes("预算"),
       },
       {
         label: "固定事项跟进",
         done: overdueRecurring.length === 0,
         detail: overdueRecurring.length === 0 ? `${weekRecurring.length} 项 7 天内` : `${overdueRecurring.length} 项逾期`,
         path: "/recurring",
+        unavailable: failedSections.includes("周期事项"),
       },
       {
         label: "账户资金充足",
         done: availableBalance >= monthlyExpense,
         detail: `可用资金 ${formatAmount(availableBalance)}`,
         path: "/accounts",
+        unavailable: failedSections.includes("账户") || failedSections.includes("经营概览"),
       },
     ];
 
@@ -612,7 +811,7 @@ export default function DashboardPage() {
       overdueRecurring,
       openTransfers,
     };
-  }, [accountSummary, alerts.length, entityTransfers, recentTx, recurringItems, stats]);
+  }, [accountSummary, alerts.length, entityTransfers, failedSections, householdScoreUnavailable, recentTx, recurringItems, stats]);
 
   const householdMetricCards = [
     {
@@ -621,7 +820,8 @@ export default function DashboardPage() {
       type: 1 as const,
       icon: <IconSafe />,
       accent: "#10b981",
-      helper: `固定收入 ${formatAmount(householdModel.fixedIncome)}`,
+      helper: failedSections.includes("周期事项") ? "固定事项暂不可用" : `固定收入 ${formatAmount(householdModel.fixedIncome)}`,
+      unavailable: failedSections.includes("经营概览"),
     },
     {
       label: "本月家庭支出",
@@ -629,7 +829,8 @@ export default function DashboardPage() {
       type: 2 as const,
       icon: <IconSwap />,
       accent: "#ef4444",
-      helper: `固定支出 ${formatAmount(householdModel.fixedExpense)}`,
+      helper: failedSections.includes("周期事项") ? "固定事项暂不可用" : `固定支出 ${formatAmount(householdModel.fixedExpense)}`,
+      unavailable: failedSections.includes("经营概览"),
     },
     {
       label: "本月家庭结余",
@@ -638,6 +839,7 @@ export default function DashboardPage() {
       icon: <IconDashboard />,
       accent: householdModel.monthlyBalance >= 0 ? "#10b981" : "#ef4444",
       helper: householdModel.monthlyBalance >= 0 ? "当月收入覆盖支出" : "支出高于收入",
+      unavailable: failedSections.includes("经营概览"),
     },
     {
       label: "家庭可用资金",
@@ -645,30 +847,44 @@ export default function DashboardPage() {
       type: householdModel.availableBalance >= 0 ? 1 as const : 2 as const,
       icon: <IconHome />,
       accent: "#6366f1",
-      helper: `预算使用 ${householdModel.budgetUsage.toFixed(0)}%`,
+      helper: failedSections.includes("经营概览") ? "预算使用率暂不可用" : `预算使用 ${householdModel.budgetUsage.toFixed(0)}%`,
+      unavailable: failedSections.includes("账户"),
     },
   ];
+  const householdAvailableChecks = householdModel.dailyChecks.filter((item) => !item.unavailable);
+  const companyAvailableChecks = workspaceModel.dailyChecks.filter((item) => !item.unavailable);
+
+  const partialFailureNotice = failedSections.length > 0 ? (
+    <Alert
+      className="mb-5"
+      type="warning"
+      title="工作台数据不完整"
+      content={`${failedSections.join("、")} 暂时不可用；受影响的指标和结论已单独暂停，其余数据仍可继续使用。`}
+      action={<Button size="small" icon={<IconRefresh />} onClick={() => setReloadKey((key) => key + 1)}>重新加载</Button>}
+    />
+  ) : null;
 
   if (isHousehold) {
     return (
       <div className="max-w-7xl mx-auto animate-fade-in">
-        <div
-          className="rounded-2xl p-6 mb-6 relative overflow-hidden"
-          style={{ background: "linear-gradient(135deg, #0f766e 0%, #2563eb 58%, #6366f1 100%)" }}
-        >
-          <div className="relative z-10">
-            <div className="mb-2 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white">
-              家庭主体
+        <section className="workspace-hero workspace-hero-household" aria-labelledby="household-workspace-title">
+          <div className="workspace-hero-content">
+            <div className="workspace-hero-eyebrow">家庭主体 · 当月资金视图</div>
+            <h1 id="household-workspace-title">家庭资金工作台</h1>
+            <p>{enterpriseSummary?.company?.name || "当前家庭主体"} 的收入、支出、预算、账户和主体往来。</p>
+            <div className="workspace-hero-meta">
+              <span>口径：当前主体</span>
+              <span>期间：本月累计</span>
+              <span>{loading ? "正在刷新" : failedSections.length > 0 ? "部分数据待恢复" : "数据已更新"}</span>
             </div>
-            <h1 className="text-2xl font-bold text-white mb-2">家庭资金工作台</h1>
-            <p className="text-white/80">
-              {enterpriseSummary?.company?.name || "当前家庭主体"} 的收入、支出、预算、账户和公司往来管理
-            </p>
           </div>
-          <div className="absolute right-8 top-1/2 -translate-y-1/2 text-8xl opacity-20 text-white">
-            <IconHome />
+          <div className="workspace-hero-actions">
+            <Button type="primary" icon={<IconEdit />} onClick={() => router.push("/transactions?action=new")}>记一笔</Button>
+            <Button type="secondary" onClick={() => router.push("/reports")}>查看报表</Button>
           </div>
-        </div>
+        </section>
+
+        {partialFailureNotice}
 
         <Row gutter={16} className="dashboard-card-row mb-6">
           {householdMetricCards.map((card, index) => (
@@ -678,11 +894,18 @@ export default function DashboardPage() {
                   <span className="dashboard-card-icon" style={{ color: card.accent, backgroundColor: `${card.accent}18` }}>
                     {card.icon}
                   </span>
-                  <Tag color={card.type === 1 ? "green" : "red"}>{card.type === 1 ? "流入" : "流出"}</Tag>
+                  <Tag color={card.unavailable ? "gray" : card.type === 1 ? "green" : "red"}>
+                    {card.unavailable ? "暂不可用" : card.type === 1 ? "流入" : "流出"}
+                  </Tag>
                 </div>
                 <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{card.label}</div>
                 {loading ? (
                   <Skeleton />
+                ) : card.unavailable ? (
+                  <>
+                    <div className="text-2xl font-bold" style={{ color: "var(--text-color-3)" }}>--</div>
+                    <div className="mt-2 truncate text-xs" style={{ color: "var(--text-color-3)" }}>数据暂不可用</div>
+                  </>
                 ) : (
                   <>
                     <AmountDisplay amount={card.value} type={card.type} showSign={card.label.includes("结余")} size="large" />
@@ -699,6 +922,14 @@ export default function DashboardPage() {
             <div className="flex min-h-[242px] flex-col items-center justify-center rounded-xl border px-5 py-6" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
               {loading ? (
                 <Skeleton />
+              ) : householdScoreUnavailable ? (
+                <div className="flex flex-col items-center text-center">
+                  <span className="grid h-14 w-14 place-items-center rounded-full" style={{ background: "var(--color-warning-soft)", color: "var(--color-warning)", fontSize: 24 }}>
+                    <IconExclamationCircle />
+                  </span>
+                  <div className="mt-4 font-semibold">暂不计算健康分</div>
+                  <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>数据不完整，避免输出误导性结论</div>
+                </div>
               ) : (
                 <>
                   <Progress type="circle" percent={householdModel.score} width={136} color={severityMeta[householdModel.severity].accent} formatText={() => `${householdModel.score}分`} />
@@ -717,6 +948,8 @@ export default function DashboardPage() {
               </div>
               {loading ? (
                 <div className="space-y-3">{[1, 2, 3].map((item) => <Skeleton key={item} style={{ height: 54 }} />)}</div>
+              ) : householdModel.priorityActions.length === 0 ? (
+                <DashboardUnavailable message="数据不完整，暂不生成家庭待办判断" />
               ) : (
                 <div className="space-y-3">
                   {householdModel.priorityActions.slice(0, 4).map((action) => {
@@ -746,7 +979,9 @@ export default function DashboardPage() {
             <div className="min-w-0">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>家庭日清</h3>
-                <Tag color="arcoblue">{householdModel.dailyChecks.filter((item) => item.done).length}/{householdModel.dailyChecks.length}</Tag>
+                {householdAvailableChecks.length < householdModel.dailyChecks.length
+                  ? <Tag color="orange">{householdAvailableChecks.length > 0 ? `${householdAvailableChecks.filter((item) => item.done).length}/${householdAvailableChecks.length} 可确认` : "待数据恢复"}</Tag>
+                  : <Tag color="arcoblue">{householdAvailableChecks.filter((item) => item.done).length}/{householdAvailableChecks.length}</Tag>}
               </div>
               {loading ? (
                 <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} style={{ height: 48 }} />)}</div>
@@ -763,15 +998,15 @@ export default function DashboardPage() {
                       <span
                         className="grid h-8 w-8 shrink-0 place-items-center rounded-full"
                         style={{
-                          backgroundColor: item.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
-                          color: item.done ? "var(--color-success)" : "var(--color-warning)",
+                          backgroundColor: item.unavailable ? "var(--color-fill-2)" : item.done ? "rgba(16, 185, 129, 0.14)" : "var(--color-warning-soft)",
+                          color: item.unavailable ? "var(--text-color-3)" : item.done ? "var(--color-success)" : "var(--color-warning)",
                         }}
                       >
-                        {item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
+                        {item.unavailable ? <IconExclamationCircle /> : item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{item.label}</span>
-                        <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.detail}</span>
+                        <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.unavailable ? "数据暂不可用" : item.detail}</span>
                       </span>
                     </button>
                   ))}
@@ -783,10 +1018,10 @@ export default function DashboardPage() {
 
         <Row gutter={16} className="mb-6">
           {[
-            { label: "大额收支", value: householdModel.largeTransactions.length, helper: "单笔 1 万以上", icon: <IconExclamationCircle />, accent: "#ef4444" },
-            { label: "7 天内固定事项", value: householdModel.weekRecurring.length, helper: `逾期 ${householdModel.overdueRecurring.length} 项`, icon: <IconCalendar />, accent: "#f59e0b" },
-            { label: "公司/家庭往来", value: entityTransfers.length, helper: `${householdModel.openTransfers.length} 笔待闭环`, icon: <IconSwap />, accent: "#6366f1" },
-            { label: "家庭预算", value: activeBudgets.length, helper: `${alerts.length} 项预警`, icon: <IconStorage />, accent: "#0ea5e9" },
+            { label: "大额收支", value: householdModel.largeTransactions.length, helper: "单笔 1 万以上", icon: <IconExclamationCircle />, accent: "#ef4444", unavailable: failedSections.includes("近期流水") },
+            { label: "7 天内固定事项", value: householdModel.weekRecurring.length, helper: `逾期 ${householdModel.overdueRecurring.length} 项`, icon: <IconCalendar />, accent: "#a85a42", unavailable: failedSections.includes("周期事项") },
+            { label: "公司/家庭往来", value: entityTransfers.length, helper: `${householdModel.openTransfers.length} 笔待闭环`, icon: <IconSwap />, accent: "#6366f1", unavailable: failedSections.includes("主体往来") },
+            { label: "家庭预算", value: activeBudgets.length, helper: `${alerts.length} 项预警`, icon: <IconStorage />, accent: "#0ea5e9", unavailable: failedSections.includes("预算") },
           ].map((card) => (
             <Col key={card.label} xs={12} md={6}>
               <Card style={{ borderRadius: 16, minHeight: 132 }}>
@@ -795,8 +1030,8 @@ export default function DashboardPage() {
                     <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
                     <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ backgroundColor: `${card.accent}18`, color: card.accent }}>{card.icon}</span>
                   </div>
-                  {loading ? <Skeleton /> : <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{card.value}</div>}
-                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{card.helper}</div>
+                  {loading ? <Skeleton /> : <div className="text-2xl font-bold" style={{ color: card.unavailable ? "var(--text-color-3)" : "var(--text-color-1)" }}>{card.unavailable ? "--" : card.value}</div>}
+                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{card.unavailable ? "数据暂不可用" : card.helper}</div>
                 </div>
               </Card>
             </Col>
@@ -807,23 +1042,21 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold" style={{ color: "var(--text-color-1)" }}>家庭快捷入口</h3>
           </div>
-          <Row gutter={16}>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
             {[
               { icon: <IconEdit />, label: "记一笔", path: "/transactions?action=new", bg: "linear-gradient(135deg, #10b981 0%, #059669 100%)" },
               { icon: <IconSwap />, label: "家庭收支", path: "/transactions", bg: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" },
               { icon: <IconSafe />, label: "家庭账户", path: "/accounts", bg: "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)" },
               { icon: <IconCalendar />, label: "家庭预算", path: "/budgets", bg: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)" },
-              { icon: <IconStorage />, label: "家庭报表", path: "/reports", bg: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" },
+              { icon: <IconStorage />, label: "家庭报表", path: "/reports", bg: "linear-gradient(135deg, #b86a52 0%, #8f4558 100%)" },
               { icon: <IconCalendar />, label: "固定事项", path: "/recurring", bg: "linear-gradient(135deg, #14b8a6 0%, #0f766e 100%)" },
             ].map((action, index) => (
-              <Col key={action.path} xs={12} sm={6}>
-                <div className="quick-action-btn mb-4 animate-fade-in" style={{ animationDelay: `${index * 80 + 160}ms` }} onClick={() => router.push(action.path)}>
-                  <div className="icon-wrapper text-2xl" style={{ background: action.bg }}>{action.icon}</div>
-                  <span className="text-sm font-medium" style={{ color: "var(--text-color-2)" }}>{action.label}</span>
-                </div>
-              </Col>
+              <button key={action.path} type="button" className="quick-action-btn w-full animate-fade-in" style={{ animationDelay: `${index * 80 + 160}ms` }} onClick={() => router.push(action.path)}>
+                <div className="icon-wrapper text-2xl" style={{ background: action.bg }}>{action.icon}</div>
+                <span className="text-sm font-medium" style={{ color: "var(--text-color-2)" }}>{action.label}</span>
+              </button>
             ))}
-          </Row>
+          </div>
         </Card>
 
         <Row gutter={16}>
@@ -835,6 +1068,8 @@ export default function DashboardPage() {
             >
               {loading ? (
                 <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 60 }} />)}</div>
+              ) : failedSections.includes("近期流水") ? (
+                <DashboardUnavailable message="家庭收支暂不可用" />
               ) : recentTx.length === 0 ? (
                 <div className="text-center py-12">
                   <IconEmpty className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
@@ -844,7 +1079,7 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {recentTx.map((tx, index) => (
-                    <div key={tx.id} className="transaction-item animate-fade-in" style={{ animationDelay: `${index * 50 + 240}ms` }} onClick={() => router.push("/transactions")}>
+                    <button type="button" key={tx.id} className="transaction-item w-full animate-fade-in" style={{ animationDelay: `${index * 50 + 240}ms` }} onClick={() => router.push("/transactions")}>
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ backgroundColor: tx.type === 1 ? "#10b98120" : "#ef444420" }}>
                           {tx.categoryIcon || (tx.type === 1 ? "💰" : "💸")}
@@ -855,7 +1090,7 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <AmountDisplay amount={tx.amount} type={tx.type} showSign />
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -869,6 +1104,8 @@ export default function DashboardPage() {
             >
               {loading ? (
                 <div className="space-y-4">{[1, 2].map((i) => <Skeleton key={i} style={{ height: 72 }} />)}</div>
+              ) : failedSections.includes("主体往来") ? (
+                <DashboardUnavailable message="主体往来暂不可用" />
               ) : entityTransfers.length === 0 ? (
                 <div className="text-center py-12">
                   <IconSwap className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
@@ -904,25 +1141,28 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
-      {/* Welcome banner */}
-      <div
-        className="rounded-2xl p-6 mb-6 relative overflow-hidden"
-        style={{ background: "var(--gradient-primary)" }}
-      >
-        <div className="relative z-10">
-          <h1 className="text-2xl font-bold text-white mb-2">
-            {t("welcomeTitle")}
-          </h1>
-          <p className="text-white/80">
+      <section className="workspace-hero" aria-labelledby="company-workspace-title">
+        <div className="workspace-hero-content">
+          <div className="workspace-hero-eyebrow">经营主体 · 本月执行视图</div>
+          <h1 id="company-workspace-title">{t("welcomeTitle")}</h1>
+          <p>
             {enterpriseSummary?.company?.name
               ? t("welcomeSubtitleWithCompany", { company: enterpriseSummary.company.name })
               : t("welcomeSubtitle")}
           </p>
+          <div className="workspace-hero-meta">
+            <span>口径：当前主体</span>
+            <span>期间：本月累计</span>
+            <span>{loading ? "正在刷新" : failedSections.length > 0 ? "部分数据待恢复" : "数据已更新"}</span>
+          </div>
         </div>
-        <div className="absolute right-8 top-1/2 -translate-y-1/2 text-8xl opacity-20 text-white">
-          <IconDashboard />
+        <div className="workspace-hero-actions">
+          <Button type="primary" icon={<IconEdit />} onClick={() => router.push("/transactions?action=new")}>{t("quickNewRecord")}</Button>
+          <Button type="secondary" onClick={() => router.push("/operations")}>{t("quickOperations")}</Button>
         </div>
-      </div>
+      </section>
+
+      {partialFailureNotice}
 
       {/* Stat cards */}
       <Row gutter={16} className="dashboard-card-row mb-6">
@@ -942,12 +1182,16 @@ export default function DashboardPage() {
                 <div
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded-full"
                   style={{
-                    backgroundColor: card.trendUp ? "#10b98120" : "#ef444420",
-                    color: card.trendUp ? "#10b981" : "#ef4444",
+                    backgroundColor: card.unavailable || card.trendTone === "neutral"
+                      ? "rgba(54, 89, 227, 0.1)"
+                      : card.trendTone === "positive" ? "rgba(14, 159, 110, 0.12)" : "rgba(229, 72, 77, 0.11)",
+                    color: card.unavailable || card.trendTone === "neutral"
+                      ? "var(--color-primary)"
+                      : card.trendTone === "positive" ? "var(--color-success)" : "var(--color-danger)",
                   }}
                 >
-                  {card.trendUp ? <IconArrowRise /> : <IconArrowFall />}
-                  {card.trend}
+                  {card.unavailable || card.trendDirectionUp === null ? null : card.trendDirectionUp ? <IconArrowRise /> : <IconArrowFall />}
+                  {card.unavailable ? "数据暂不可用" : card.trend}
                 </div>
               </div>
               <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>
@@ -955,11 +1199,13 @@ export default function DashboardPage() {
               </div>
               {loading ? (
                 <Skeleton />
+              ) : card.unavailable ? (
+                <div className="text-2xl font-bold" style={{ color: "var(--text-color-3)" }}>--</div>
               ) : (
                 <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
                   {card.suffix
                     ? `${card.value.toFixed(0)}${card.suffix}`
-                    : <AmountDisplay amount={card.value} type={card.type} size="large" />
+                    : <AmountDisplay amount={card.value} type={card.type ?? 1} size="large" />
                   }
                 </div>
               )}
@@ -985,6 +1231,14 @@ export default function DashboardPage() {
           >
             {loading ? (
               <Skeleton />
+            ) : companyScoreUnavailable ? (
+              <div className="flex flex-col items-center text-center">
+                <span className="grid h-14 w-14 place-items-center rounded-full" style={{ background: "var(--color-warning-soft)", color: "var(--color-warning)", fontSize: 24 }}>
+                  <IconExclamationCircle />
+                </span>
+                <div className="mt-4 font-semibold">暂不计算经营分</div>
+                <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>数据不完整，避免输出误导性结论</div>
+              </div>
             ) : (
               <>
                 <Progress
@@ -1015,6 +1269,8 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 {[1, 2, 3].map((item) => <Skeleton key={item} style={{ height: 54 }} />)}
               </div>
+            ) : workspaceModel.priorityActions.length === 0 ? (
+              <DashboardUnavailable message="数据不完整，暂不生成经营优先动作" />
             ) : (
               <div className="space-y-3">
                 {workspaceModel.priorityActions.slice(0, 4).map((action) => {
@@ -1053,7 +1309,9 @@ export default function DashboardPage() {
           <div className="min-w-0">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="m-0 text-base font-semibold" style={{ color: "var(--text-color-1)" }}>日清检查</h3>
-              <Tag color="arcoblue">{workspaceModel.dailyChecks.filter((item) => item.done).length}/{workspaceModel.dailyChecks.length}</Tag>
+              {companyAvailableChecks.length < workspaceModel.dailyChecks.length
+                ? <Tag color="orange">{companyAvailableChecks.length > 0 ? `${companyAvailableChecks.filter((item) => item.done).length}/${companyAvailableChecks.length} 可确认` : "待数据恢复"}</Tag>
+                : <Tag color="arcoblue">{companyAvailableChecks.filter((item) => item.done).length}/{companyAvailableChecks.length}</Tag>}
             </div>
             {loading ? (
               <div className="space-y-3">
@@ -1072,15 +1330,15 @@ export default function DashboardPage() {
                     <span
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-full"
                       style={{
-                        backgroundColor: item.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
-                        color: item.done ? "var(--color-success)" : "var(--color-warning)",
+                        backgroundColor: item.unavailable ? "var(--color-fill-2)" : item.done ? "rgba(16, 185, 129, 0.14)" : "var(--color-warning-soft)",
+                        color: item.unavailable ? "var(--text-color-3)" : item.done ? "var(--color-success)" : "var(--color-warning)",
                       }}
                     >
-                      {item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
+                      {item.unavailable ? <IconExclamationCircle /> : item.done ? <IconCheckCircle /> : <IconExclamationCircle />}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{item.label}</span>
-                      <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.detail}</span>
+                      <span className="mt-0.5 block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.unavailable ? "数据暂不可用" : item.detail}</span>
                     </span>
                   </button>
                 ))}
@@ -1115,14 +1373,14 @@ export default function DashboardPage() {
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <span
                       className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
-                      style={{ backgroundColor: "var(--color-fill-1)", color: meta.accent }}
+                      style={{ backgroundColor: "var(--color-fill-1)", color: module.unavailable ? "var(--text-color-3)" : meta.accent }}
                     >
                       {module.icon}
                     </span>
-                    <Tag color={meta.color}>{module.score.toFixed(0)}分</Tag>
+                    <Tag color={module.unavailable ? "gray" : meta.color}>{module.unavailable ? "暂不可用" : `${module.score.toFixed(0)}分`}</Tag>
                   </div>
                   <div className="truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{module.title}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{module.detail}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{module.unavailable ? "相关数据暂不可用" : module.detail}</div>
                 </button>
               );
             })}
@@ -1145,6 +1403,8 @@ export default function DashboardPage() {
             <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("companySubject")}</div>
             {loading ? (
               <Skeleton />
+            ) : enterpriseUnavailable ? (
+              <MetricUnavailable />
             ) : (
               <div>
                 <div className="text-base font-semibold truncate" style={{ color: "var(--text-color-1)" }}>
@@ -1170,6 +1430,8 @@ export default function DashboardPage() {
             <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("activeEmployees")}</div>
             {loading ? (
               <Skeleton />
+            ) : enterpriseUnavailable ? (
+              <MetricUnavailable />
             ) : (
               <div>
                 <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
@@ -1195,6 +1457,8 @@ export default function DashboardPage() {
             <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("monthlyPeopleCost")}</div>
             {loading ? (
               <Skeleton />
+            ) : enterpriseUnavailable ? (
+              <MetricUnavailable />
             ) : (
               <AmountDisplay amount={enterpriseSummary?.monthlyPeopleCost || 0} type={2} size="large" />
             )}
@@ -1203,16 +1467,18 @@ export default function DashboardPage() {
         <Col xs={12} sm={12} md={6} className="dashboard-card-col">
           <div className="stat-card dashboard-metric-card animate-fade-in">
             <div className="flex items-start justify-between mb-3">
-              <span className="dashboard-card-icon" style={{ color: "#d97706", backgroundColor: "#f59e0b18" }}>
+              <span className="dashboard-card-icon" style={{ color: "#a85a42", backgroundColor: "#a85a4218" }}>
                 <IconFile />
               </span>
-              <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#f59e0b20", color: "#d97706" }}>
+              <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: "#a85a4218", color: "#a85a42" }}>
                 {t("taxBadge")}
               </span>
             </div>
             <div className="text-sm mb-1" style={{ color: "var(--text-color-3)" }}>{t("pendingTax")}</div>
             {loading ? (
               <Skeleton />
+            ) : enterpriseUnavailable ? (
+              <MetricUnavailable />
             ) : (
               <div>
                 <AmountDisplay amount={enterpriseSummary?.pendingTaxAmount || 0} type={2} size="large" />
@@ -1244,6 +1510,8 @@ export default function DashboardPage() {
               </Col>
             ))}
           </Row>
+        ) : failedSections.includes("主体往来") ? (
+          <DashboardUnavailable message="主体往来暂不可用" />
         ) : entityTransfers.length === 0 ? (
           <div className="text-center py-10">
             <IconSwap className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
@@ -1322,27 +1590,27 @@ export default function DashboardPage() {
             {t("quickActions")}
           </h3>
         </div>
-        <Row gutter={16}>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
           {quickActions.map((action, index) => (
-            <Col key={action.path} xs={12} sm={6}>
+            <button
+              key={action.path}
+              type="button"
+              className="quick-action-btn w-full animate-fade-in"
+              style={{ animationDelay: `${index * 100 + 200}ms` }}
+              onClick={() => router.push(action.path)}
+            >
               <div
-                className="quick-action-btn mb-4 animate-fade-in"
-                style={{ animationDelay: `${index * 100 + 200}ms` }}
-                onClick={() => router.push(action.path)}
+                className="icon-wrapper text-2xl"
+                style={{ background: action.bg }}
               >
-                <div
-                  className="icon-wrapper text-2xl"
-                  style={{ background: action.bg }}
-                >
-                  {action.icon}
-                </div>
-                <span className="text-sm font-medium" style={{ color: "var(--text-color-2)" }}>
-                  {action.label}
-                </span>
+                {action.icon}
               </div>
-            </Col>
+              <span className="text-sm font-medium" style={{ color: "var(--text-color-2)" }}>
+                {action.label}
+              </span>
+            </button>
           ))}
-        </Row>
+        </div>
       </Card>
 
       <Row gutter={16}>
@@ -1373,6 +1641,8 @@ export default function DashboardPage() {
                   <Skeleton key={i} style={{ height: 60 }} />
                 ))}
               </div>
+            ) : failedSections.includes("近期流水") ? (
+              <DashboardUnavailable message="近期流水暂不可用" />
             ) : recentTx.length === 0 ? (
               <div className="text-center py-12">
                 <IconEmpty className="mb-4" style={{ fontSize: 42, color: "var(--text-color-4)" }} />
@@ -1388,9 +1658,10 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-2">
                 {recentTx.map((tx, index) => (
-                  <div
+                  <button
+                    type="button"
                     key={tx.id}
-                    className="transaction-item animate-fade-in"
+                    className="transaction-item w-full animate-fade-in"
                     style={{ animationDelay: `${index * 50 + 300}ms` }}
                     onClick={() => router.push("/transactions")}
                   >
@@ -1413,7 +1684,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
                     <AmountDisplay amount={tx.amount} type={tx.type} showSign />
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -1447,6 +1718,8 @@ export default function DashboardPage() {
                   <Skeleton key={i} style={{ height: 80 }} />
                 ))}
               </div>
+            ) : failedSections.includes("预算") ? (
+              <DashboardUnavailable message="预算状态暂不可用" />
             ) : alerts.length === 0 ? (
               <div className="text-center py-12">
                 <IconCheckCircle className="mb-4" style={{ fontSize: 42, color: "var(--color-success)" }} />
@@ -1471,8 +1744,8 @@ export default function DashboardPage() {
                       <span
                         className="text-xs px-2 py-1 rounded-full"
                         style={{
-                          backgroundColor: budget.riskLevel === "critical" ? "#ef444420" : "#f59e0b20",
-                          color: budget.riskLevel === "critical" ? "#ef4444" : "#f59e0b",
+                          backgroundColor: budget.riskLevel === "critical" ? "#ef444420" : "#a85a4218",
+                          color: budget.riskLevel === "critical" ? "#ef4444" : "#a85a42",
                         }}
                       >
                         {budget.riskLevel === "critical" ? t("overrun") : t("warning")}
@@ -1492,6 +1765,32 @@ export default function DashboardPage() {
           </Card>
         </Col>
       </Row>
+    </div>
+  );
+}
+
+function DashboardUnavailable({ message, compact = false }: { message: string; compact?: boolean }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center rounded-xl border px-4 text-center"
+      style={{
+        minHeight: compact ? 112 : 148,
+        borderColor: "var(--border-color-light)",
+        backgroundColor: "var(--bg-color-page)",
+      }}
+    >
+      <IconExclamationCircle style={{ color: "var(--color-warning)", fontSize: 26 }} />
+      <div className="mt-3 text-sm font-semibold" style={{ color: "var(--text-color-2)" }}>{message}</div>
+      <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>请重新加载后再查看结论</div>
+    </div>
+  );
+}
+
+function MetricUnavailable() {
+  return (
+    <div>
+      <div className="text-2xl font-bold" style={{ color: "var(--text-color-3)" }}>--</div>
+      <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>数据暂不可用</div>
     </div>
   );
 }

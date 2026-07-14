@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
+  DatePicker,
   Empty,
   Form,
   Grid,
@@ -31,6 +32,7 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import RiskBadge from "@/components/common/RiskBadge";
+import AccountReconciliationModal from "@/components/accounts/AccountReconciliationModal";
 import { accountApi } from "@/lib/api/accounts";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
@@ -115,6 +117,7 @@ export default function AccountsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [reconcilingAccount, setReconcilingAccount] = useState<Account | null>(null);
   const [form] = Form.useForm();
   const { accounts, summary } = viewData;
 
@@ -231,9 +234,7 @@ export default function AccountsPage() {
       frozenAmount: 0,
       includeInNetWorth: "true",
       status: 1,
-      reconciliationStatus: "pending",
       openedAt: today(),
-      lastReconciledAt: today(),
       ownerName: isHousehold ? "家庭成员" : "财务负责人",
     });
     setModalVisible(true);
@@ -249,7 +250,6 @@ export default function AccountsPage() {
       ownerName: account.ownerName || undefined,
       purpose: account.purpose || undefined,
       openedAt: account.openedAt || undefined,
-      lastReconciledAt: account.lastReconciledAt || undefined,
     });
     setModalVisible(true);
   };
@@ -316,11 +316,11 @@ export default function AccountsPage() {
         }
       />
 
-      <Row gutter={16} className="mb-6">
+      <Row gutter={16} className="metric-grid">
         {summaryCards.map((card) => (
           <Col key={card.label} xs={12} md={6}>
-            <Card style={{ borderRadius: 12, minHeight: 148 }}>
-              <div className="flex h-full min-h-[108px] flex-col justify-between">
+            <Card className="metric-card" style={{ borderRadius: 12, minHeight: 132 }}>
+              <div className="flex h-full min-h-[92px] flex-col justify-between">
                 <div className="flex items-center justify-between">
                   <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
                   <span className="inline-flex text-xl" style={{ color: "var(--color-primary)" }}>{card.icon}</span>
@@ -339,7 +339,7 @@ export default function AccountsPage() {
         ))}
       </Row>
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <Input
             allowClear
@@ -398,7 +398,7 @@ export default function AccountsPage() {
         ) : accountTypeStats.length === 0 ? (
           <div className="text-sm" style={{ color: "var(--text-color-3)" }}>暂无账户结构</div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+          <div className="bi-segment-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
             {accountTypeStats.map((row) => {
               const meta = accountTypeMeta[row.type] || { label: row.type, icon: <IconSafe />, color: "gray" };
               return (
@@ -443,7 +443,7 @@ export default function AccountsPage() {
               <col style={{ width: "14%" }} />
               <col style={{ width: "11%" }} />
               <col style={{ width: "7%" }} />
-              <col style={{ width: "5%" }} />
+              <col style={{ width: "8%" }} />
             </colgroup>
             <thead>
               <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
@@ -540,6 +540,7 @@ export default function AccountsPage() {
                     </td>
                     <td className="px-4 py-4 text-center align-middle">
                       <div className="flex justify-center gap-1">
+                        <Button type="text" size="mini" title="余额对账" icon={<IconCheckCircle />} onClick={() => setReconcilingAccount(account)} />
                         <Button type="text" size="mini" title="编辑" icon={<IconEdit />} onClick={() => openEdit(account)} />
                         <Button type="text" size="mini" title="删除" status="danger" icon={<IconDelete />} onClick={() => handleDelete(account.id)} />
                       </div>
@@ -613,22 +614,12 @@ export default function AccountsPage() {
               <InputNumber min={0} precision={2} placeholder="0.00" />
             </FormItem>
             <FormItem label="开户日期" field="openedAt">
-              <Input placeholder="yyyy-MM-dd" />
-            </FormItem>
-            <FormItem label="最后对账日" field="lastReconciledAt">
-              <Input placeholder="yyyy-MM-dd" />
+              <DatePicker format="YYYY-MM-DD" className="w-full" allowClear />
             </FormItem>
             <FormItem label="账户状态" field="status">
               <Select>
                 {Object.entries(statusMeta).map(([value, meta]) => (
                   <Select.Option key={value} value={Number(value)}>{meta.label}</Select.Option>
-                ))}
-              </Select>
-            </FormItem>
-            <FormItem label="对账状态" field="reconciliationStatus">
-              <Select>
-                {Object.entries(reconciliationMeta).map(([value, meta]) => (
-                  <Select.Option key={value} value={value}>{meta.label}</Select.Option>
                 ))}
               </Select>
             </FormItem>
@@ -644,6 +635,11 @@ export default function AccountsPage() {
           </FormItem>
         </Form>
       </Modal>
+      <AccountReconciliationModal
+        account={reconcilingAccount}
+        onClose={() => setReconcilingAccount(null)}
+        onSuccess={() => void refreshData(true)}
+      />
     </div>
   );
 }

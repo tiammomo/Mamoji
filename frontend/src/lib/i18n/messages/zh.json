@@ -32,6 +32,7 @@
   },
   "nav": {
     "dashboard": "首页",
+    "approvals": "审批中心",
     "transactions": "经营流水",
     "newTransaction": "录入流水",
     "reports": "经营报表",

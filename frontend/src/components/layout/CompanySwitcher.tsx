@@ -44,6 +44,7 @@ export default function CompanySwitcher() {
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const setActiveCompanyId = useAppStore((state) => state.setActiveCompanyId);
   const setActiveSubjectType = useAppStore((state) => state.setActiveSubjectType);
+  const selectedEntityType = Form.useWatch("entityType", form) || "company";
 
   const activeCompany = useMemo(
     () => companies.find((company) => company.id === activeCompanyId) || companies[0] || null,
@@ -207,6 +208,8 @@ export default function CompanySwitcher() {
         <button
           data-company-switcher-trigger
           type="button"
+          aria-label={`切换主体，当前：${activeCompany?.name || "未选择主体"}`}
+          title="切换公司或家庭主体"
           className="flex h-12 w-12 cursor-pointer items-center gap-2 rounded-full border px-2 text-left shadow-sm transition-all hover:-translate-y-px hover:shadow-md md:w-auto md:min-w-[252px] md:max-w-[360px] md:pl-2 md:pr-2"
           style={{
             borderColor: "rgba(99, 102, 241, 0.16)",
@@ -253,7 +256,19 @@ export default function CompanySwitcher() {
         onOk={() => form.submit()}
         style={{ width: 640 }}
       >
-        <Form form={form} layout="vertical" onSubmit={handleCreateCompany}>
+        <Form
+          form={form}
+          layout="vertical"
+          onSubmit={handleCreateCompany}
+          onValuesChange={(changed) => {
+            if (changed.entityType === "household") {
+              form.setFieldsValue({ industry: "家庭资产管理", taxpayerType: "非经营主体" });
+            }
+            if (changed.entityType === "company") {
+              form.setFieldsValue({ industry: "软件与信息技术服务", taxpayerType: "小规模纳税人" });
+            }
+          }}
+        >
           <FormItem label="主体类型" field="entityType" rules={[{ required: true, message: "请选择主体类型" }]}>
             <Select>
               <Select.Option value="company">公司主体</Select.Option>
@@ -269,8 +284,14 @@ export default function CompanySwitcher() {
             </FormItem>
             <FormItem label="纳税人类型" field="taxpayerType" rules={[{ required: true, message: "请选择纳税人类型" }]}>
               <Select>
-                <Select.Option value="小规模纳税人">小规模纳税人</Select.Option>
-                <Select.Option value="一般纳税人">一般纳税人</Select.Option>
+                {selectedEntityType === "household" ? (
+                  <Select.Option value="非经营主体">非经营主体</Select.Option>
+                ) : (
+                  <>
+                    <Select.Option value="小规模纳税人">小规模纳税人</Select.Option>
+                    <Select.Option value="一般纳税人">一般纳税人</Select.Option>
+                  </>
+                )}
               </Select>
             </FormItem>
             <FormItem label="国家/地区" field="country" rules={[{ required: true, message: "请输入国家或地区" }]}>

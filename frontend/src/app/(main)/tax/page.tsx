@@ -806,11 +806,11 @@ export default function TaxPage() {
         }
       />
 
-      <Row gutter={16} className="mb-6">
+      <Row gutter={16} className="metric-grid">
         {summaryCards.map((card) => (
           <Col key={card.label} xs={12} md={6}>
-            <Card style={{ borderRadius: 12, minHeight: 148 }}>
-              <div className="flex min-h-[108px] flex-col justify-between">
+            <Card className="metric-card" style={{ borderRadius: 12, minHeight: 132 }}>
+              <div className="flex min-h-[92px] flex-col justify-between">
                 <div className="flex items-center justify-between">
                   <span className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</span>
                   <span className="inline-flex text-xl" style={{ color: card.color }}>{card.icon}</span>
@@ -830,148 +830,151 @@ export default function TaxPage() {
       </Row>
 
       <div className="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <Card style={{ borderRadius: 12 }} title="深圳轻税务配置">
-          {initialLoading ? (
-            <Skeleton />
-          ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {startupProfileRows.map(([label, value]) => (
-                <div
-                  key={label}
-                  className="min-h-[76px] rounded-lg border px-4 py-3"
-                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
-                >
-                  <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{label}</div>
-                  <div className="mt-2 text-sm font-semibold leading-5" style={{ color: "var(--text-color-1)" }}>{value}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+        <div className="tax-insight-stack contents xl:flex xl:min-w-0 xl:flex-col">
+          <Card className="tax-stack-section order-1 xl:order-none" style={{ borderRadius: 12 }} title="深圳轻税务配置">
+            {initialLoading ? (
+              <Skeleton />
+            ) : (
+              <div className="tax-profile-grid grid grid-cols-1 sm:grid-cols-2">
+                {startupProfileRows.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="min-h-[76px] rounded-2xl border px-4 py-3"
+                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+                  >
+                    <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{label}</div>
+                    <div className="mt-2 text-sm font-semibold leading-5" style={{ color: "var(--text-color-1)" }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
 
-        <Card style={{ borderRadius: 12 }} title="本期待办">
-          {initialLoading ? (
-            <Skeleton />
-          ) : priorityComplianceRisks.length === 0 && priorityTaxItems.length === 0 ? (
-            <Empty description="暂无税务待办" />
-          ) : (
-            <div className="space-y-3">
-              {priorityComplianceRisks.length > 0 ? priorityComplianceRisks.map((issue) => {
-                const typeMeta = taxTypeLabels[issue.taxType] || { label: issue.taxTypeName || issue.taxType, color: "gray", icon: <IconFile /> };
-                const severity = severityLabels[normalizeSeverity(issue.severity)];
-                return (
-                  <div
-                    key={issue.key}
-                    className="rounded-lg border p-3"
-                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Tag color={typeMeta.color}>{issue.taxTypeName || typeMeta.label}</Tag>
-                          <Tag color={severity.color}>{severity.label}</Tag>
-                        </div>
-                        <div className="mt-2 line-clamp-1 text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>{issue.title}</div>
-                        <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
-                          {issue.period || "税期待确认"} · {issue.dueDate ? `${displayDate(issue.dueDate)} · ${dueDateLabel(issue.dueDate)}` : "截止日待确认"}
-                        </div>
-                      </div>
-                      <div className="max-w-[180px] text-right text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
-                        {issue.action}
+          <Card className="tax-stack-section order-3 xl:order-none" style={{ borderRadius: 12 }} title="票据缺口">
+            {initialLoading ? (
+              <Skeleton />
+            ) : receiptComplianceIssues.length === 0 ? (
+              <Empty description="暂无票据缺口" />
+            ) : (
+              <div className="space-y-3">
+                {receiptComplianceIssues.map((issue) => {
+                  const severity = severityLabels[issue.severity];
+                  return (
+                    <div key={issue.title} className="flex items-start gap-3 rounded-2xl px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+                      <Tag color={severity.color}>{severity.label}</Tag>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium">{issue.title}</div>
+                        <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{issue.description}</div>
                       </div>
                     </div>
-                  </div>
-                );
-              }) : priorityTaxItems.map((item) => {
-                const typeMeta = taxTypeLabels[item.taxType] || { label: item.taxType, color: "gray", icon: <IconFile /> };
-                const risk = riskLabels[item.riskLevel] || riskLabels.medium;
-                const unpaid = unpaidAmount(item);
-                return (
-                  <div
-                    key={item.id}
-                    className="rounded-lg border p-3"
-                    style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Tag color={typeMeta.color}>{typeMeta.label}</Tag>
-                          <Tag color={risk.color}>{risk.label}</Tag>
+                  );
+                })}
+                <Button size="small" icon={<IconFile />} onClick={() => router.push("/receipts")}>
+                  处理票据凭证
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          <Card className="tax-stack-section order-4 xl:order-none" style={{ borderRadius: 12 }} title="待处理凭证">
+            {initialLoading ? (
+              <Skeleton />
+            ) : priorityVouchers.length === 0 ? (
+              <Empty description="暂无待处理凭证" />
+            ) : (
+              <div className="space-y-3">
+                {priorityVouchers.map((voucher) => {
+                  const type = voucherTypeName(voucher.voucherType);
+                  return (
+                    <div key={voucher.id} className="rounded-2xl border p-3" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">{voucher.title}</div>
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{type} · {voucher.taxPeriod || "税期待补"}</div>
                         </div>
-                        <div className="mt-2 truncate text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>{item.name}</div>
-                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                          {item.period} · {displayDate(item.dueDate)} · {dueLabel(item)}
-                        </div>
-                      </div>
-                      <div className="whitespace-nowrap text-right">
-                        <AmountDisplay amount={unpaid} type={unpaid > 0 ? 2 : 1} size="small" />
-                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{item.responsiblePerson || "负责人待补"}</div>
+                        <Tag color={voucher.riskLevel === "high" || voucher.riskLevel === "critical" ? "red" : "orange"}>
+                          {formatAmount(voucher.amount)}
+                        </Tag>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-4">
+          <Card className="order-2 xl:order-none" style={{ borderRadius: 12 }} title="本期待办">
+            {initialLoading ? (
+              <Skeleton />
+            ) : priorityComplianceRisks.length === 0 && priorityTaxItems.length === 0 ? (
+              <Empty description="暂无税务待办" />
+            ) : (
+              <div className="space-y-3">
+                {priorityComplianceRisks.length > 0 ? priorityComplianceRisks.map((issue) => {
+                  const typeMeta = taxTypeLabels[issue.taxType] || { label: issue.taxTypeName || issue.taxType, color: "gray", icon: <IconFile /> };
+                  const severity = severityLabels[normalizeSeverity(issue.severity)];
+                  return (
+                    <div
+                      key={issue.key}
+                      className="rounded-2xl border p-3"
+                      style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Tag color={typeMeta.color}>{issue.taxTypeName || typeMeta.label}</Tag>
+                            <Tag color={severity.color}>{severity.label}</Tag>
+                          </div>
+                          <div className="mt-2 line-clamp-1 text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>{issue.title}</div>
+                          <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                            {issue.period || "税期待确认"} · {issue.dueDate ? `${displayDate(issue.dueDate)} · ${dueDateLabel(issue.dueDate)}` : "截止日待确认"}
+                          </div>
+                        </div>
+                        <div className="max-w-[180px] text-right text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+                          {issue.action}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }) : priorityTaxItems.map((item) => {
+                  const typeMeta = taxTypeLabels[item.taxType] || { label: item.taxType, color: "gray", icon: <IconFile /> };
+                  const risk = riskLabels[item.riskLevel] || riskLabels.medium;
+                  const unpaid = unpaidAmount(item);
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-2xl border p-3"
+                      style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Tag color={typeMeta.color}>{typeMeta.label}</Tag>
+                            <Tag color={risk.color}>{risk.label}</Tag>
+                          </div>
+                          <div className="mt-2 truncate text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>{item.name}</div>
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
+                            {item.period} · {displayDate(item.dueDate)} · {dueLabel(item)}
+                          </div>
+                        </div>
+                        <div className="whitespace-nowrap text-right">
+                          <AmountDisplay amount={unpaid} type={unpaid > 0 ? 2 : 1} size="small" />
+                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{item.responsiblePerson || "负责人待补"}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+        </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <Card style={{ borderRadius: 12 }} title="票据缺口">
-          {initialLoading ? (
-            <Skeleton />
-          ) : receiptComplianceIssues.length === 0 ? (
-            <Empty description="暂无票据缺口" />
-          ) : (
-            <div className="space-y-3">
-              {receiptComplianceIssues.map((issue) => {
-                const severity = severityLabels[issue.severity];
-                return (
-                  <div key={issue.title} className="flex items-start gap-3">
-                    <Tag color={severity.color}>{severity.label}</Tag>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">{issue.title}</div>
-                      <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{issue.description}</div>
-                    </div>
-                  </div>
-                );
-              })}
-              <Button size="small" icon={<IconFile />} onClick={() => router.push("/receipts")}>
-                处理票据凭证
-              </Button>
-            </div>
-          )}
-        </Card>
-
-        <Card style={{ borderRadius: 12 }} title="待处理凭证">
-          {initialLoading ? (
-            <Skeleton />
-          ) : priorityVouchers.length === 0 ? (
-            <Empty description="暂无待处理凭证" />
-          ) : (
-            <div className="space-y-3">
-              {priorityVouchers.map((voucher) => {
-                const type = voucherTypeName(voucher.voucherType);
-                return (
-                  <div key={voucher.id} className="rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--color-fill-1)" }}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold">{voucher.title}</div>
-                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{type} · {voucher.taxPeriod || "税期待补"}</div>
-                      </div>
-                      <Tag color={voucher.riskLevel === "high" || voucher.riskLevel === "critical" ? "red" : "orange"}>
-                        {formatAmount(voucher.amount)}
-                      </Tag>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_repeat(3,minmax(0,1fr))_120px]">
           <Input
             allowClear

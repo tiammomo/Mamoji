@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, Card, DatePicker, Drawer, Progress, Radio, Select, Skeleton, Tabs, Tag } from "@arco-design/web-react";
+import { Alert, Button, Card, DatePicker, Drawer, Progress, Radio, Select, Skeleton, Tabs, Tag } from "@arco-design/web-react";
 import {
   IconCalendar,
   IconDashboard,
@@ -88,6 +88,13 @@ function periodRange(period: ReportPeriod) {
   return { startDate: toIsoDate(start), endDate: toIsoDate(now) };
 }
 
+function monthsCovered(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const inclusiveDays = Math.max(1, Math.floor((end.getTime() - start.getTime()) / 86400000) + 1);
+  return inclusiveDays / (365.2425 / 12);
+}
+
 function displayDate(date?: string | null) {
   if (!date) return "--";
   return date.slice(0, 10);
@@ -101,8 +108,8 @@ function displayPercent(value: number) {
 function displayChangePercent(data?: ComparisonData | null) {
   if (!data) return "--";
   const raw = Number(data.changePercent || 0);
-  const normalized = Math.abs(raw) > 1 ? Math.abs(raw) : Math.abs(raw * 100);
-  return `${normalized.toFixed(1)}%`;
+  const sign = raw > 0 ? "+" : raw < 0 ? "-" : "";
+  return `${sign}${Math.abs(raw).toFixed(1)}%`;
 }
 
 function taxTypeLabel(type: string) {
@@ -125,6 +132,12 @@ function taxStatus(item: TaxItem) {
 
 function resolved<T>(result: PromiseSettledResult<{ data: T }>, fallback: T) {
   return result.status === "fulfilled" ? result.value.data : fallback;
+}
+
+function csvCell(value: unknown) {
+  const raw = value == null ? "" : String(value);
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replaceAll('"', '""')}"`;
 }
 
 export default function ReportsPage() {
@@ -151,6 +164,8 @@ export default function ReportsPage() {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [recurringItems, setRecurringItems] = useState<RecurringItem[]>([]);
   const [detail, setDetail] = useState<DetailPayload | null>(null);
+  const [failedSections, setFailedSections] = useState<string[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const isHousehold = activeSubjectType === "household" || enterpriseSummary?.company?.entityType === "household";
 
   useEffect(() => {
@@ -180,14 +195,20 @@ export default function ReportsPage() {
     }),
     [defaultRange.endDate, defaultRange.startDate, endDate, startDate]
   );
+  const rangeInvalid = reportRange.startDate > reportRange.endDate;
 
   useEffect(() => {
     let cancelled = false;
 
     const loadReports = async () => {
       setLoading(true);
-      const year = new Date().getFullYear();
-      const month = new Date().toISOString().slice(0, 7);
+      if (rangeInvalid) {
+        setFailedSections([]);
+        setLoading(false);
+        return;
+      }
+      const year = Number(reportRange.endDate.slice(0, 4));
+      const month = reportRange.endDate.slice(0, 7);
       const [
         trendResult,
         expenseResult,
@@ -203,7 +224,7 @@ export default function ReportsPage() {
         budgetsResult,
         recurringResult,
       ] = await Promise.allSettled([
-        statsApi.trend({ period, limit: trendLimit[period] }),
+        statsApi.trend({ period, limit: trendLimit[period], endDate: reportRange.endDate }),
         statsApi.category({ type: "expense", ...reportRange }),
         statsApi.category({ type: "income", ...reportRange }),
         statsApi.yearly(year),
@@ -239,6 +260,24 @@ export default function ReportsPage() {
       setTaxItems(resolved(taxResult, []));
       setBudgets(budgetsResult.status === "fulfilled" ? budgetsResult.value.data.content : []);
       setRecurringItems(resolved(recurringResult, []));
+      const namedResults: Array<[string, PromiseSettledResult<unknown>, boolean]> = [
+        ["经营趋势", trendResult, true],
+        ["成本分类", expenseResult, true],
+        ["收入分类", incomeResult, true],
+        ["年度汇总", yearlyResult, true],
+        ["资产负债", assetResult, true],
+        ["环比同比", comparisonResult, true],
+        ["经营洞察", insightsResult, true],
+        ["主体信息", summaryResult, true],
+        ["部门", departmentsResult, activeSubjectType !== "household"],
+        ["员工", employeesResult, activeSubjectType !== "household"],
+        ["税务", taxResult, activeSubjectType !== "household"],
+        ["预算", budgetsResult, true],
+        ["周期事项", recurringResult, true],
+      ];
+      setFailedSections(namedResults
+        .filter(([, result, relevant]) => relevant && result.status === "rejected")
+        .map(([name]) => name));
       setLoading(false);
     };
 
@@ -247,7 +286,7 @@ export default function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [period, reportRange]);
+  }, [activeSubjectType, period, rangeInvalid, reloadKey, reportRange]);
 
   const chartColors = useMemo(() => ({
     text: theme === "dark" ? "#94a3b8" : "#64748b",
@@ -276,10 +315,12 @@ export default function ReportsPage() {
     const netWorth = Number(assets?.netWorth || 0);
     const assetsTotal = Number(assets?.totalAssets || 0);
     const liabilities = Number(assets?.totalLiabilities || 0);
-    const monthlyBurn = operatingSummary.expense > 0 ? operatingSummary.expense : operatingSummary.peopleCost + operatingSummary.recurringExpense;
+    const monthlyBurn = operatingSummary.expense > 0
+      ? operatingSummary.expense / monthsCovered(reportRange.startDate, reportRange.endDate)
+      : operatingSummary.peopleCost + operatingSummary.recurringExpense;
     const runway = monthlyBurn > 0 ? assetsTotal / monthlyBurn : 0;
     return { netWorth, assetsTotal, liabilities, monthlyBurn, runway };
-  }, [assets, operatingSummary.expense, operatingSummary.peopleCost, operatingSummary.recurringExpense]);
+  }, [assets, operatingSummary.expense, operatingSummary.peopleCost, operatingSummary.recurringExpense, reportRange.endDate, reportRange.startDate]);
 
   const departmentCostRows = useMemo(() => {
     const departmentNames = new Map(departments.map((department) => [department.id, department.name]));
@@ -305,12 +346,29 @@ export default function ReportsPage() {
     return [...rows.values()].sort((a, b) => b.cost - a.cost);
   }, [departments, employees]);
 
+  const incomeUnavailable = failedSections.includes("收入分类");
+  const expenseUnavailable = failedSections.includes("成本分类");
+  const profitUnavailable = incomeUnavailable || expenseUnavailable;
+  const cashBurnFallbackUnavailable = operatingSummary.expense <= 0
+    && (failedSections.includes("周期事项") || (!isHousehold && failedSections.includes("员工")));
+  const cashflowUnavailable = failedSections.includes("经营趋势")
+    || failedSections.includes("资产负债")
+    || expenseUnavailable
+    || cashBurnFallbackUnavailable;
+
   const findingCards = useMemo(() => {
     const items: Array<{ title: string; description: string; level: "good" | "warn" | "risk" }> = [];
-    if (operatingSummary.profit < 0) {
-      items.push({ title: "利润为负", description: "当前筛选周期内成本高于收入，建议复核大额支出和固定成本。", level: "risk" });
-    } else {
-      items.push({ title: "经营利润为正", description: `利润率 ${displayPercent(operatingSummary.profitMargin)}，可继续关注现金回款节奏。`, level: "good" });
+    if (failedSections.length > 0) {
+      items.push({ title: "部分结论已暂停", description: "存在未加载的数据模块；页面只保留可验证信息，不会用 0 补齐缺失数据。", level: "warn" });
+    }
+    if (!profitUnavailable) {
+      if (operatingSummary.profit < 0) {
+        items.push({ title: "利润为负", description: "当前筛选周期内成本高于收入，建议复核大额支出和固定成本。", level: "risk" });
+      } else if (operatingSummary.profit === 0) {
+        items.push({ title: "当前收支持平", description: "当前筛选周期未形成正向利润，建议结合交易笔数确认是否尚未录入完整。", level: "warn" });
+      } else {
+        items.push({ title: "经营利润为正", description: `利润率 ${displayPercent(operatingSummary.profitMargin)}，可继续关注现金回款节奏。`, level: "good" });
+      }
     }
     if (operatingSummary.budgetAlerts > 0) {
       items.push({ title: "预算存在预警", description: `${operatingSummary.budgetAlerts} 项预算已接近或超过阈值。`, level: "warn" });
@@ -318,29 +376,32 @@ export default function ReportsPage() {
     if (operatingSummary.pendingTax > 0) {
       items.push({ title: "税费待处理", description: `待处理税费 ${formatAmount(operatingSummary.pendingTax)}，需关注申报截止日。`, level: "warn" });
     }
-    if (cashSummary.runway > 0 && cashSummary.runway < 3) {
+    if (!cashflowUnavailable && cashSummary.runway > 0 && cashSummary.runway < 3) {
       items.push({ title: "现金支撑偏紧", description: `按当前成本估算可支撑 ${cashSummary.runway.toFixed(1)} 个月。`, level: "risk" });
     }
     if (items.length < 4 && insights?.largeTransactions?.length) {
       items.push({ title: "存在大额流水", description: `${insights.largeTransactions.length} 条大额交易建议复核票据和税务口径。`, level: "warn" });
     }
     return items.slice(0, 4);
-  }, [cashSummary.runway, insights, operatingSummary.budgetAlerts, operatingSummary.pendingTax, operatingSummary.profit, operatingSummary.profitMargin]);
-
-  const summaryCards: Array<{ label: string; value: ReactNode; helper: string; icon: ReactNode; accent: string }> = [
+  }, [cashSummary.runway, cashflowUnavailable, failedSections, insights, operatingSummary.budgetAlerts, operatingSummary.pendingTax, operatingSummary.profit, operatingSummary.profitMargin, profitUnavailable]);
+  const summaryCards: Array<{ label: string; value: ReactNode; helper: string; icon: ReactNode; accent: string; unavailable: boolean }> = [
     {
       label: isHousehold ? "家庭收入" : "经营收入",
       value: <span className="text-lg font-bold" style={{ color: "#10b981" }}>{formatAmount(operatingSummary.income)}</span>,
       helper: `${displayDate(reportRange.startDate)} 至 ${displayDate(reportRange.endDate)}`,
       icon: <IconDashboard />,
       accent: "#10b981",
+      unavailable: incomeUnavailable,
     },
     {
       label: isHousehold ? "家庭支出" : "经营成本",
       value: <span className="text-lg font-bold" style={{ color: "#ef4444" }}>{formatAmount(operatingSummary.expense)}</span>,
-      helper: isHousehold ? `固定支出 ${formatAmount(operatingSummary.recurringExpense)}` : `人力 ${formatAmount(operatingSummary.peopleCost)}`,
+      helper: isHousehold
+        ? failedSections.includes("周期事项") ? "固定事项暂不可用" : `固定支出 ${formatAmount(operatingSummary.recurringExpense)}`
+        : failedSections.includes("员工") ? "人力数据暂不可用" : `人力 ${formatAmount(operatingSummary.peopleCost)}`,
       icon: <IconFile />,
       accent: "#ef4444",
+      unavailable: expenseUnavailable,
     },
     {
       label: isHousehold ? "家庭结余" : "经营利润",
@@ -352,6 +413,7 @@ export default function ReportsPage() {
       helper: `${isHousehold ? "结余率" : "利润率"} ${displayPercent(operatingSummary.profitMargin)}`,
       icon: <IconSafe />,
       accent: operatingSummary.profit >= 0 ? "#10b981" : "#ef4444",
+      unavailable: profitUnavailable,
     },
     {
       label: "预算使用率",
@@ -359,6 +421,7 @@ export default function ReportsPage() {
       helper: `${operatingSummary.budgetAlerts} 项预警`,
       icon: <IconCalendar />,
       accent: "#6366f1",
+      unavailable: failedSections.includes("预算"),
     },
     isHousehold
       ? {
@@ -366,14 +429,16 @@ export default function ReportsPage() {
         value: <span className="text-lg font-bold" style={{ color: "var(--text-color-1)" }}>{recurringItems.filter((item) => item.status === 1).length}</span>,
         helper: `月固定支出 ${formatAmount(operatingSummary.recurringExpense)}`,
         icon: <IconExclamationCircle />,
-        accent: "#f59e0b",
+        accent: "#a85a42",
+        unavailable: failedSections.includes("周期事项"),
       }
       : {
         label: "待处理税费",
         value: <span className="text-lg font-bold" style={{ color: "#ef4444" }}>{formatAmount(operatingSummary.pendingTax)}</span>,
         helper: `截止日 ${enterpriseSummary?.nextTaxDueDate || "--"}`,
         icon: <IconExclamationCircle />,
-        accent: "#f59e0b",
+        accent: "#a85a42",
+        unavailable: failedSections.includes("税务") || failedSections.includes("主体信息"),
       },
     {
       label: isHousehold ? "家庭净资产" : "现金支撑",
@@ -385,8 +450,47 @@ export default function ReportsPage() {
       helper: `净资产 ${formatAmount(cashSummary.netWorth)}`,
       icon: <IconSafe />,
       accent: "#0ea5e9",
+      unavailable: failedSections.includes("资产负债")
+        || expenseUnavailable
+        || cashBurnFallbackUnavailable,
     },
   ];
+
+  const exportCsv = () => {
+    const subjectName = enterpriseSummary?.company?.name || "当前主体";
+    const rows: unknown[][] = [
+      ["Mamoji 经营报表"],
+      ["主体", subjectName],
+      ["生成时间", new Date().toLocaleString("zh-CN")],
+      ["收支统计区间", reportRange.startDate, reportRange.endDate],
+      ["历史趋势口径", `截至 ${reportRange.endDate} 的近 ${trendLimit[period]} 个${period === "month" ? "月" : period === "quarter" ? "季度" : "年度"}`],
+      ["快照口径", "资产、预算、税务与人员为导出时的当前状态"],
+      [],
+      ["核心指标", "数值"],
+      [isHousehold ? "家庭收入" : "经营收入", operatingSummary.income],
+      [isHousehold ? "家庭支出" : "经营成本", operatingSummary.expense],
+      [isHousehold ? "家庭结余" : "经营利润", operatingSummary.profit],
+      ["当前活动预算金额", operatingSummary.totalBudget],
+      ["当前活动预算已使用", operatingSummary.spentBudget],
+      ["当前净资产", cashSummary.netWorth],
+      [],
+      ["趋势期间", "收入", "支出", "结余"],
+      ...trend.map((item) => [item.month, item.income, item.expense, item.balance]),
+      [],
+      ["收入分类", "金额", "占比", "笔数"],
+      ...incomeCats.map((item) => [item.categoryName, item.amount, item.percentage, item.count]),
+      [],
+      ["成本分类", "金额", "占比", "笔数"],
+      ...expenseCats.map((item) => [item.categoryName, item.amount, item.percentage, item.count]),
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `mamoji-report-${reportRange.startDate}-${reportRange.endDate}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   const trendOption = useMemo(() => ({
     color: ["#10b981", "#ef4444", "#6366f1"],
@@ -557,8 +661,8 @@ export default function ReportsPage() {
     });
   };
 
-  const renderCategoryRows = (items: CategoryStat[], type: 1 | 2) => (
-    <div className="space-y-3">
+  const renderCategoryRows = (items: CategoryStat[], type: 1 | 2, source: "收入分类" | "成本分类") => (
+    <div className="bi-flat-list">
       {items.slice(0, 6).map((item, index) => (
         <button
           key={`${type}-${item.categoryId}`}
@@ -580,7 +684,9 @@ export default function ReportsPage() {
         </button>
       ))}
       {items.length === 0 && (
-        <div className="py-10 text-center text-sm" style={{ color: "var(--text-color-3)" }}>暂无分类数据</div>
+        <div className="py-10 text-center text-sm" style={{ color: "var(--text-color-3)" }}>
+          {failedSections.includes(source) ? "分类数据暂不可用" : "暂无分类数据"}
+        </div>
       )}
     </div>
   );
@@ -592,13 +698,23 @@ export default function ReportsPage() {
         subtitle={`${enterpriseSummary?.company?.name || "当前主体"} · ${isHousehold ? "家庭收入、支出、现金流、预算和固定事项分析" : "收入、成本、现金流、预算、税务和人力成本分析"}`}
         icon={<IconDashboard />}
         extra={
-          <Button icon={<IconFile />} disabled>
-            导出报告
+          <Button icon={<IconFile />} disabled={loading || rangeInvalid || failedSections.length > 0} onClick={exportCsv}>
+            导出 CSV
           </Button>
         }
       />
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      {failedSections.length > 0 && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          title="报表数据不完整"
+          content={`${failedSections.join("、")} 暂不可用；相关指标显示为“--”，完整导出已暂停。`}
+          action={<Button size="small" onClick={() => setReloadKey((key) => key + 1)}>重新加载</Button>}
+        />
+      )}
+
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[220px_minmax(340px,1fr)_170px_110px]">
           <Radio.Group type="button" value={period} onChange={(value) => setPeriod(value as ReportPeriod)}>
             <Radio value="month">月度</Radio>
@@ -658,17 +774,26 @@ export default function ReportsPage() {
             重置
           </Button>
         </div>
+        <div className="mt-3 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+          日期范围用于收入、成本和月均现金消耗；趋势以结束日为锚点，资产、预算、税务与人员显示当前主体快照。
+        </div>
       </Card>
 
-      {loading ? (
+      {rangeInvalid ? (
+        <Alert
+          type="error"
+          title="统计区间无效"
+          content="起始日期不能晚于结束日期，请修正日期后再生成报表。"
+        />
+      ) : loading ? (
         <Card style={{ borderRadius: 12 }}>
           <Skeleton className="h-80" />
         </Card>
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
+          <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
             {summaryCards.map((item) => (
-              <Card key={item.label} style={{ borderRadius: 12 }}>
+              <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
                 <div className="flex h-[98px] flex-col justify-between">
                   <div className="flex items-center justify-between">
                     <span className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</span>
@@ -676,8 +801,8 @@ export default function ReportsPage() {
                       {item.icon}
                     </span>
                   </div>
-                  <div className="truncate">{item.value}</div>
-                  <div className="truncate text-xs" style={{ color: "var(--text-color-4)" }}>{item.helper}</div>
+                  <div className="truncate">{item.unavailable ? <span className="text-lg font-bold">--</span> : item.value}</div>
+                  <div className="truncate text-xs" style={{ color: "var(--text-color-4)" }}>{item.unavailable ? "数据暂不可用" : item.helper}</div>
                 </div>
               </Card>
             ))}
@@ -685,16 +810,18 @@ export default function ReportsPage() {
 
           <Tabs activeTab={effectiveActiveTab} onChange={(key) => setActiveTab(key as ReportTab)}>
             <TabPane key="overview" title={isHousehold ? "家庭总览" : "经营总览"}>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+              <div className="bi-panel-cluster bi-cluster-lg grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
                 <Card title={`${periodLabels[period]}${isHousehold ? "收支趋势" : "经营趋势"}`} style={{ borderRadius: 12 }}>
-                  <ReactECharts option={trendOption} style={{ height: 360 }} />
+                  {failedSections.includes("经营趋势")
+                    ? <EmptyState title="趋势数据暂不可用" description="重新加载后再查看经营趋势" />
+                    : <ReactECharts option={trendOption} style={{ height: 360 }} />}
                 </Card>
                 <Card title={isHousehold ? "家庭结论" : "经营结论"} style={{ borderRadius: 12 }}>
-                  <div className="space-y-3">
+                  <div className="bi-flat-list">
                     {findingCards.map((item) => (
                       <div key={item.title} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-page)" }}>
                         <div className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.level === "good" ? "#10b981" : item.level === "warn" ? "#f59e0b" : "#ef4444" }} />
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.level === "good" ? "#10b981" : item.level === "warn" ? "#a85a42" : "#ef4444" }} />
                           <span className="font-medium" style={{ color: "var(--text-color-1)" }}>{item.title}</span>
                         </div>
                         <div className="mt-2 text-sm" style={{ color: "var(--text-color-3)" }}>{item.description}</div>
@@ -704,20 +831,30 @@ export default function ReportsPage() {
                 </Card>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="bi-panel-cluster bi-cluster-lg mt-4 grid grid-cols-1 lg:grid-cols-2">
                 <Card title="成本结构" style={{ borderRadius: 12 }}>
-                  {expenseCats.length ? <ReactECharts option={pieOption(expenseCats)} style={{ height: 320 }} /> : <EmptyState title="暂无成本数据" description="当前周期没有成本流水" />}
+                  {expenseCats.length
+                    ? <ReactECharts option={pieOption(expenseCats)} style={{ height: 320 }} />
+                    : <EmptyState title={failedSections.includes("成本分类") ? "成本数据暂不可用" : "暂无成本数据"} description={failedSections.includes("成本分类") ? "重新加载后再查看成本结构" : "当前周期没有成本流水"} />}
                 </Card>
                 <Card title="收入结构" style={{ borderRadius: 12 }}>
-                  {incomeCats.length ? <ReactECharts option={pieOption(incomeCats)} style={{ height: 320 }} /> : <EmptyState title="暂无收入数据" description="当前周期没有收入流水" />}
+                  {incomeCats.length
+                    ? <ReactECharts option={pieOption(incomeCats)} style={{ height: 320 }} />
+                    : <EmptyState title={failedSections.includes("收入分类") ? "收入数据暂不可用" : "暂无收入数据"} description={failedSections.includes("收入分类") ? "重新加载后再查看收入结构" : "当前周期没有收入流水"} />}
                 </Card>
               </div>
             </TabPane>
 
             <TabPane key="profit" title={isHousehold ? "收支结余" : "利润分析"}>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+              {profitUnavailable ? (
+                <EmptyState title="利润数据暂不可用" description="收入或成本分类尚未加载完成，请重新加载后查看" />
+              ) : (
+              <>
+              <div className="bi-panel-cluster bi-cluster-lg grid grid-cols-1 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
                 <Card title="年度利润走势" style={{ borderRadius: 12 }}>
-                  {yearlyOption ? <ReactECharts option={yearlyOption} style={{ height: 360 }} /> : <EmptyState title="暂无年度数据" description="没有可展示的年度经营数据" />}
+                  {yearlyOption
+                    ? <ReactECharts option={yearlyOption} style={{ height: 360 }} />
+                    : <EmptyState title={failedSections.includes("年度汇总") ? "年度数据暂不可用" : "暂无年度数据"} description={failedSections.includes("年度汇总") ? "重新加载后再查看年度走势" : "没有可展示的年度经营数据"} />}
                 </Card>
                 <Card title="利润口径" style={{ borderRadius: 12 }}>
                   <div className="space-y-4">
@@ -738,25 +875,31 @@ export default function ReportsPage() {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
                         <div className="text-xs" style={{ color: "var(--text-color-3)" }}>成本环比</div>
-                        <div className="mt-2 font-semibold" style={{ color: (mom?.change || 0) >= 0 ? "#ef4444" : "#10b981" }}>{displayChangePercent(mom)}</div>
+                        <div className="mt-2 font-semibold" style={{ color: mom ? (mom.change || 0) >= 0 ? "#ef4444" : "#10b981" : "var(--text-color-3)" }}>{displayChangePercent(mom)}</div>
                       </div>
                       <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
                         <div className="text-xs" style={{ color: "var(--text-color-3)" }}>成本同比</div>
-                        <div className="mt-2 font-semibold" style={{ color: (yoy?.change || 0) >= 0 ? "#ef4444" : "#10b981" }}>{displayChangePercent(yoy)}</div>
+                        <div className="mt-2 font-semibold" style={{ color: yoy ? (yoy.change || 0) >= 0 ? "#ef4444" : "#10b981" : "var(--text-color-3)" }}>{displayChangePercent(yoy)}</div>
                       </div>
                     </div>
                   </div>
                 </Card>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Card title="成本排行" style={{ borderRadius: 12 }}>{renderCategoryRows(expenseCats, 2)}</Card>
-                <Card title="收入排行" style={{ borderRadius: 12 }}>{renderCategoryRows(incomeCats, 1)}</Card>
+              <div className="bi-panel-cluster bi-cluster-lg mt-4 grid grid-cols-1 lg:grid-cols-2">
+                <Card title="成本排行" style={{ borderRadius: 12 }}>{renderCategoryRows(expenseCats, 2, "成本分类")}</Card>
+                <Card title="收入排行" style={{ borderRadius: 12 }}>{renderCategoryRows(incomeCats, 1, "收入分类")}</Card>
               </div>
+              </>
+              )}
             </TabPane>
 
             <TabPane key="cashflow" title="现金流">
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
+              {cashflowUnavailable ? (
+                <EmptyState title="现金流数据暂不可用" description="趋势、资产或成本数据尚未加载完成，请重新加载后查看" />
+              ) : (
+              <>
+              <div className="bi-panel-cluster bi-cluster-lg grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
                 <Card title="现金流趋势" style={{ borderRadius: 12 }}>
                   <ReactECharts option={cashFlowOption} style={{ height: 360 }} />
                 </Card>
@@ -771,7 +914,7 @@ export default function ReportsPage() {
                       <div className="mt-2 font-semibold" style={{ color: "#ef4444" }}>{formatAmount(cashSummary.liabilities)}</div>
                     </div>
                     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
-                      <div className="text-xs" style={{ color: "var(--text-color-3)" }}>月成本</div>
+                      <div className="text-xs" style={{ color: "var(--text-color-3)" }}>区间折算月成本</div>
                       <div className="mt-2 font-semibold">{formatAmount(cashSummary.monthlyBurn)}</div>
                     </div>
                     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
@@ -805,9 +948,14 @@ export default function ReportsPage() {
                   </table>
                 </div>
               </Card>
+              </>
+              )}
             </TabPane>
 
             <TabPane key="budget" title="预算执行">
+              {failedSections.includes("预算") ? (
+                <EmptyState title="预算数据暂不可用" description="重新加载后再查看预算执行台账" />
+              ) : (
               <Card title="预算执行台账" style={{ borderRadius: 12 }}>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[860px] table-fixed text-sm">
@@ -817,22 +965,18 @@ export default function ReportsPage() {
                       <col style={{ width: 240 }} />
                       <col style={{ width: 120 }} />
                       <col style={{ width: 140 }} />
+                      <col style={{ width: 100 }} />
                     </colgroup>
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["预算", "周期", "执行进度", "风险", "剩余额度"].map((column) => (
+                        {["预算", "周期", "执行进度", "风险", "剩余额度", "操作"].map((column) => (
                           <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {budgets.map((budget) => (
-                        <tr
-                          key={budget.id}
-                          onClick={() => openBudgetDetail(budget)}
-                          className="cursor-pointer border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
-                          style={{ borderColor: "var(--border-color-light)" }}
-                        >
+                        <tr key={budget.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
                           <td className="px-4 py-4">
                             <div className="font-medium">{budget.name}</div>
                             <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>{budget.categoryName || "公司整体"}</div>
@@ -847,27 +991,33 @@ export default function ReportsPage() {
                           </td>
                           <td className="px-4 py-4"><Tag color={budgetRiskColors[budget.riskLevel] || "gray"}>{budget.riskMessage || budget.riskLevel}</Tag></td>
                           <td className="px-4 py-4"><AmountDisplay amount={Math.abs(budget.remainingAmount)} type={budget.remainingAmount >= 0 ? 1 : 2} /></td>
+                          <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openBudgetDetail(budget)}>查看详情</Button></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </Card>
+              )}
             </TabPane>
 
             {!isHousehold && <TabPane key="tax" title="税务分析">
-              <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <Card style={{ borderRadius: 12 }}>
+              {failedSections.includes("税务") || incomeUnavailable || failedSections.includes("主体信息") ? (
+                <EmptyState title="税务分析暂不可用" description="税务、收入或主体数据尚未加载完成，请重新加载后查看" />
+              ) : (
+              <>
+              <div className="metric-grid metric-grid-odd mb-4 grid grid-cols-1 lg:grid-cols-3">
+                <Card className="metric-card" style={{ borderRadius: 12 }}>
                   <div className="text-xs" style={{ color: "var(--text-color-3)" }}>待处理税费</div>
                   <div className="mt-2"><AmountDisplay amount={operatingSummary.pendingTax} type={2} size="large" /></div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-4)" }}>下一截止日 {enterpriseSummary?.nextTaxDueDate || "--"}</div>
                 </Card>
-                <Card style={{ borderRadius: 12 }}>
+                <Card className="metric-card" style={{ borderRadius: 12 }}>
                   <div className="text-xs" style={{ color: "var(--text-color-3)" }}>税负率</div>
                   <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{operatingSummary.income > 0 ? displayPercent(operatingSummary.pendingTax / operatingSummary.income) : "--"}</div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-4)" }}>按待处理税费 / 收入估算</div>
                 </Card>
-                <Card style={{ borderRadius: 12 }}>
+                <Card className="metric-card" style={{ borderRadius: 12 }}>
                   <div className="text-xs" style={{ color: "var(--text-color-3)" }}>政策口径</div>
                   <div className="mt-2 font-semibold">{enterpriseSummary?.company?.taxpayerType || "--"}</div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-4)" }}>{enterpriseSummary?.company?.operatingRegion || "地区待完善"}</div>
@@ -878,7 +1028,7 @@ export default function ReportsPage() {
                   <table className="w-full min-w-[840px] table-fixed text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["事项", "期间", "税种", "应缴/已缴", "截止日", "状态"].map((column) => (
+                        {["事项", "期间", "税种", "应缴/已缴", "截止日", "状态", "操作"].map((column) => (
                           <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
                         ))}
                       </tr>
@@ -887,13 +1037,14 @@ export default function ReportsPage() {
                       {taxItems.map((item) => {
                         const status = taxStatus(item);
                         return (
-                          <tr key={item.id} onClick={() => openTaxDetail(item)} className="cursor-pointer border-b hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
+                          <tr key={item.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
                             <td className="px-4 py-4">{item.name}</td>
                             <td className="px-4 py-4">{item.period}</td>
                             <td className="px-4 py-4">{taxTypeLabel(item.taxType)}</td>
                             <td className="px-4 py-4">{formatAmount(item.taxAmount)} / {formatAmount(item.paidAmount)}</td>
                             <td className="px-4 py-4">{displayDate(item.dueDate)}</td>
                             <td className="px-4 py-4"><Tag color={status.color}>{status.label}</Tag></td>
+                            <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openTaxDetail(item)}>查看详情</Button></td>
                           </tr>
                         );
                       })}
@@ -901,10 +1052,16 @@ export default function ReportsPage() {
                   </table>
                 </div>
               </Card>
+              </>
+              )}
             </TabPane>}
 
             {!isHousehold && <TabPane key="people" title="人力成本">
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+              {failedSections.includes("员工") || failedSections.includes("部门") || failedSections.includes("主体信息") ? (
+                <EmptyState title="人力成本数据暂不可用" description="员工、部门或主体数据尚未加载完成，请重新加载后查看" />
+              ) : (
+              <>
+              <div className="bi-panel-cluster bi-cluster-lg grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
                 <Card title="部门人力成本" style={{ borderRadius: 12 }}>
                   <ReactECharts option={departmentCostOption} style={{ height: 360 }} />
                 </Card>
@@ -930,32 +1087,38 @@ export default function ReportsPage() {
                   <table className="w-full min-w-[860px] table-fixed text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["人员", "部门", "岗位", "薪资", "社保/公积金", "月成本"].map((column) => (
+                        {["人员", "部门", "岗位", "薪资", "社保/公积金", "月成本", "操作"].map((column) => (
                           <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {employees.map((employee) => (
-                        <tr key={employee.id} onClick={() => openEmployeeDetail(employee)} className="cursor-pointer border-b hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
+                        <tr key={employee.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
                           <td className="px-4 py-4">{employee.name}</td>
                           <td className="px-4 py-4">{employee.departmentName || "--"}</td>
                           <td className="px-4 py-4">{employee.position}</td>
                           <td className="px-4 py-4">{formatAmount(employee.salary)}</td>
                           <td className="px-4 py-4">{formatAmount(employee.socialInsurance + employee.housingFund)}</td>
                           <td className="px-4 py-4"><AmountDisplay amount={employee.monthlyCost} type={2} /></td>
+                          <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openEmployeeDetail(employee)}>查看详情</Button></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </Card>
+              </>
+              )}
             </TabPane>}
 
             <TabPane key="insights" title="异常洞察">
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {failedSections.includes("经营洞察") ? (
+                <EmptyState title="异常洞察暂不可用" description="重新加载后再查看大额流水与预算风险" />
+              ) : (
+              <div className="bi-panel-cluster bi-cluster-lg grid grid-cols-1 lg:grid-cols-2">
                 <Card title="大额流水" style={{ borderRadius: 12 }}>
-                  <div className="space-y-3">
+                  <div className="bi-flat-list">
                     {(insights?.largeTransactions || []).map((item) => (
                       <div key={item.id} className="flex items-center justify-between rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
                         <div>
@@ -969,7 +1132,7 @@ export default function ReportsPage() {
                   </div>
                 </Card>
                 <Card title="预算与经营风险" style={{ borderRadius: 12 }}>
-                  <div className="space-y-3">
+                  <div className="bi-flat-list">
                     {(insights?.budgetAlerts || []).map((item) => (
                       <div key={item.name} className="rounded-xl border p-3" style={{ borderColor: "var(--border-color)" }}>
                         <div className="flex items-center justify-between">
@@ -983,6 +1146,7 @@ export default function ReportsPage() {
                   </div>
                 </Card>
               </div>
+              )}
             </TabPane>
           </Tabs>
         </>

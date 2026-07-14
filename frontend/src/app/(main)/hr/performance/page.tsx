@@ -1,67 +1,105 @@
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
-import { Card, Grid, Message, Progress, Select, Tag } from "@arco-design/web-react";
-import { IconTrophy } from "@arco-design/web-react/icon";
-import AmountDisplay from "@/components/common/AmountDisplay";
+import { Button, Card, Empty, Message, Progress, Select, Skeleton, Tag } from "@arco-design/web-react";
+import {
+  IconCheckCircle,
+  IconExclamationCircle,
+  IconTrophy,
+  IconUserGroup,
+} from "@arco-design/web-react/icon";
+import { useRouter } from "next/navigation";
 import PageHeader from "@/components/common/PageHeader";
 import { enterpriseApi } from "@/lib/api/enterprise";
 import { useAppStore } from "@/lib/stores/appStore";
 import type { Department, Employee, EnterpriseSummary } from "@/lib/types";
 
-const { Row, Col } = Grid;
-
-const cycleOptions = [
-  { key: "2026-H1", label: "2026 上半年", startDate: "2026-01-01", endDate: "2026-06-30", status: "calibration" },
-  { key: "2026-Q2", label: "2026 Q2", startDate: "2026-04-01", endDate: "2026-06-30", status: "review" },
-  { key: "2026-Q3", label: "2026 Q3", startDate: "2026-07-01", endDate: "2026-09-30", status: "draft" },
-];
-
-const gradeConfig: Record<string, { label: string; color: string }> = {
-  S: { label: "卓越", color: "gold" },
-  A: { label: "优秀", color: "green" },
-  B: { label: "达标", color: "arcoblue" },
-  C: { label: "待改进", color: "orange" },
-};
-
-const statusConfig: Record<string, { label: string; color: string }> = {
-  draft: { label: "目标制定", color: "gray" },
-  self_review: { label: "自评中", color: "arcoblue" },
-  manager_review: { label: "上级评价", color: "purple" },
-  calibration: { label: "校准中", color: "orange" },
-  confirmed: { label: "已确认", color: "green" },
-};
-
-type PerformanceRecord = {
-  employee: Employee;
-  departmentName: string;
-  reviewerName: string;
-  goals: number;
-  completedGoals: number;
-  score: number;
-  grade: string;
-  status: string;
-  bonusSuggestion: number;
-};
-
-const money = (value: unknown) => Number(value || 0);
-
 const activeStatuses = new Set(["active", "probation"]);
 
+const employeeStatusMeta: Record<string, { label: string; color: string }> = {
+  active: { label: "在岗", color: "green" },
+  probation: { label: "试用期", color: "arcoblue" },
+};
+
+const profileChecks = [
+  {
+    key: "employeeNo",
+    label: "员工编号",
+    description: "用于稳定识别人员和后续记录归档",
+    complete: (employee: Employee) => Boolean(employee.employeeNo?.trim()),
+  },
+  {
+    key: "department",
+    label: "组织归属",
+    description: "已关联部门，可确定统计范围",
+    complete: (employee: Employee) => Boolean(employee.departmentId),
+  },
+  {
+    key: "position",
+    label: "岗位信息",
+    description: "已维护岗位名称和职级",
+    complete: (employee: Employee) => Boolean(employee.position?.trim() && employee.jobLevel?.trim()),
+  },
+  {
+    key: "manager",
+    label: "直属汇报人",
+    description: "已显式维护直属经理关系",
+    complete: (employee: Employee) => Boolean(employee.directManagerEmployeeId),
+  },
+  {
+    key: "workProfile",
+    label: "任职信息",
+    description: "已维护入职日期、用工类型和工作地点",
+    complete: (employee: Employee) => Boolean(
+      employee.hireDate && employee.employmentType && employee.workLocation?.trim()
+    ),
+  },
+] as const;
+
+const rolloutSteps = [
+  {
+    title: "建立真实绩效周期",
+    description: "由后端保存周期名称、起止日期、适用组织和负责人，避免周期只存在于页面常量中。",
+  },
+  {
+    title: "冻结参评范围",
+    description: "从员工档案选择参评人员，并保存纳入、排除及调整原因。",
+  },
+  {
+    title: "记录目标与证据",
+    description: "保存目标、权重、进度、成果证据和变更记录，不从员工顺序推导完成度。",
+  },
+  {
+    title: "完成评价与校准",
+    description: "区分自评、上级评价和校准，保留评分口径、操作者和时间。",
+  },
+  {
+    title: "确认结果后再联动薪酬",
+    description: "只有已确认且可审计的绩效结果，才允许进入奖金测算或薪酬审批。",
+  },
+];
+
 export default function PerformancePage() {
+  const router = useRouter();
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const [summary, setSummary] = useState<EnterpriseSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selectedCycle, setSelectedCycle] = useState("2026-H1");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    const loadInitialData = async () => {
+    const loadData = async () => {
+      setLoading(true);
+      setError(null);
+      setSummary(null);
+      setDepartments([]);
+      setEmployees([]);
       try {
-        setLoading(true);
         const [summaryRes, departmentsRes, employeesRes] = await Promise.all([
           enterpriseApi.summary(),
           enterpriseApi.departments(),
@@ -72,240 +110,286 @@ export default function PerformancePage() {
         setDepartments(departmentsRes.data);
         setEmployees(employeesRes.data);
       } catch {
-        Message.error("绩效数据加载失败");
+        if (cancelled) return;
+        setError("员工与组织档案加载失败，当前无法判断基础数据是否完整。");
+        Message.error("绩效准备数据加载失败");
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
 
-    void loadInitialData();
+    void loadData();
 
     return () => {
       cancelled = true;
     };
-  }, [activeCompanyId]);
+  }, [activeCompanyId, reloadToken]);
 
   const departmentMap = useMemo(
     () => new Map(departments.map((department) => [department.id, department])),
     [departments]
   );
 
-  const records = useMemo<PerformanceRecord[]>(() => {
-    const eligibleEmployees = employees.filter((employee) => activeStatuses.has(employee.status));
-    return eligibleEmployees.map((employee, index) => {
-      const department = employee.departmentId ? departmentMap.get(employee.departmentId) : undefined;
-      const peers = eligibleEmployees.filter((candidate) => candidate.departmentId === employee.departmentId);
-      const reviewer = department?.managerEmployeeId
-        ? employees.find((candidate) => candidate.id === department.managerEmployeeId)
-        : peers.find((candidate) => candidate.accessRole === "department_manager")
-          || employees.find((candidate) => candidate.accessRole === "founder");
-      const scorePattern = [94, 88, 82, 76];
-      const score = scorePattern[index % scorePattern.length];
-      const grade = score >= 92 ? "S" : score >= 86 ? "A" : score >= 80 ? "B" : "C";
-      const goals = 4;
-      const completedGoals = grade === "S" ? 4 : grade === "A" ? 3 : grade === "B" ? 3 : 2;
-      const statusPattern = ["confirmed", "calibration", "manager_review", "self_review"];
-      return {
-        employee,
-        departmentName: department?.name || employee.departmentName || "未分配部门",
-        reviewerName: reviewer?.name || "--",
-        goals,
-        completedGoals,
-        score,
-        grade,
-        status: statusPattern[index % statusPattern.length],
-        bonusSuggestion: Math.round(money(employee.salary) * (grade === "S" ? 0.18 : grade === "A" ? 0.12 : grade === "B" ? 0.06 : 0)),
-      };
-    });
-  }, [departmentMap, employees]);
+  const employeeMap = useMemo(
+    () => new Map(employees.map((employee) => [employee.id, employee])),
+    [employees]
+  );
 
-  const filteredRecords = useMemo(() => {
-    return records.filter((record) => departmentFilter === "all" || String(record.employee.departmentId || "none") === departmentFilter);
-  }, [departmentFilter, records]);
+  const eligibleEmployees = useMemo(
+    () => employees.filter((employee) => activeStatuses.has(employee.status)),
+    [employees]
+  );
 
-  const summaryCards = useMemo(() => {
-    const confirmedCount = filteredRecords.filter((record) => record.status === "confirmed").length;
-    const averageScore = filteredRecords.length
-      ? Math.round(filteredRecords.reduce((total, record) => total + record.score, 0) / filteredRecords.length)
-      : 0;
-    const highPerformers = filteredRecords.filter((record) => ["S", "A"].includes(record.grade)).length;
-    const bonusTotal = filteredRecords.reduce((total, record) => total + record.bonusSuggestion, 0);
-    return { confirmedCount, averageScore, highPerformers, bonusTotal };
-  }, [filteredRecords]);
-
-  const gradeDistribution = useMemo(() => {
-    return Object.keys(gradeConfig).map((grade) => ({
-      grade,
-      count: filteredRecords.filter((record) => record.grade === grade).length,
+  const coverage = useMemo(() => {
+    const fieldCounts = profileChecks.map((check) => ({
+      ...check,
+      count: eligibleEmployees.filter((employee) => check.complete(employee)).length,
     }));
-  }, [filteredRecords]);
+    const completedFields = fieldCounts.reduce((total, field) => total + field.count, 0);
+    const totalFields = eligibleEmployees.length * profileChecks.length;
+    const percent = totalFields ? Math.round((completedFields / totalFields) * 100) : 0;
+    const probationCount = eligibleEmployees.filter((employee) => employee.status === "probation").length;
+    return { fieldCounts, percent, probationCount };
+  }, [eligibleEmployees]);
 
-  const activeCycle = cycleOptions.find((cycle) => cycle.key === selectedCycle) || cycleOptions[0];
+  const filteredEmployees = useMemo(
+    () => eligibleEmployees.filter((employee) => (
+      departmentFilter === "all" || String(employee.departmentId || "none") === departmentFilter
+    )),
+    [departmentFilter, eligibleEmployees]
+  );
 
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
-        title="绩效管理"
+        title="绩效周期准备台"
         subtitle={summary?.company
-          ? `${summary.company.name} · 绩效周期、目标完成、评价校准和奖金建议`
-          : "绩效周期、目标完成、评价校准和奖金建议"}
+          ? `${summary.company.name} · 试运行阶段，仅检查上线前的真实基础数据`
+          : "试运行阶段，仅检查上线前的真实基础数据"}
         icon={<IconTrophy />}
         extra={
-          <Select value={selectedCycle} onChange={(value) => setSelectedCycle(String(value))} style={{ width: 150 }}>
-            {cycleOptions.map((cycle) => (
-              <Select.Option key={cycle.key} value={cycle.key}>{cycle.label}</Select.Option>
-            ))}
-          </Select>
+          <Button type="primary" icon={<IconUserGroup />} onClick={() => router.push("/admin/users")}>
+            完善员工档案
+          </Button>
         }
       />
 
-      <Row gutter={[16, 16]} className="mb-6">
-        <Col xs={12} md={6}>
-          <MetricCard title="参评人数" value={filteredRecords.length} caption={`${activeCycle.startDate} 至 ${activeCycle.endDate}`} />
-        </Col>
-        <Col xs={12} md={6}>
-          <MetricCard title="已确认" value={summaryCards.confirmedCount} caption="结果确认人数" />
-        </Col>
-        <Col xs={12} md={6}>
-          <MetricCard title="平均得分" value={summaryCards.averageScore} caption="当前筛选口径" />
-        </Col>
-        <Col xs={12} md={6}>
-          <MetricCard title="奖金建议" amount={summaryCards.bonusTotal} caption="按绩效等级估算" />
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={7}>
-          <Card style={{ borderRadius: 12 }} title="绩效周期">
-            <div className="space-y-3">
-              {cycleOptions.map((cycle) => {
-                const isActive = cycle.key === selectedCycle;
-                return (
-                  <button
-                    key={cycle.key}
-                    type="button"
-                    onClick={() => setSelectedCycle(cycle.key)}
-                    className="w-full cursor-pointer rounded-lg border p-4 text-left transition-colors"
-                    style={{
-                      borderColor: isActive ? "var(--color-primary)" : "var(--border-color-light)",
-                      backgroundColor: isActive ? "rgba(99, 102, 241, 0.09)" : "var(--color-fill-1)",
-                      color: "var(--text-color-1)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-medium">{cycle.label}</div>
-                      <Tag color={cycle.status === "calibration" ? "orange" : cycle.status === "review" ? "arcoblue" : "gray"}>
-                        {cycle.status === "calibration" ? "校准中" : cycle.status === "review" ? "评价中" : "草稿"}
-                      </Tag>
-                    </div>
-                    <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                      {cycle.startDate} - {cycle.endDate}
-                    </div>
-                  </button>
-                );
-              })}
+      <div
+        className="mb-5 rounded-2xl border p-4 sm:p-5"
+        style={{
+          borderColor: "var(--color-warning-border)",
+          background: "linear-gradient(135deg, var(--color-warning-soft), rgba(99, 102, 241, 0.07))",
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <span
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl"
+            style={{ backgroundColor: "var(--color-warning-soft)", color: "var(--color-warning)" }}
+          >
+            <IconExclamationCircle />
+          </span>
+          <div>
+            <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>当前没有后端绩效记录</div>
+            <div className="mt-1 text-sm leading-6" style={{ color: "var(--text-color-2)" }}>
+              当前接口只提供员工与部门档案，没有绩效周期、目标、评价、校准、得分或奖金结果。
+              本页不会生成任何绩效结论；下方百分比只表示员工基础字段是否已填写。
             </div>
-          </Card>
+          </div>
+        </div>
+      </div>
 
-          <Card className="mt-4" style={{ borderRadius: 12 }} title="等级分布">
-            <div className="space-y-4">
-              {gradeDistribution.map((item) => {
-                const percentage = filteredRecords.length ? Math.round((item.count / filteredRecords.length) * 100) : 0;
+      {error ? (
+        <div
+          className="mb-5 flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"
+          style={{ borderColor: "rgba(239, 68, 68, 0.28)", backgroundColor: "rgba(239, 68, 68, 0.06)" }}
+        >
+          <div className="flex items-start gap-2 text-sm" style={{ color: "rgb(var(--red-6))" }}>
+            <IconExclamationCircle className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <Button size="small" onClick={() => setReloadToken((value) => value + 1)}>重新加载</Button>
+        </div>
+      ) : null}
+
+      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          title="候选人员范围"
+          value={eligibleEmployees.length}
+          suffix="人"
+          caption="仅统计在岗与试用期员工"
+          loading={loading}
+        />
+        <MetricCard
+          title="试用期人员"
+          value={coverage.probationCount}
+          suffix="人"
+          caption="来自员工当前状态"
+          loading={loading}
+        />
+        <MetricCard
+          title="基础字段覆盖"
+          value={coverage.percent}
+          suffix="%"
+          caption="资料覆盖率，不是绩效得分"
+          loading={loading}
+          tone="primary"
+        />
+        <MetricCard
+          title="绩效结果记录"
+          value="未接入"
+          caption="不展示得分、评级或奖金建议"
+          loading={loading}
+          tone="warning"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.92fr)]">
+        <Card style={{ borderRadius: 14 }} title="基础资料覆盖情况">
+          <div className="mb-4 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+            每项均直接读取员工档案字段；缺少字段只代表需要补录，不代表员工不具备参评资格。
+          </div>
+          {loading ? (
+            <Skeleton />
+          ) : eligibleEmployees.length === 0 ? (
+            <Empty description="暂无在岗或试用期员工" />
+          ) : (
+            <div className="space-y-5">
+              {coverage.fieldCounts.map((field) => {
+                const percent = Math.round((field.count / eligibleEmployees.length) * 100);
                 return (
-                  <div key={item.grade}>
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <Tag color={gradeConfig[item.grade].color}>{item.grade} · {gradeConfig[item.grade].label}</Tag>
-                      <span className="text-sm font-medium">{item.count} 人</span>
+                  <div key={field.key}>
+                    <div className="mb-2 flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>{field.label}</div>
+                        <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{field.description}</div>
+                      </div>
+                      <div className="shrink-0 text-sm font-medium" style={{ color: "var(--text-color-2)" }}>
+                        {field.count}/{eligibleEmployees.length}
+                      </div>
                     </div>
-                    <Progress percent={percentage} size="small" showText={false} color="var(--color-primary)" />
+                    <Progress
+                      percent={percent}
+                      showText={false}
+                      color={percent === 100 ? "var(--color-success)" : "var(--color-primary)"}
+                    />
                   </div>
                 );
               })}
             </div>
-          </Card>
-        </Col>
+          )}
+        </Card>
 
-        <Col xs={24} lg={17}>
-          <Card style={{ borderRadius: 12 }}>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="font-medium">员工绩效台账</div>
-                <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>
-                  目标、评价、校准、结果和奖金建议
+        <Card style={{ borderRadius: 14 }} title="正式上线前的五步闭环">
+          <div className="space-y-3">
+            {rolloutSteps.map((step, index) => (
+              <div
+                key={step.title}
+                className="flex items-start gap-3 rounded-xl border p-3"
+                style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+              >
+                <span
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold"
+                  style={{ backgroundColor: "rgba(99, 102, 241, 0.11)", color: "var(--color-primary)" }}
+                >
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{step.title}</div>
+                    <Tag color="gray">尚未接入</Tag>
+                  </div>
+                  <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{step.description}</div>
                 </div>
               </div>
-              <Select value={departmentFilter} onChange={(value) => setDepartmentFilter(String(value))} style={{ width: 160 }}>
-                <Select.Option value="all">全部部门</Select.Option>
-                {departments.map((department) => (
-                  <Select.Option key={department.id} value={String(department.id)}>{department.name}</Select.Option>
-                ))}
-              </Select>
-            </div>
+            ))}
+          </div>
+        </Card>
+      </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
-                <thead>
-                  <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                    {["员工", "部门 / 岗位", "目标完成", "得分", "等级", "上级", "状态", "奖金建议"].map((label) => (
-                      <th key={label} className="px-4 py-3 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-color-2)" }}>
-                        {label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>加载中...</td>
-                    </tr>
-                  ) : filteredRecords.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center" style={{ color: "var(--text-color-3)" }}>暂无绩效记录</td>
-                    </tr>
-                  ) : filteredRecords.map((record) => {
-                    const grade = gradeConfig[record.grade];
-                    const status = statusConfig[record.status];
-                    const completion = Math.round((record.completedGoals / record.goals) * 100);
-                    return (
-                      <tr key={record.employee.id} className="border-b transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]" style={{ borderColor: "var(--border-color-light)" }}>
-                        <td className="px-4 py-4 align-middle">
-                          <div className="font-medium">{record.employee.name}</div>
-                          <div className="mt-1 break-all text-xs" style={{ color: "var(--text-color-3)" }}>{record.employee.email}</div>
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <div>{record.departmentName}</div>
-                          <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{record.employee.position}</div>
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <div className="mb-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                            {record.completedGoals} / {record.goals} 项
-                          </div>
-                          <Progress percent={completion} size="small" showText={false} color="var(--color-primary)" />
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <span className="text-lg font-semibold">{record.score}</span>
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <Tag color={grade.color}>{record.grade} · {grade.label}</Tag>
-                        </td>
-                        <td className="px-4 py-4 align-middle">{record.reviewerName}</td>
-                        <td className="px-4 py-4 align-middle">
-                          <Tag color={status.color}>{status.label}</Tag>
-                        </td>
-                        <td className="px-4 py-4 align-middle">
-                          <AmountDisplay amount={record.bonusSuggestion} size="small" />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+      <Card className="mt-4" style={{ borderRadius: 14 }}>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="font-semibold" style={{ color: "var(--text-color-1)" }}>人员基础资料核对</div>
+            <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>
+              展示可验证的档案字段，不展示虚构目标、得分、等级或奖金。
             </div>
-          </Card>
-        </Col>
-      </Row>
+          </div>
+          <Select
+            aria-label="按部门筛选员工"
+            value={departmentFilter}
+            onChange={(value) => setDepartmentFilter(String(value))}
+            style={{ width: "min(100%, 220px)" }}
+          >
+            <Select.Option value="all">全部部门</Select.Option>
+            <Select.Option value="none">未分配部门</Select.Option>
+            {departments.map((department) => (
+              <Select.Option key={department.id} value={String(department.id)}>{department.name}</Select.Option>
+            ))}
+          </Select>
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><Skeleton /><Skeleton /></div>
+        ) : filteredEmployees.length === 0 ? (
+          <Empty description={eligibleEmployees.length ? "当前筛选下没有员工" : "暂无可核对的员工档案"} />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {filteredEmployees.map((employee) => {
+              const missingFields = profileChecks.filter((check) => !check.complete(employee));
+              const completedCount = profileChecks.length - missingFields.length;
+              const percent = Math.round((completedCount / profileChecks.length) * 100);
+              const manager = employee.directManagerEmployeeId
+                ? employeeMap.get(employee.directManagerEmployeeId)
+                : undefined;
+              const status = employeeStatusMeta[employee.status] || { label: employee.status, color: "gray" };
+              return (
+                <div
+                  key={employee.id}
+                  className="rounded-2xl border p-4"
+                  style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold" style={{ color: "var(--text-color-1)" }}>{employee.name}</span>
+                        <Tag color={status.color}>{status.label}</Tag>
+                      </div>
+                      <div className="mt-1 truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+                        {employee.employeeNo || "未维护员工编号"} · {employee.email}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-lg font-bold" style={{ color: "var(--text-color-1)" }}>{percent}%</div>
+                      <div className="text-[11px]" style={{ color: "var(--text-color-3)" }}>字段覆盖</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                    <InfoField label="部门" value={employee.departmentId ? departmentMap.get(employee.departmentId)?.name || employee.departmentName || "部门记录不可用" : "未分配"} />
+                    <InfoField label="岗位 / 职级" value={[employee.position, employee.jobLevel].filter(Boolean).join(" / ") || "未维护"} />
+                    <InfoField label="直属汇报人" value={manager?.name || "未维护"} />
+                    <InfoField label="工作地点" value={employee.workLocation || "未维护"} />
+                  </div>
+
+                  <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border-color-light)" }}>
+                    {missingFields.length === 0 ? (
+                      <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-success)" }}>
+                        <IconCheckCircle />
+                        <span>本页检查的基础字段已填写；仍不代表已产生绩效记录。</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs" style={{ color: "var(--text-color-3)" }}>待补：</span>
+                        {missingFields.map((field) => <Tag key={field.key} color="orange">{field.label}</Tag>)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -313,23 +397,46 @@ export default function PerformancePage() {
 function MetricCard({
   title,
   value,
-  amount,
+  suffix,
   caption,
+  loading,
+  tone = "default",
 }: {
   title: string;
-  value?: number;
-  amount?: number;
+  value: number | string;
+  suffix?: string;
   caption: string;
+  loading: boolean;
+  tone?: "default" | "primary" | "warning";
 }) {
+  const valueColor = tone === "primary"
+    ? "var(--color-primary)"
+    : tone === "warning"
+      ? "var(--color-warning)"
+      : "var(--text-color-1)";
+
   return (
-    <Card style={{ borderRadius: 12, height: "100%" }}>
-      <div className="mb-2 text-sm" style={{ color: "var(--text-color-3)" }}>{title}</div>
-      {amount === undefined ? (
-        <div className="text-2xl font-bold">{value ?? 0}</div>
+    <Card className="metric-card" style={{ borderRadius: 14, minHeight: 126 }}>
+      <div className="text-sm" style={{ color: "var(--text-color-3)" }}>{title}</div>
+      {loading ? (
+        <Skeleton className="mt-3" />
       ) : (
-        <AmountDisplay amount={amount} size="large" />
+        <>
+          <div className="mt-3 text-2xl font-bold" style={{ color: valueColor }}>
+            {value}{suffix ? <span className="ml-1 text-sm font-medium">{suffix}</span> : null}
+          </div>
+          <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-color-3)" }}>{caption}</div>
+        </>
       )}
-      <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>{caption}</div>
     </Card>
+  );
+}
+
+function InfoField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg px-3 py-2" style={{ backgroundColor: "var(--color-fill-1)" }}>
+      <div className="text-[11px]" style={{ color: "var(--text-color-3)" }}>{label}</div>
+      <div className="mt-1 truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{value}</div>
+    </div>
   );
 }

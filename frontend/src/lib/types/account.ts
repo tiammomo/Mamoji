@@ -90,3 +90,17 @@ export interface AccountSummary {
   pendingReconciliationCount: number;
   highRiskCount: number;
 }
+
+export interface AccountReconciliation {
+  id: number;
+  companyId: number;
+  accountId: number;
+  statementDate: string;
+  statementBalance: number;
+  systemBalance: number;
+  difference: number;
+  status: AccountReconciliationStatus | string;
+  note: string | null;
+  createdBy: number;
+  createdAt: string;
+}

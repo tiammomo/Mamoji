@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, Card, Empty, Message, Progress, Skeleton, Tag } from "@arco-design/web-react";
+import { Alert, Button, Card, Empty, Message, Progress, Skeleton, Tag } from "@arco-design/web-react";
 import {
   IconCalendar,
   IconCheckCircle,
@@ -129,7 +129,12 @@ const riskColor = (riskLevel: string) => {
   return "green";
 };
 
-const loadFinanceView = async (): Promise<FinanceView> => {
+type FinanceLoadResult = {
+  view: FinanceView;
+  failedSections: string[];
+};
+
+const loadFinanceView = async (): Promise<FinanceLoadResult> => {
   const [
     accountSummaryResult,
     accountsResult,
@@ -148,14 +153,29 @@ const loadFinanceView = async (): Promise<FinanceView> => {
     statsApi.overview(),
   ]);
 
+  const namedResults = [
+    ["账户汇总", accountSummaryResult],
+    ["账户列表", accountsResult],
+    ["票据汇总", receiptSummaryResult],
+    ["票据列表", vouchersResult],
+    ["预算", budgetsResult],
+    ["经营流水", transactionsResult],
+    ["月度经营数据", statsResult],
+  ] as const;
+
   return {
-    accountSummary: accountSummaryResult.status === "fulfilled" ? accountSummaryResult.value.data : null,
-    accounts: accountsResult.status === "fulfilled" ? accountsResult.value.data : [],
-    receiptSummary: receiptSummaryResult.status === "fulfilled" ? receiptSummaryResult.value.data : null,
-    vouchers: vouchersResult.status === "fulfilled" ? vouchersResult.value.data.content : [],
-    budgets: budgetsResult.status === "fulfilled" ? budgetsResult.value.data : [],
-    transactions: transactionsResult.status === "fulfilled" ? transactionsResult.value.data.content : [],
-    stats: statsResult.status === "fulfilled" ? statsResult.value.data : null,
+    view: {
+      accountSummary: accountSummaryResult.status === "fulfilled" ? accountSummaryResult.value.data : null,
+      accounts: accountsResult.status === "fulfilled" ? accountsResult.value.data : [],
+      receiptSummary: receiptSummaryResult.status === "fulfilled" ? receiptSummaryResult.value.data : null,
+      vouchers: vouchersResult.status === "fulfilled" ? vouchersResult.value.data.content : [],
+      budgets: budgetsResult.status === "fulfilled" ? budgetsResult.value.data : [],
+      transactions: transactionsResult.status === "fulfilled" ? transactionsResult.value.data.content : [],
+      stats: statsResult.status === "fulfilled" ? statsResult.value.data : null,
+    },
+    failedSections: namedResults
+      .filter(([, result]) => result.status === "rejected")
+      .map(([name]) => name),
   };
 };
 
@@ -165,12 +185,28 @@ export default function FinancePage() {
   const [view, setView] = useState<FinanceView>(emptyView);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [failedSections, setFailedSections] = useState<string[]>([]);
+
+  const hasFailedSections = failedSections.length > 0;
+  const accountSummaryUnavailable = failedSections.includes("账户汇总");
+  const receiptSummaryUnavailable = failedSections.includes("票据汇总");
+  const vouchersUnavailable = failedSections.includes("票据列表");
+  const budgetsUnavailable = failedSections.includes("预算");
+  const transactionsUnavailable = failedSections.includes("经营流水");
+  const monthlyStatsUnavailable = failedSections.includes("月度经营数据");
+  const monthlyFlowUnavailable = accountSummaryUnavailable && monthlyStatsUnavailable;
+  const healthUnavailable = accountSummaryUnavailable || receiptSummaryUnavailable || budgetsUnavailable;
 
   const loadData = async (quiet = false) => {
     if (quiet) setRefreshing(true);
     try {
-      setView(await loadFinanceView());
-      if (quiet) Message.success("财务总览已刷新");
+      const result = await loadFinanceView();
+      setView(result.view);
+      setFailedSections(result.failedSections);
+      if (quiet) {
+        if (result.failedSections.length > 0) Message.warning("部分财务数据未能刷新");
+        else Message.success("财务总览已刷新");
+      }
     } catch {
       Message.error("财务总览加载失败");
     } finally {
@@ -184,9 +220,10 @@ export default function FinancePage() {
 
     const load = async () => {
       setLoading(true);
-      const nextView = await loadFinanceView();
+      const result = await loadFinanceView();
       if (!cancelled) {
-        setView(nextView);
+        setView(result.view);
+        setFailedSections(result.failedSections);
         setLoading(false);
       }
     };
@@ -244,6 +281,7 @@ export default function FinancePage() {
     const accountRisks = view.accounts.filter((account) =>
       account.riskLevel === "high" || account.riskLevel === "critical" || account.reconciliationStatus === "exception"
     );
+    const accountRiskCount = Math.max(accountSummary?.highRiskCount ?? 0, accountRisks.length);
     const pendingReceiptCount = receiptSummary?.pendingReviewCount ?? 0;
     const missingAttachmentCount = receiptSummary?.missingAttachmentCount ?? 0;
     const missingTransactionCount = receiptSummary?.missingTransactionCount ?? 0;
@@ -283,10 +321,10 @@ export default function FinancePage() {
         icon: <IconSafe />,
       });
     }
-    if (accountRisks.length > 0) {
+    if (accountRiskCount > 0) {
       actions.push({
         title: "账户风险需要复核",
-        detail: `${accountRisks.length} 个账户存在高风险或异常对账状态`,
+        detail: `${accountRiskCount} 个账户存在高风险或异常对账状态`,
         path: "/accounts",
         severity: "danger",
         icon: <IconExclamationCircle />,
@@ -358,41 +396,58 @@ export default function FinancePage() {
     }
     if (actions.length === 0) {
       actions.push({
-        title: "财务闭环状态良好",
-        detail: "当前资金、票据、预算没有明显待处理风险",
+        title: hasFailedSections ? "部分财务数据暂不可用" : "财务闭环状态良好",
+        detail: hasFailedSections
+          ? "无法在数据不完整时判断财务状态，请先重新加载"
+          : "当前资金、票据、预算没有明显待处理风险",
         path: "/finance",
-        severity: "success",
-        icon: <IconCheckCircle />,
+        severity: hasFailedSections ? "warning" : "success",
+        icon: hasFailedSections ? <IconExclamationCircle /> : <IconCheckCircle />,
       });
     }
 
     const closingTasks = [
       {
         label: "资金账户对账",
-        done: (accountSummary?.pendingReconciliationCount ?? 0) === 0,
-        detail: (accountSummary?.pendingReconciliationCount ?? 0) === 0
+        unavailable: accountSummaryUnavailable,
+        done: !accountSummaryUnavailable && (accountSummary?.pendingReconciliationCount ?? 0) === 0,
+        detail: accountSummaryUnavailable
+          ? "账户汇总数据暂不可用"
+          : (accountSummary?.pendingReconciliationCount ?? 0) === 0
           ? "账户余额已完成核对"
           : `${accountSummary?.pendingReconciliationCount ?? 0} 个账户待对账`,
       },
       {
         label: "票据核验归档",
-        done: pendingReceiptCount === 0 && missingAttachmentCount === 0,
-        detail: `${pendingReceiptCount} 张待核验，${missingAttachmentCount} 张缺附件`,
+        unavailable: receiptSummaryUnavailable,
+        done: !receiptSummaryUnavailable && pendingReceiptCount === 0 && missingAttachmentCount === 0,
+        detail: receiptSummaryUnavailable
+          ? "票据汇总数据暂不可用"
+          : `${pendingReceiptCount} 张待核验，${missingAttachmentCount} 张缺附件`,
       },
       {
         label: "凭证流水匹配",
-        done: missingTransactionCount === 0,
-        detail: missingTransactionCount === 0 ? "凭证与流水匹配完成" : `${missingTransactionCount} 张凭证未匹配`,
+        unavailable: receiptSummaryUnavailable,
+        done: !receiptSummaryUnavailable && missingTransactionCount === 0,
+        detail: receiptSummaryUnavailable
+          ? "票据汇总数据暂不可用"
+          : missingTransactionCount === 0 ? "凭证与流水匹配完成" : `${missingTransactionCount} 张凭证未匹配`,
       },
       {
         label: "预算偏差复盘",
-        done: budgetRisks.length === 0,
-        detail: budgetRisks.length === 0 ? "暂无预算预警" : `${budgetRisks.length} 个预算需复盘`,
+        unavailable: budgetsUnavailable,
+        done: !budgetsUnavailable && budgetRisks.length === 0,
+        detail: budgetsUnavailable
+          ? "预算数据暂不可用"
+          : budgetRisks.length === 0 ? "暂无预算预警" : `${budgetRisks.length} 个预算需复盘`,
       },
       {
         label: "月度利润检查",
-        done: monthlyNetFlow >= 0,
-        detail: monthlyNetFlow >= 0 ? "本月经营净额为正" : "本月经营净额为负",
+        unavailable: monthlyFlowUnavailable,
+        done: !monthlyFlowUnavailable && monthlyNetFlow >= 0,
+        detail: monthlyFlowUnavailable
+          ? "月度经营数据暂不可用"
+          : monthlyNetFlow >= 0 ? "本月经营净额为正" : "本月经营净额为负",
       },
     ];
 
@@ -415,14 +470,21 @@ export default function FinancePage() {
       netCollectedIncome,
       overduePayables,
       budgetRisks,
-      accountRisks,
+      accountRiskCount,
       healthScore,
       healthSeverity,
       accountStructure,
       actions,
       closingTasks,
     };
-  }, [view]);
+  }, [
+    accountSummaryUnavailable,
+    budgetsUnavailable,
+    hasFailedSections,
+    monthlyFlowUnavailable,
+    receiptSummaryUnavailable,
+    view,
+  ]);
 
   const metricCards = [
     {
@@ -431,6 +493,7 @@ export default function FinancePage() {
       hint: `${view.accountSummary?.activeAccountCount || 0} 个启用账户`,
       icon: <IconSafe />,
       color: "var(--color-primary)",
+      unavailable: accountSummaryUnavailable,
     },
     {
       label: "本月净现金流",
@@ -438,6 +501,7 @@ export default function FinancePage() {
       hint: `流入 ${formatAmount(financeModel.monthlyIncome, currency)}`,
       icon: <IconSwap />,
       color: financeModel.monthlyNetFlow >= 0 ? "var(--color-success)" : "var(--color-danger)",
+      unavailable: monthlyFlowUnavailable,
     },
     {
       label: "票据缺口",
@@ -445,13 +509,17 @@ export default function FinancePage() {
       hint: `${view.receiptSummary?.missingAttachmentCount || 0} 张缺附件`,
       icon: <IconFile />,
       color: "var(--color-warning)",
+      unavailable: receiptSummaryUnavailable,
     },
     {
       label: "财务健康度",
       value: `${financeModel.healthScore.toFixed(0)}分`,
       hint: statusMeta[financeModel.healthSeverity].label,
       icon: <IconDashboard />,
-      color: financeModel.healthSeverity === "danger" ? "var(--color-danger)" : "var(--color-success)",
+      color: healthUnavailable
+        ? "var(--text-color-3)"
+        : financeModel.healthSeverity === "danger" ? "var(--color-danger)" : "var(--color-success)",
+      unavailable: healthUnavailable,
     },
     {
       label: "待回款",
@@ -459,6 +527,7 @@ export default function FinancePage() {
       hint: `${financeModel.overdueReceivables.length} 笔逾期 · ${financeModel.dueSoonReceivables.length} 笔 7 天内`,
       icon: <IconCalendar />,
       color: financeModel.overdueReceivables.length > 0 ? "var(--color-danger)" : "var(--color-warning)",
+      unavailable: vouchersUnavailable,
     },
     {
       label: "退款冲减",
@@ -466,6 +535,7 @@ export default function FinancePage() {
       hint: `供应商退款返还 ${formatAmount(financeModel.supplierRefundAmount, currency)}`,
       icon: <IconRefresh />,
       color: financeModel.customerRefundAmount > 0 ? "var(--color-warning)" : "var(--color-success)",
+      unavailable: transactionsUnavailable,
     },
   ];
 
@@ -488,10 +558,20 @@ export default function FinancePage() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {failedSections.length > 0 && (
+        <Alert
+          className="mb-6"
+          type="warning"
+          title="部分财务数据未能加载"
+          content={`${failedSections.join("、")} 暂不可用；缺失内容不会被当作 0 或“无风险”。`}
+          action={<Button size="small" icon={<IconRefresh />} loading={refreshing} onClick={() => void loadData(true)}>重新加载</Button>}
+        />
+      )}
+
+      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {metricCards.map((card) => (
-          <Card key={card.label} style={{ borderRadius: 12, minHeight: 150 }}>
-            <div className="flex h-full min-h-[110px] flex-col justify-between">
+          <Card className="metric-card" key={card.label} style={{ borderRadius: 12, minHeight: 136 }}>
+            <div className="flex h-full min-h-[96px] flex-col justify-between">
               <div className="flex items-start justify-between">
                 <div className="text-sm" style={{ color: "var(--text-color-3)" }}>{card.label}</div>
                 <span className="inline-flex text-xl" style={{ color: card.color }}>{card.icon}</span>
@@ -500,8 +580,8 @@ export default function FinancePage() {
                 <Skeleton />
               ) : (
                 <div>
-                  <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{card.value}</div>
-                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>{card.hint}</div>
+                  <div className="text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{card.unavailable ? "--" : card.value}</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>{card.unavailable ? "数据暂不可用" : card.hint}</div>
                 </div>
               )}
             </div>
@@ -513,6 +593,12 @@ export default function FinancePage() {
         <Card style={{ borderRadius: 12 }} title="财务健康雷达">
           {loading ? (
             <Skeleton />
+          ) : healthUnavailable ? (
+            <div className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
+              <IconExclamationCircle style={{ color: "var(--color-warning)", fontSize: 34 }} />
+              <div className="mt-4 font-semibold">暂不计算财务健康度</div>
+              <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>数据不完整，避免输出误导性结论</div>
+            </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
               <div
@@ -547,7 +633,7 @@ export default function FinancePage() {
                 <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
                   <div className="text-sm" style={{ color: "var(--text-color-3)" }}>待对账/高风险账户</div>
                   <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
-                    {(view.accountSummary?.pendingReconciliationCount || 0) + financeModel.accountRisks.length}
+                    {(view.accountSummary?.pendingReconciliationCount || 0) + financeModel.accountRiskCount}
                   </div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
                     建议月结前完成复核
@@ -556,19 +642,19 @@ export default function FinancePage() {
                 <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
                   <div className="text-sm" style={{ color: "var(--text-color-3)" }}>应收待闭环</div>
                   <div className="mt-2 text-xl font-bold" style={{ color: "var(--text-color-1)" }}>
-                    {formatAmount(financeModel.receivableAmount, currency)}
+                    {vouchersUnavailable ? "--" : formatAmount(financeModel.receivableAmount, currency)}
                   </div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                    {financeModel.receivableVouchers.length} 张收入凭证待匹配
+                    {vouchersUnavailable ? "票据列表暂不可用" : `${financeModel.receivableVouchers.length} 张收入凭证待匹配`}
                   </div>
                 </div>
                 <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)" }}>
                   <div className="text-sm" style={{ color: "var(--text-color-3)" }}>应付待处理</div>
                   <div className="mt-2 text-xl font-bold" style={{ color: "var(--text-color-1)" }}>
-                    {formatAmount(financeModel.payableAmount, currency)}
+                    {vouchersUnavailable ? "--" : formatAmount(financeModel.payableAmount, currency)}
                   </div>
                   <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                    {financeModel.overduePayables.length} 张可能逾期
+                    {vouchersUnavailable ? "票据列表暂不可用" : `${financeModel.overduePayables.length} 张可能逾期`}
                   </div>
                 </div>
               </div>
@@ -615,10 +701,12 @@ export default function FinancePage() {
         </Card>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="bi-panel-cluster bi-cluster-xl mb-6 grid grid-cols-1 xl:grid-cols-3">
         <Card style={{ borderRadius: 12 }} title="资金结构">
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("账户列表") || failedSections.includes("账户汇总") ? (
+            <Empty description="账户结构数据暂不可用" />
           ) : financeModel.accountStructure.length === 0 ? (
             <Empty description="暂无资金账户" />
           ) : (
@@ -663,62 +751,79 @@ export default function FinancePage() {
             <Skeleton />
           ) : (
             <div className="space-y-4">
-              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>已交付待回款</span>
-                  <Tag color={financeModel.overdueReceivables.length > 0 ? "red" : "green"}>
-                    {financeModel.receivableVouchers.length} 笔
-                  </Tag>
+              {vouchersUnavailable ? (
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                  <Empty description="票据应收应付数据暂不可用" />
                 </div>
-                <div className="mt-2 text-2xl font-bold amount-income">{formatAmount(financeModel.receivableAmount, currency)}</div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                  <span>{financeModel.overdueReceivables.length} 笔逾期</span>
-                  <span>{financeModel.dueSoonReceivables.length} 笔 7 天内到期</span>
-                </div>
-              </div>
-              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>收入净回款</span>
-                  <Tag color={financeModel.customerRefundAmount > 0 ? "orange" : "green"}>扣除客户退款</Tag>
-                </div>
-                <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
-                  {formatAmount(financeModel.netCollectedIncome, currency)}
-                </div>
-                <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                  总收入 {formatAmount(financeModel.grossIncome, currency)} · 客户退款 {formatAmount(financeModel.customerRefundAmount, currency)}
-                </div>
-              </div>
-              <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm" style={{ color: "var(--text-color-3)" }}>应付待处理</span>
-                  <Tag color={financeModel.overduePayables.length > 0 ? "red" : "orange"}>{financeModel.payableVouchers.length} 张</Tag>
-                </div>
-                <div className="mt-2 text-2xl font-bold amount-expense">{formatAmount(financeModel.payableAmount, currency)}</div>
-              </div>
-              <div className="space-y-2">
-                {[...financeModel.receivableVouchers, ...financeModel.payableVouchers].slice(0, 4).map((voucher) => {
-                  const days = daysUntil(voucher.dueDate);
-                  return (
-                    <div key={voucher.id} className="flex items-center justify-between gap-3 text-sm">
-                      <div className="min-w-0">
-                        <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{voucher.title}</div>
-                        <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
-                          {voucher.direction === "income" ? "回款" : "付款"} · {voucherTypeLabels[voucher.voucherType] || voucher.voucherType} · {voucher.counterparty}
-                        </div>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <AmountDisplay amount={voucher.amount} type={voucher.direction === "income" ? 1 : 2} size="small" />
-                        <div className="text-xs" style={{ color: days !== null && days < 0 ? "var(--color-danger)" : "var(--text-color-3)" }}>
-                          {days === null ? "无截止日" : days < 0 ? `逾期 ${Math.abs(days)} 天` : `${days} 天后`}
-                        </div>
-                      </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm" style={{ color: "var(--text-color-3)" }}>已交付待回款</span>
+                      <Tag color={financeModel.overdueReceivables.length > 0 ? "red" : "green"}>
+                        {financeModel.receivableVouchers.length} 笔
+                      </Tag>
                     </div>
-                  );
-                })}
-                {financeModel.receivableVouchers.length + financeModel.payableVouchers.length === 0 && (
-                  <Empty description="暂无回款或应付待办" />
-                )}
-              </div>
+                    <div className="mt-2 text-2xl font-bold amount-income">{formatAmount(financeModel.receivableAmount, currency)}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                      <span>{financeModel.overdueReceivables.length} 笔逾期</span>
+                      <span>{financeModel.dueSoonReceivables.length} 笔 7 天内到期</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm" style={{ color: "var(--text-color-3)" }}>应付待处理</span>
+                      <Tag color={financeModel.overduePayables.length > 0 ? "red" : "orange"}>{financeModel.payableVouchers.length} 张</Tag>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold amount-expense">{formatAmount(financeModel.payableAmount, currency)}</div>
+                  </div>
+                  <div className="space-y-2">
+                    {[...financeModel.receivableVouchers, ...financeModel.payableVouchers].slice(0, 4).map((voucher) => {
+                      const days = daysUntil(voucher.dueDate);
+                      return (
+                        <div key={voucher.id} className="flex items-center justify-between gap-3 text-sm">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium" style={{ color: "var(--text-color-1)" }}>{voucher.title}</div>
+                            <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+                              {voucher.direction === "income" ? "回款" : "付款"} · {voucherTypeLabels[voucher.voucherType] || voucher.voucherType} · {voucher.counterparty}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <AmountDisplay amount={voucher.amount} type={voucher.direction === "income" ? 1 : 2} size="small" />
+                            <div className="text-xs" style={{ color: days !== null && days < 0 ? "var(--color-danger)" : "var(--text-color-3)" }}>
+                              {days === null ? "无截止日" : days < 0 ? `逾期 ${Math.abs(days)} 天` : `${days} 天后`}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {financeModel.receivableVouchers.length + financeModel.payableVouchers.length === 0 && (
+                      <Empty description="暂无回款或应付待办" />
+                    )}
+                  </div>
+                </>
+              )}
+
+              {transactionsUnavailable ? (
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                  <div className="text-sm" style={{ color: "var(--text-color-3)" }}>收入净回款</div>
+                  <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-3)" }}>--</div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>经营流水暂不可用</div>
+                </div>
+              ) : (
+                <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm" style={{ color: "var(--text-color-3)" }}>收入净回款</span>
+                    <Tag color={financeModel.customerRefundAmount > 0 ? "orange" : "green"}>扣除客户退款</Tag>
+                  </div>
+                  <div className="mt-2 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>
+                    {formatAmount(financeModel.netCollectedIncome, currency)}
+                  </div>
+                  <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                    总收入 {formatAmount(financeModel.grossIncome, currency)} · 客户退款 {formatAmount(financeModel.customerRefundAmount, currency)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </Card>
@@ -733,8 +838,12 @@ export default function FinancePage() {
                   <span
                     className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full"
                     style={{
-                      backgroundColor: task.done ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
-                      color: task.done ? "var(--color-success)" : "var(--color-warning)",
+                      backgroundColor: task.unavailable
+                        ? "var(--color-fill-2)"
+                        : task.done ? "rgba(16, 185, 129, 0.14)" : "var(--color-warning-soft)",
+                      color: task.unavailable
+                        ? "var(--text-color-3)"
+                        : task.done ? "var(--color-success)" : "var(--color-warning)",
                     }}
                   >
                     {task.done ? <IconCheckCircle /> : <IconExclamationCircle />}
@@ -758,6 +867,8 @@ export default function FinancePage() {
         >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("预算") ? (
+            <Empty description="预算数据暂不可用" />
           ) : financeModel.budgetRisks.length === 0 ? (
             <Empty description="暂无预算风险" />
           ) : (
@@ -801,6 +912,8 @@ export default function FinancePage() {
         >
           {loading ? (
             <Skeleton />
+          ) : failedSections.includes("经营流水") ? (
+            <Empty description="经营流水暂不可用" />
           ) : view.transactions.length === 0 ? (
             <Empty description="暂无经营流水" />
           ) : (

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button, Card, Input, Progress, Select, Tag } from "@arco-design/web-react";
+import { Button, Card, Empty, Input, Select, Tag } from "@arco-design/web-react";
 import {
   IconCalendar,
   IconCheckCircle,
@@ -72,16 +72,18 @@ const scopeLabels: Record<PolicyScope, string> = {
 };
 
 const statusMeta: Record<PolicyStatus, { label: string; color: string }> = {
-  active: { label: "生效中", color: "green" },
-  watch: { label: "需关注", color: "orange" },
-  expired: { label: "已过期", color: "gray" },
-  draft: { label: "待核验", color: "arcoblue" },
+  active: { label: "需按日期复核", color: "arcoblue" },
+  watch: { label: "优先复核", color: "orange" },
+  expired: { label: "快照已过期", color: "gray" },
+  draft: { label: "尚未核验", color: "gray" },
 };
+
+const POLICY_SNAPSHOT_UPDATED_AT = "2026-07-14";
 
 const conclusionToneMeta: Record<ConclusionTone, { color: string; background: string; border: string }> = {
   primary: { color: "var(--color-primary)", background: "rgba(99, 102, 241, 0.08)", border: "rgba(99, 102, 241, 0.26)" },
   success: { color: "var(--color-success)", background: "rgba(16, 185, 129, 0.08)", border: "rgba(16, 185, 129, 0.24)" },
-  warning: { color: "var(--color-warning)", background: "rgba(245, 158, 11, 0.1)", border: "rgba(245, 158, 11, 0.28)" },
+  warning: { color: "var(--color-warning)", background: "var(--color-warning-soft)", border: "var(--color-warning-border)" },
   danger: { color: "rgb(var(--red-6))", background: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.24)" },
   neutral: { color: "var(--text-color-2)", background: "var(--color-fill-1)", border: "var(--border-color-light)" },
 };
@@ -474,51 +476,74 @@ export default function PolicyCenterPage() {
 
   const selectedPolicy =
     filteredPolicies.find((policy) => policy.key === selectedPolicyKey) ||
-    policies.find((policy) => policy.key === selectedPolicyKey) ||
     filteredPolicies[0] ||
-    policies[0];
+    null;
 
-  const activeCount = policies.filter((policy) => policy.status === "active").length;
-  const watchCount = policies.filter((policy) => policy.status === "watch").length;
-  const readiness = Math.round((activeCount / policies.length) * 100);
+  const sourceCount = new Set(policies.flatMap((policy) => [
+    policy.sourceUrl,
+    ...(policy.sourceLinks || []).map((source) => source.url),
+  ])).size;
+  const reviewCount = policies.filter((policy) => policy.status !== "active").length;
 
   return (
     <div className="mx-auto max-w-[1600px] animate-fade-in">
       <PageHeader
-        title="政策中心"
-        subtitle="多地区政策版本、官方来源、适用模块和资料清单集中管理"
+        title="政策参考中心"
+        subtitle="深圳地区内置参考快照；用于查找官方来源，不是自动同步或资格认定系统"
         icon={<IconSettings />}
-        extra={
-          <Button type="primary" icon={<IconCheckCircle />} disabled>
-            政策同步
-          </Button>
-        }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card style={{ borderRadius: 12 }}>
-          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>政策版本</div>
+      <div
+        className="mb-5 rounded-2xl border p-4 sm:p-5"
+        style={{
+          borderColor: "var(--color-warning-border)",
+          background: "linear-gradient(135deg, var(--color-warning-soft), rgba(99, 102, 241, 0.07))",
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <span
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl"
+            style={{ backgroundColor: "var(--color-warning-soft)", color: "var(--color-warning)" }}
+          >
+            <IconExclamationCircle />
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold" style={{ color: "var(--text-color-1)" }}>内置参考快照 · 需打开官方来源复核</span>
+              <Tag color="orange">整理时间 {POLICY_SNAPSHOT_UPDATED_AT}</Tag>
+            </div>
+            <div className="mt-1 text-sm leading-6" style={{ color: "var(--text-color-2)" }}>
+              本页内容随前端代码发布，不会自动追踪政策变更，也没有申报、审批或办理进度。
+              当前条目仅覆盖中国广东省深圳市；适用条件、期限、金额和材料以官方最新通知及经办审核为准。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="metric-grid grid grid-cols-1 md:grid-cols-4">
+        <Card className="metric-card" style={{ borderRadius: 12 }}>
+          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>内置参考条目</div>
           <div className="mt-3 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{policies.length}</div>
-          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>深圳政策包</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>不代表已匹配或可办理数量</div>
         </Card>
-        <Card style={{ borderRadius: 12 }}>
-          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>生效中</div>
-          <div className="mt-3 text-2xl font-bold" style={{ color: "var(--color-success)" }}>{activeCount}</div>
-          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>可用于模块规则</div>
+        <Card className="metric-card" style={{ borderRadius: 12 }}>
+          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>适用范围</div>
+          <div className="mt-3 text-xl font-bold" style={{ color: "var(--text-color-1)" }}>广东 · 深圳</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>未覆盖其他地区</div>
         </Card>
-        <Card style={{ borderRadius: 12 }}>
-          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>需关注</div>
-          <div className="mt-3 text-2xl font-bold" style={{ color: "var(--color-warning)" }}>{watchCount}</div>
-          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>等待年度更新或资格确认</div>
+        <Card className="metric-card" style={{ borderRadius: 12 }}>
+          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>官方来源链接</div>
+          <div className="mt-3 text-2xl font-bold" style={{ color: "var(--color-primary)" }}>{sourceCount}</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>需逐项打开确认最新口径</div>
         </Card>
-        <Card style={{ borderRadius: 12 }}>
-          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>可用度</div>
-          <div className="mt-3 text-2xl font-bold" style={{ color: "var(--text-color-1)" }}>{readiness}%</div>
-          <Progress percent={readiness} showText={false} color="var(--color-primary)" className="mt-3" />
+        <Card className="metric-card" style={{ borderRadius: 12 }}>
+          <div className="text-sm" style={{ color: "var(--text-color-3)" }}>优先复核条目</div>
+          <div className="mt-3 text-2xl font-bold" style={{ color: "var(--color-warning)" }}>{reviewCount}</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--text-color-3)" }}>来自快照标记，不是办理待办</div>
         </Card>
       </div>
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(280px,1fr)]">
           <Select value={scope} onChange={(value) => setScope(value as PolicyScope)} style={{ width: "100%" }}>
             {Object.entries(scopeLabels).map(([value, label]) => (
@@ -526,6 +551,7 @@ export default function PolicyCenterPage() {
             ))}
           </Select>
           <Input
+            aria-label="搜索政策参考快照"
             allowClear
             prefix={<IconSearch />}
             placeholder="搜索政策名称、适用模块、官方部门..."
@@ -539,7 +565,7 @@ export default function PolicyCenterPage() {
         <Card className="min-w-0" style={{ borderRadius: 12 }} title="政策版本列表">
           <div className="space-y-3">
             {filteredPolicies.map((policy) => {
-              const selected = selectedPolicy.key === policy.key;
+              const selected = selectedPolicy?.key === policy.key;
               const meta = statusMeta[policy.status];
               return (
                 <button
@@ -567,10 +593,15 @@ export default function PolicyCenterPage() {
                 </button>
               );
             })}
+            {filteredPolicies.length === 0 ? (
+              <Empty description="当前筛选下没有参考条目，请调整范围或关键词" />
+            ) : null}
           </div>
         </Card>
 
         <Card className="min-w-0" style={{ borderRadius: 12 }} title="政策详情">
+          {selectedPolicy ? (
+            <>
           <div className="rounded-xl border p-4" style={{ borderColor: "var(--border-color-light)", backgroundColor: "var(--bg-color-page)" }}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -582,7 +613,7 @@ export default function PolicyCenterPage() {
               </div>
               <Tag color={statusMeta[selectedPolicy.status].color}>{statusMeta[selectedPolicy.status].label}</Tag>
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
+            <div className="bi-segment-grid mt-4 grid grid-cols-1 md:grid-cols-[repeat(3,minmax(0,1fr))]">
               <div className="min-w-0 rounded-lg border p-3" style={{ borderColor: "var(--border-color-light)" }}>
                 <div className="text-xs" style={{ color: "var(--text-color-3)" }}>政策类型</div>
                 <div className="mt-1 break-words font-semibold" style={{ color: "var(--text-color-1)" }}>{scopeLabels[selectedPolicy.scope]}</div>
@@ -598,7 +629,7 @@ export default function PolicyCenterPage() {
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>生效时间</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>快照记录的适用时间</div>
                 <div className="mt-1 font-medium" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.effectiveFrom} - {selectedPolicy.effectiveTo}</div>
               </div>
               <div>
@@ -610,7 +641,10 @@ export default function PolicyCenterPage() {
 
           {selectedPolicy.conclusions?.length ? (
             <div className="mt-4">
-              <div className="mb-3 font-medium" style={{ color: "var(--text-color-1)" }}>关键结论</div>
+              <div className="mb-3">
+                <div className="font-medium" style={{ color: "var(--text-color-1)" }}>快照摘录与复核要点</div>
+                <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>以下内容不是针对当前公司的自动计算结果。</div>
+              </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
                 {selectedPolicy.conclusions.map((conclusion) => {
                   const tone = conclusionToneMeta[conclusion.tone];
@@ -633,10 +667,10 @@ export default function PolicyCenterPage() {
           {selectedPolicy.rules?.length ? (
             <div className="mt-4">
               <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-                <div className="font-medium" style={{ color: "var(--text-color-1)" }}>缴费/计算口径</div>
-                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>逐项展示基数、公司承担、个人扣缴和执行期</div>
+                <div className="font-medium" style={{ color: "var(--text-color-1)" }}>快照记录的缴费/计算口径</div>
+                <div className="text-xs" style={{ color: "var(--text-color-3)" }}>办理或核算前必须以官方最新口径复核</div>
               </div>
-              <div className="space-y-3">
+              <div className="bi-flat-list">
                 {selectedPolicy.rules.map((rule) => (
                   <div
                     key={`${selectedPolicy.key}-${rule.item}`}
@@ -647,7 +681,7 @@ export default function PolicyCenterPage() {
                       <div className="text-base font-semibold" style={{ color: "var(--text-color-1)" }}>{rule.item}</div>
                       <Tag color="arcoblue">{rule.effectivePeriod}</Tag>
                     </div>
-                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+                    <div className="bi-segment-grid mt-3 grid grid-cols-1 sm:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
                       {[
                         { label: "基数上下限", value: rule.baseRange },
                         { label: "公司承担比例", value: rule.companyRate },
@@ -699,9 +733,10 @@ export default function PolicyCenterPage() {
             <div className="min-w-0">
               <div className="text-xs" style={{ color: "var(--text-color-3)" }}>官方来源</div>
               <div className="truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{selectedPolicy.sourceName}</div>
+              <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>页面快照整理于 {POLICY_SNAPSHOT_UPDATED_AT}</div>
             </div>
             <Button type="outline" onClick={() => window.open(selectedPolicy.sourceUrl, "_blank", "noopener,noreferrer")}>
-              打开来源
+              打开官方来源复核
             </Button>
           </div>
 
@@ -723,10 +758,14 @@ export default function PolicyCenterPage() {
             </div>
           ) : null}
 
-          <div className="mt-4 flex items-start gap-2 rounded-xl border p-3 text-xs leading-5" style={{ borderColor: "rgba(245, 158, 11, 0.32)", color: "var(--color-warning)" }}>
+          <div className="mt-4 flex items-start gap-2 rounded-2xl border p-3 text-xs leading-5" style={{ borderColor: "var(--color-warning-border)", backgroundColor: "var(--color-warning-soft)", color: "var(--color-warning)" }}>
             <IconExclamationCircle className="mt-0.5 shrink-0" />
-            <span>政策中心仅做内部管理与提醒，最终申报条件、金额和材料以官方最新通知及经办审核结果为准。</span>
+            <span>这是内置参考快照，不是法律、税务或人事意见，也不代表系统正在跟踪或办理。最终适用条件、金额、期限和材料以官方最新通知及经办审核结果为准。</span>
           </div>
+            </>
+          ) : (
+            <Empty description="请选择一个可见的参考条目" />
+          )}
         </Card>
       </div>
     </div>

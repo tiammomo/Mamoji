@@ -51,4 +51,17 @@ export const receiptApi = {
     });
     return client.post<{ success: boolean; voucher: ReceiptVoucher; message: string }>("/receipts/upload", form);
   },
+  batchUpload: (files: File[], data: Partial<ReceiptPayload>) => {
+    const form = new FormData();
+    files.forEach((file) => form.append("files", file));
+    Object.entries(withCompany(data)).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") form.append(key, String(value));
+    });
+    return client.post<{
+      successCount: number;
+      failureCount: number;
+      vouchers: ReceiptVoucher[];
+      failures: Array<{ fileName: string; reason: string; status: number }>;
+    }>("/receipts/batch-upload", form);
+  },
 };

@@ -300,10 +300,10 @@ export default function BudgetsPage() {
     },
     {
       label: "预警预算",
-      value: <span style={{ color: summary.warningCount > 0 ? "#f59e0b" : "var(--text-color-1)" }}>{summary.warningCount}</span>,
+      value: <span style={{ color: summary.warningCount > 0 ? "var(--color-warning)" : "var(--text-color-1)" }}>{summary.warningCount}</span>,
       helper: "已触发阈值",
       icon: <IconExclamationCircle />,
-      accent: "#f59e0b",
+      accent: "#a85a42",
     },
     {
       label: "最近截止",
@@ -445,9 +445,9 @@ export default function BudgetsPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
+      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
-          <Card key={item.label} style={{ borderRadius: 12 }}>
+          <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
             <div className="flex h-[92px] flex-col justify-between">
               <div className="flex items-center justify-between">
                 <span className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</span>
@@ -462,7 +462,7 @@ export default function BudgetsPage() {
         ))}
       </div>
 
-      <Card className="mb-4" style={{ borderRadius: 12 }}>
+      <Card className="filter-card mb-4" style={{ borderRadius: 12 }}>
         <div className="mb-3 flex flex-wrap gap-2">
           {quickViews.map((item) => {
             const active = quickView === item.key;
@@ -563,7 +563,7 @@ export default function BudgetsPage() {
           />
         ) : (
           <>
-            <div className="space-y-3">
+            <div className="bi-flat-list">
               {pagedBudgets.map((budget) => {
                 const budgetType = getBudgetType(budget);
                 const periodProgress = getPeriodProgress(budget);
@@ -580,7 +580,7 @@ export default function BudgetsPage() {
                         setSelectedBudget(budget);
                       }
                     }}
-                    className="w-full cursor-pointer rounded-xl border px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:bg-black/[0.015] hover:shadow-md dark:hover:bg-white/[0.03]"
+                    className="w-full cursor-pointer border-b px-4 py-4 text-left transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
                     style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}
                   >
                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(260px,1.15fr)_minmax(260px,1.1fr)_minmax(160px,0.7fr)] xl:items-center">
@@ -604,7 +604,7 @@ export default function BudgetsPage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="bi-segment-grid grid grid-cols-3">
                         <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
                           <div className="text-xs" style={{ color: "var(--text-color-3)" }}>预算</div>
                           <div className="mt-1 truncate font-semibold" style={{ color: "var(--text-color-1)" }}>
@@ -657,7 +657,7 @@ export default function BudgetsPage() {
                         </div>
                         <div className="text-left text-xs xl:text-right">
                           <div style={{ color: "var(--text-color-3)" }}>{getDeadlineText(budget)}</div>
-                          <div className="mt-1" style={{ color: budget.warningReached ? "#f59e0b" : "var(--text-color-4)" }}>
+                          <div className="mt-1" style={{ color: budget.warningReached ? "var(--color-warning)" : "var(--text-color-4)" }}>
                             阈值 {budget.warningThreshold}% · {getPaceText(budget)}
                           </div>
                         </div>

@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { Button, Dropdown, Avatar, Badge, Tooltip, Input, Empty, Spin, Tag } from "@arco-design/web-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Dropdown, Avatar, Badge, Tooltip, Input, Empty, Message, Spin, Tag } from "@arco-design/web-react";
 import {
   IconMenu,
   IconSun,
@@ -10,19 +10,24 @@ import {
   IconPoweroff,
   IconNotification,
   IconSearch,
+  IconRight,
+  IconPlus,
 } from "@arco-design/web-react/icon";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useAuthStore } from "@/lib/stores/authStore";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import CompanySwitcher from "./CompanySwitcher";
 import { notificationApi } from "@/lib/api/notifications";
+import { globalSearchApi, type GlobalSearchResult } from "@/lib/api/search";
 import type { NotificationItem } from "@/lib/types";
+import { activeNavigationItem, flattenNavigation, navigationFor } from "./navigation";
 
 export default function Header() {
-  const { toggleSidebar, theme, setTheme, locale, setLocale } = useAppStore();
+  const { toggleSidebar, theme, setTheme, locale, setLocale, activeSubjectType } = useAppStore();
   const { user, logout } = useAuthStore();
   const router = useRouter();
+  const pathname = usePathname();
   const t = useTranslations();
   const [searchVisible, setSearchVisible] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
@@ -30,6 +35,23 @@ export default function Header() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsFailed, setNotificationsFailed] = useState(false);
+  const [businessSearchResults, setBusinessSearchResults] = useState<GlobalSearchResult[]>([]);
+  const [businessSearchLoading, setBusinessSearchLoading] = useState(false);
+  const navigationGroups = useMemo(
+    () => navigationFor(activeSubjectType, user?.role === 1),
+    [activeSubjectType, user?.role]
+  );
+  const navigationItems = useMemo(() => flattenNavigation(navigationGroups), [navigationGroups]);
+  const currentNavigationItem = activeNavigationItem(pathname, navigationItems);
+  const normalizedSearch = globalSearch.trim().toLocaleLowerCase();
+  const searchResults = navigationItems.filter((item) => {
+    if (!normalizedSearch) return true;
+    const label = t(`nav.${item.labelKey}`).toLocaleLowerCase();
+    return label.includes(normalizedSearch)
+      || item.key.toLocaleLowerCase().includes(normalizedSearch)
+      || item.keywords.some((keyword) => keyword.toLocaleLowerCase().includes(normalizedSearch));
+  });
 
   const avatarEmoji = user?.avatar?.split("|")[0] || "👤";
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
@@ -51,12 +73,19 @@ export default function Header() {
 
   const submitGlobalSearch = () => {
     const keyword = globalSearch.trim();
-    const params = new URLSearchParams();
-    if (keyword) {
-      params.set("keyword", keyword);
+    if (!keyword) {
+      return;
     }
+    const params = new URLSearchParams();
+    params.set("keyword", keyword);
     router.push(`/transactions${params.toString() ? `?${params.toString()}` : ""}`);
     setSearchVisible(false);
+  };
+
+  const openNavigationResult = (path: string) => {
+    router.push(path);
+    setSearchVisible(false);
+    setGlobalSearch("");
   };
 
   const loadNotificationSummary = useCallback(async () => {
@@ -70,6 +99,7 @@ export default function Header() {
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
+    setNotificationsFailed(false);
     try {
       const [listRes, summaryRes] = await Promise.all([
         notificationApi.list({ page: 0, size: 8 }),
@@ -77,6 +107,8 @@ export default function Header() {
       ]);
       setNotifications(listRes.data.content);
       setUnreadCount(summaryRes.data.unreadCount || 0);
+    } catch {
+      setNotificationsFailed(true);
     } finally {
       setNotificationsLoading(false);
     }
@@ -105,26 +137,65 @@ export default function Header() {
     return () => window.clearTimeout(timer);
   }, [notificationVisible, loadNotifications]);
 
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+        event.preventDefault();
+        setSearchVisible((visible) => !visible);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
+
+  useEffect(() => {
+    if (normalizedSearch.length < 2) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setBusinessSearchLoading(true);
+      try {
+        const response = await globalSearchApi.search(globalSearch.trim());
+        if (!cancelled) setBusinessSearchResults(response.data.results);
+      } catch {
+        if (!cancelled) setBusinessSearchResults([]);
+      } finally {
+        if (!cancelled) setBusinessSearchLoading(false);
+      }
+    }, 260);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [globalSearch, normalizedSearch]);
+
   const openNotification = async (item: NotificationItem) => {
-    if (!item.readAt) {
-      await notificationApi.markRead(item.id);
-      setUnreadCount((count) => Math.max(0, count - 1));
-      setNotifications((current) =>
-        current.map((notification) =>
-          notification.id === item.id ? { ...notification, readAt: new Date().toISOString() } : notification
-        )
-      );
-    }
-    if (item.targetUrl) {
-      router.push(item.targetUrl);
-      setNotificationVisible(false);
+    try {
+      if (!item.readAt) {
+        await notificationApi.markRead(item.id);
+        setUnreadCount((count) => Math.max(0, count - 1));
+        setNotifications((current) =>
+          current.map((notification) =>
+            notification.id === item.id ? { ...notification, readAt: new Date().toISOString() } : notification
+          )
+        );
+      }
+      if (item.targetUrl?.startsWith("/") && !item.targetUrl.startsWith("//")) {
+        router.push(item.targetUrl);
+        setNotificationVisible(false);
+      }
+    } catch {
+      Message.error(t("common.notificationActionFailed"));
     }
   };
 
   const markAllNotificationsRead = async () => {
-    await notificationApi.markAllRead();
-    setUnreadCount(0);
-    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })));
+    try {
+      await notificationApi.markAllRead();
+      setUnreadCount(0);
+      setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })));
+    } catch {
+      Message.error(t("common.notificationActionFailed"));
+    }
   };
 
   const severityColor = (severity: string) => {
@@ -155,29 +226,108 @@ export default function Header() {
 
   const searchDroplist = (
     <div
-      className="global-search-panel rounded-xl border p-3 shadow-lg"
+      className="global-search-panel overflow-hidden rounded-2xl border shadow-xl"
       style={{
-        width: 360,
+        width: 520,
+        maxWidth: "calc(100vw - 24px)",
         backgroundColor: "var(--bg-color-card)",
         borderColor: "var(--border-color)",
       }}
     >
-      <Input
-        autoFocus
-        prefix={<IconSearch style={{ color: "var(--text-color-4)" }} />}
-        placeholder={t("common.globalSearchPlaceholder")}
-        value={globalSearch}
-        onChange={setGlobalSearch}
-        onPressEnter={submitGlobalSearch}
-        style={{ height: 40 }}
-      />
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-xs" style={{ color: "var(--text-color-3)" }}>
-          {t("common.globalSearchHint")}
-        </span>
-        <Button type="primary" size="small" onClick={submitGlobalSearch}>
-          {t("common.search")}
-        </Button>
+      <div className="border-b p-3" style={{ borderColor: "var(--border-color)" }}>
+        <Input
+          autoFocus
+          allowClear
+          prefix={<IconSearch style={{ color: "var(--text-color-4)" }} />}
+          placeholder={t("common.globalSearchPlaceholder")}
+          value={globalSearch}
+          onChange={setGlobalSearch}
+          onPressEnter={submitGlobalSearch}
+          style={{ height: 44 }}
+        />
+      </div>
+      <div className="max-h-[380px] overflow-y-auto p-2">
+        {normalizedSearch.length >= 2 && (
+          <>
+            <div className="flex items-center justify-between px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-color-3)" }}>
+              <span>{locale === "zh" ? "业务结果" : "Business results"}</span>
+              {businessSearchLoading && <Spin size={14} />}
+            </div>
+            {!businessSearchLoading && businessSearchResults.length === 0 ? (
+              <div className="px-3 py-3 text-sm" style={{ color: "var(--text-color-3)" }}>
+                {locale === "zh" ? "没有找到相关流水、票据、账户、税务或员工记录" : "No matching business records"}
+              </div>
+            ) : (
+              businessSearchResults.slice(0, 10).map((result) => (
+                <button
+                  key={`${result.type}-${result.id}`}
+                  type="button"
+                  className="search-result-item"
+                  onClick={() => openNavigationResult(result.path)}
+                >
+                  <span className="search-result-icon search-result-icon-primary" aria-hidden="true"><IconSearch /></span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>{result.title}</span>
+                    <span className="block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{result.subtitle}</span>
+                  </span>
+                  <Tag size="small">{result.type}</Tag>
+                  <IconRight style={{ color: "var(--text-color-4)" }} />
+                </button>
+              ))
+            )}
+            <div className="my-2 border-t" style={{ borderColor: "var(--border-color-light)" }} />
+          </>
+        )}
+        <div className="px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-color-3)" }}>
+          {t("common.navigationResults")}
+        </div>
+        {searchResults.length === 0 ? (
+          <div className="px-3 py-6 text-center text-sm" style={{ color: "var(--text-color-3)" }}>
+            {t("common.noMatches")}
+          </div>
+        ) : (
+          searchResults.slice(0, 7).map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="search-result-item"
+              onClick={() => openNavigationResult(item.key)}
+            >
+              <span className="search-result-icon" aria-hidden="true">{item.icon}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+                  {t(`nav.${item.labelKey}`)}
+                </span>
+                <span className="block truncate text-xs" style={{ color: "var(--text-color-3)" }}>{item.key}</span>
+              </span>
+              <IconRight style={{ color: "var(--text-color-4)" }} />
+            </button>
+          ))
+        )}
+        <div className="my-2 border-t" style={{ borderColor: "var(--border-color-light)" }} />
+        <button
+          type="button"
+          className="search-result-item"
+          onClick={() => openNavigationResult("/transactions?action=new")}
+        >
+          <span className="search-result-icon search-result-icon-primary" aria-hidden="true"><IconPlus /></span>
+          <span className="min-w-0 flex-1 text-left text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+            {t("common.quickCreateTransaction")}
+          </span>
+          <IconRight style={{ color: "var(--text-color-4)" }} />
+        </button>
+        {normalizedSearch && (
+          <button type="button" className="search-result-item" onClick={submitGlobalSearch}>
+            <span className="search-result-icon" aria-hidden="true"><IconSearch /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block truncate text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
+                {t("common.searchLedgerFor", { keyword: globalSearch.trim() })}
+              </span>
+              <span className="block text-xs" style={{ color: "var(--text-color-3)" }}>{t("common.globalSearchHint")}</span>
+            </span>
+            <IconRight style={{ color: "var(--text-color-4)" }} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -209,6 +359,11 @@ export default function Header() {
         {notificationsLoading ? (
           <div className="flex justify-center py-8">
             <Spin />
+          </div>
+        ) : notificationsFailed && notifications.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 px-5 py-8 text-center">
+            <div className="text-sm" style={{ color: "var(--text-color-3)" }}>{t("common.notificationLoadFailed")}</div>
+            <Button size="small" onClick={() => void loadNotifications()}>{t("common.retry")}</Button>
           </div>
         ) : notifications.length === 0 ? (
           <div className="py-8">
@@ -250,29 +405,42 @@ export default function Header() {
   );
 
   return (
-    <div
-      className="flex items-center justify-between px-6 border-b glass"
+    <header
+      className="app-header glass"
       style={{
-        height: 64,
         borderColor: "var(--border-color)",
       }}
     >
-      {/* Left side */}
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center gap-3">
         <Button
           type="text"
           icon={<IconMenu />}
           onClick={toggleSidebar}
-          className="arco-btn-icon-only"
+          aria-label={t("nav.collapseMenu")}
+          className="arco-btn-icon-only hidden md:inline-flex"
           style={{ fontSize: 20 }}
         />
+        <button
+          type="button"
+          className="app-header-mobile-logo md:hidden"
+          onClick={() => router.push("/dashboard")}
+          aria-label="Mamoji"
+        >
+          M
+        </button>
+        <div className="hidden min-w-0 md:block">
+          <div className="truncate text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>
+            {currentNavigationItem ? t(`nav.${currentNavigationItem.labelKey}`) : "Mamoji"}
+          </div>
+          <div className="truncate text-xs" style={{ color: "var(--text-color-3)" }}>
+            {activeSubjectType === "household" ? t("companySwitcher.householdSubject") : t("companySwitcher.companySubject")}
+          </div>
+        </div>
       </div>
 
-      {/* Right side */}
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
         <CompanySwitcher />
 
-        {/* Search button */}
         <Dropdown
           droplist={searchDroplist}
           trigger="click"
@@ -280,13 +448,15 @@ export default function Header() {
           popupVisible={searchVisible}
           onVisibleChange={setSearchVisible}
         >
-          <Button
-            type="text"
-            icon={<IconSearch />}
+          <button
+            type="button"
             aria-label={t("common.search")}
-            className="arco-btn-icon-only"
-            style={{ color: "var(--text-color-3)" }}
-          />
+            className="header-search-trigger"
+          >
+            <IconSearch />
+            <span className="hidden xl:inline">{t("common.search")}</span>
+            <kbd className="hidden xl:inline-flex">⌘ K</kbd>
+          </button>
         </Dropdown>
 
         <Dropdown
@@ -301,6 +471,7 @@ export default function Header() {
             <Button
               type="text"
               icon={<IconNotification />}
+              aria-label={t("common.notifications")}
               className="arco-btn-icon-only"
               style={{ color: "var(--text-color-3)" }}
             />
@@ -308,35 +479,34 @@ export default function Header() {
           </Tooltip>
         </Dropdown>
 
-        {/* Theme toggle */}
-        <Tooltip content={theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}>
-          <Button
-            type="text"
-            icon={theme === "light" ? <IconMoon /> : <IconSun />}
-            onClick={toggleTheme}
-            className="arco-btn-icon-only"
-            style={{ color: "var(--text-color-3)" }}
-          />
-        </Tooltip>
-
-        {/* Language toggle */}
-        <Tooltip content={locale === "zh" ? "English" : "中文"}>
-          <Button
-            type="text"
-            icon={<IconLanguage />}
-            onClick={toggleLocale}
-            className="arco-btn-icon-only"
-            style={{ color: "var(--text-color-3)" }}
-          />
-        </Tooltip>
-
-        {/* Divider */}
-        <div className="w-px h-6 mx-2" style={{ backgroundColor: "var(--border-color)" }} />
+        <div className="hidden items-center gap-1 lg:flex">
+          <Tooltip content={theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}>
+            <Button
+              type="text"
+              icon={theme === "light" ? <IconMoon /> : <IconSun />}
+              onClick={toggleTheme}
+              aria-label={theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}
+              className="arco-btn-icon-only"
+              style={{ color: "var(--text-color-3)" }}
+            />
+          </Tooltip>
+          <Tooltip content={locale === "zh" ? "English" : "中文"}>
+            <Button
+              type="text"
+              icon={<IconLanguage />}
+              onClick={toggleLocale}
+              aria-label={locale === "zh" ? "English" : "中文"}
+              className="arco-btn-icon-only"
+              style={{ color: "var(--text-color-3)" }}
+            />
+          </Tooltip>
+          <div className="mx-1 h-6 w-px" style={{ backgroundColor: "var(--border-color)" }} />
+        </div>
 
         {/* User dropdown */}
         <Dropdown
           droplist={
-            <div className="py-1" style={{ minWidth: 160 }}>
+            <div className="py-1" style={{ minWidth: 220 }}>
               <div className="px-4 py-2 border-b" style={{ borderColor: "var(--border-color)" }}>
                 <div className="font-medium" style={{ color: "var(--text-color-1)" }}>
                   {user?.nickname || "用户"}
@@ -345,25 +515,49 @@ export default function Header() {
                   {user?.email || ""}
                 </div>
               </div>
-              <div
-                className="flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={() => router.push("/settings")}
               >
                 <IconUser style={{ color: "var(--text-color-3)" }} />
                 <span style={{ color: "var(--text-color-2)" }}>{t("settings.profile")}</span>
-              </div>
-              <div
-                className="flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 text-red-500"
+              </button>
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left hover:bg-black/5 dark:hover:bg-white/5 lg:hidden"
+                onClick={toggleTheme}
+              >
+                {theme === "light" ? <IconMoon /> : <IconSun />}
+                <span style={{ color: "var(--text-color-2)" }}>
+                  {theme === "light" ? t("settings.switchToDark") : t("settings.switchToLight")}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left hover:bg-black/5 dark:hover:bg-white/5 lg:hidden"
+                onClick={toggleLocale}
+              >
+                <IconLanguage />
+                <span style={{ color: "var(--text-color-2)" }}>{locale === "zh" ? "English" : "中文"}</span>
+              </button>
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left text-red-500 hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={handleLogout}
               >
                 <IconPoweroff />
                 <span>{t("auth.logout")}</span>
-              </div>
+              </button>
             </div>
           }
           trigger="click"
         >
-          <div className="flex items-center gap-3 cursor-pointer py-1 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+          <button
+            type="button"
+            className="flex cursor-pointer items-center gap-3 rounded-xl border-0 bg-transparent p-1 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            aria-label={user?.nickname || t("nav.userFallback")}
+          >
             <Avatar
               size={36}
               style={{
@@ -373,14 +567,14 @@ export default function Header() {
             >
               {avatarEmoji}
             </Avatar>
-            <div className="hidden md:block">
+            <div className="hidden xl:block">
               <div className="text-sm font-medium" style={{ color: "var(--text-color-1)" }}>
                 {user?.nickname || "用户"}
               </div>
             </div>
-          </div>
+          </button>
         </Dropdown>
       </div>
-    </div>
+    </header>
   );
 }

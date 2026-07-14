@@ -13,7 +13,7 @@ export type ReceiptRiskLevel = "low" | "medium" | "high" | "critical";
 export type InvoiceCheckStatus = "not_required" | "pending" | "verified" | "failed";
 export type DeductionStatus = "not_applicable" | "pending" | "deductible" | "deducted" | "transferred_out";
 export type ReimbursementStatus = "not_applicable" | "submitted" | "approved" | "paid" | "archived" | "rejected";
-export type ApprovalStatus = "not_required" | "pending" | "approved" | "rejected";
+export type ApprovalStatus = "not_required" | "not_submitted" | "pending" | "approved" | "rejected";
 export type AccountingStatus = "not_started" | "draft" | "posted" | "reversed";
 
 export interface ReceiptVoucher {

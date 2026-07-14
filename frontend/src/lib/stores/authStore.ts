@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { authApi } from "@/lib/api/auth";
 import type { User, LoginDTO, RegisterDTO } from "@/lib/types";
+import { useAppStore } from "./appStore";
+import { useCategoryStore } from "./categoryStore";
 
 const TOKEN_KEY = "token";
 const TOKEN_EXPIRES_AT_KEY = "tokenExpiresAt";
@@ -13,6 +15,15 @@ const clearStoredSession = () => {
   }
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TOKEN_EXPIRES_AT_KEY);
+};
+
+const resetUserContext = () => {
+  if (isBrowser()) {
+    localStorage.removeItem("activeCompanyId");
+    localStorage.removeItem("activeSubjectType");
+  }
+  useAppStore.setState({ activeCompanyId: null, activeSubjectType: "company" });
+  useCategoryStore.getState().clearCategories();
 };
 
 const isExpired = (expiresAt: string | null) => {
@@ -61,6 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: async (data) => {
     const res = await authApi.login(data);
     const { token, tokenExpiresAt, user } = res.data;
+    resetUserContext();
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
     set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
@@ -69,6 +81,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (data) => {
     const res = await authApi.register(data);
     const { token, tokenExpiresAt, user } = res.data;
+    resetUserContext();
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
     set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
@@ -82,6 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } finally {
       clearStoredSession();
+      resetUserContext();
       set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
     }
   },
@@ -90,6 +104,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { token, tokenExpiresAt } = get();
     if (!token || isExpired(tokenExpiresAt)) {
       clearStoredSession();
+      resetUserContext();
       set({ loading: false });
       return;
     }
@@ -98,6 +113,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user: res.data, isAuthenticated: true, loading: false });
     } catch {
       clearStoredSession();
+      resetUserContext();
       set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
     }
   },

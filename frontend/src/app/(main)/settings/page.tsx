@@ -18,9 +18,9 @@ const CheckboxGroup = Checkbox.Group;
 const AVATAR_PRESETS = [
   { emoji: "😊", color: "#6366f1" },
   { emoji: "🐱", color: "#ec4899" },
-  { emoji: "🐶", color: "#f59e0b" },
+  { emoji: "🐶", color: "#b86a52" },
   { emoji: "🐼", color: "#10b981" },
-  { emoji: "🦊", color: "#f97316" },
+  { emoji: "🦊", color: "#9a5268" },
   { emoji: "🐰", color: "#8b5cf6" },
   { emoji: "🐻", color: "#3b82f6" },
   { emoji: "🦁", color: "#ef4444" },
@@ -148,10 +148,10 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto animate-fade-in">
-      <PageHeader title={t("title")} icon="⚙️" />
+    <div className="mx-auto max-w-7xl animate-fade-in">
+      <PageHeader title={t("title")} subtitle="管理个人资料、安全、显示偏好、通知渠道与系统入口" icon="⚙️" />
 
-      <Card style={{ borderRadius: 16 }}>
+      <Card className="settings-workspace" style={{ borderRadius: 16 }}>
         <Tabs defaultActiveTab="profile">
           <TabPane
             key="profile"
@@ -161,52 +161,94 @@ export default function SettingsPage() {
               </span>
             }
           >
-            <div className="py-6">
-              {/* Avatar selector */}
-              <div className="mb-8">
-                <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-color-2)" }}>
-                  头像
-                </label>
-                <div className="flex flex-wrap gap-3">
-                  {AVATAR_PRESETS.map((preset) => {
-                    const val = `${preset.emoji}|${preset.color}`;
-                    const isSelected = selectedAvatar === val;
-                    return (
-                      <button
-                        key={preset.emoji}
-                        onClick={() => setSelectedAvatar(val)}
-                        className="w-14 h-14 rounded-2xl flex items-center justify-center cursor-pointer text-2xl transition-all"
-                        style={{
-                          backgroundColor: preset.color + "20",
-                          border: isSelected ? `3px solid ${preset.color}` : "3px solid transparent",
-                          transform: isSelected ? "scale(1.1)" : "scale(1)",
-                        }}
-                      >
-                        {preset.emoji}
-                      </button>
-                    );
-                  })}
+            <div className="settings-profile-grid py-6">
+              <section className="min-w-0">
+                <div className="mb-7">
+                  <label className="mb-3 block text-sm font-medium" style={{ color: "var(--text-color-2)" }}>
+                    选择头像
+                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    {AVATAR_PRESETS.map((preset) => {
+                      const val = `${preset.emoji}|${preset.color}`;
+                      const isSelected = selectedAvatar === val;
+                      return (
+                        <button
+                          key={preset.emoji}
+                          type="button"
+                          aria-label={`选择 ${preset.emoji} 头像`}
+                          aria-pressed={isSelected}
+                          onClick={() => setSelectedAvatar(val)}
+                          className="avatar-preset flex h-14 w-14 cursor-pointer items-center justify-center rounded-2xl text-2xl transition-all"
+                          style={{
+                            backgroundColor: preset.color + "20",
+                            border: isSelected ? `3px solid ${preset.color}` : "3px solid transparent",
+                            transform: isSelected ? "scale(1.06)" : "scale(1)",
+                          }}
+                        >
+                          {preset.emoji}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
 
-              <Form
-                form={profileForm}
-                layout="vertical"
-                initialValues={{ nickname: user?.nickname }}
-                onSubmit={handleUpdateProfile}
-              >
-                <FormItem label="昵称" field="nickname" rules={[{ required: true }]}>
-                  <Input style={{ borderRadius: 12, height: 48 }} />
-                </FormItem>
-                <FormItem label="邮箱">
-                  <Input disabled value={user?.email} style={{ borderRadius: 12, height: 48 }} />
-                </FormItem>
-                <FormItem>
-                  <Button type="primary" htmlType="submit" style={{ borderRadius: 12, height: 44 }}>
-                    保存修改
-                  </Button>
-                </FormItem>
-              </Form>
+                <Form
+                  form={profileForm}
+                  layout="vertical"
+                  initialValues={{ nickname: user?.nickname }}
+                  onSubmit={handleUpdateProfile}
+                >
+                  <FormItem label="昵称" field="nickname" rules={[{ required: true }]}>
+                    <Input style={{ borderRadius: 12, height: 48 }} />
+                  </FormItem>
+                  <FormItem label="登录邮箱">
+                    <Input disabled value={user?.email} style={{ borderRadius: 12, height: 48 }} />
+                  </FormItem>
+                  <FormItem>
+                    <Button type="primary" htmlType="submit" style={{ borderRadius: 12, height: 44 }}>
+                      保存个人资料
+                    </Button>
+                  </FormItem>
+                </Form>
+              </section>
+
+              <aside className="settings-aside-panel">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl text-xl" style={{ background: "var(--gradient-primary)", color: "#fff" }}>
+                    <IconUser />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold" style={{ color: "var(--text-color-1)" }}>{user?.nickname || "Mamoji 用户"}</div>
+                    <div className="mt-1 truncate text-xs" style={{ color: "var(--text-color-3)" }}>{user?.email}</div>
+                  </div>
+                </div>
+                <div className="my-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl bg-white/70 p-3 dark:bg-white/[0.04]">
+                    <div className="text-xs" style={{ color: "var(--text-color-3)" }}>账户角色</div>
+                    <div className="mt-1 font-semibold">{user?.role === 1 ? "管理员" : "团队成员"}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white/70 p-3 dark:bg-white/[0.04]">
+                    <div className="text-xs" style={{ color: "var(--text-color-3)" }}>当前主题</div>
+                    <div className="mt-1 font-semibold">{theme === "light" ? "浅色" : "深色"}</div>
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  <button type="button" className="settings-aside-action" onClick={() => router.push("/backup")}>
+                    <IconArchive className="text-lg" style={{ color: "var(--color-primary)" }} />
+                    <span><span className="block font-medium">经营数据备份</span><span className="block text-xs" style={{ color: "var(--text-color-3)" }}>导出、校验与受控恢复</span></span>
+                  </button>
+                  {user?.role === 1 ? (
+                    <button type="button" className="settings-aside-action" onClick={() => router.push("/admin/users")}>
+                      <IconUser className="text-lg" style={{ color: "var(--color-primary)" }} />
+                      <span><span className="block font-medium">人员与权限</span><span className="block text-xs" style={{ color: "var(--text-color-3)" }}>维护成员资料和访问范围</span></span>
+                    </button>
+                  ) : null}
+                  <button type="button" className="settings-aside-action" onClick={toggleTheme}>
+                    {theme === "light" ? <IconMoon className="text-lg" /> : <IconSun className="text-lg" />}
+                    <span><span className="block font-medium">切换显示主题</span><span className="block text-xs" style={{ color: "var(--text-color-3)" }}>立即应用到整个工作台</span></span>
+                  </button>
+                </div>
+              </aside>
             </div>
           </TabPane>
 
