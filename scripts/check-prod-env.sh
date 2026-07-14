@@ -60,6 +60,20 @@ require_https_url() {
   fi
 }
 
+require_https_origin() {
+  local name="$1"
+  local value authority
+  value="$(value_of "$name")"
+  authority="${value#https://}"
+  authority="${authority%/}"
+  if contains_placeholder "$value" \
+    || [[ "$value" != https://* ]] \
+    || [[ -z "$authority" ]] \
+    || [[ "$authority" == *"/"* || "$authority" == *"?"* || "$authority" == *"#"* || "$authority" == *"@"* ]]; then
+    fail "$name must be a production https:// origin without a path, query, fragment, or user info"
+  fi
+}
+
 require_no_latest() {
   local name="$1"
   local value
@@ -81,6 +95,7 @@ require_real_value MAMOJI_SMOKE_EMAIL 6
 require_real_value MAMOJI_SMOKE_PASSWORD 12
 
 require_equals MAMOJI_RUNTIME_ENVIRONMENT production
+require_equals MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED true
 require_equals MAMOJI_BOOTSTRAP_MODE bootstrap
 require_equals MAMOJI_REGISTRATION_MODE invite
 require_equals MAMOJI_PASSWORD_REQUIRE_COMPLEXITY true
@@ -91,7 +106,7 @@ require_equals MAMOJI_SCHEMA_COMPATIBILITY_ENABLED false
 require_equals MAMOJI_OBJECT_STORAGE_ENABLED true
 
 require_https_url MAMOJI_PUBLIC_API_BASE_URL
-require_https_url MAMOJI_MINIO_EXTERNAL_URL
+require_https_origin MAMOJI_MINIO_EXTERNAL_URL
 
 require_no_latest MAMOJI_CADDY_VERSION
 require_no_latest MAMOJI_MINIO_VERSION

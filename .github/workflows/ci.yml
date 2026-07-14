@@ -25,17 +25,17 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Backend compile
+      - name: Backend verify
         working-directory: backend
-        run: mvn -DskipTests compile
-
-      - name: Backend package
-        working-directory: backend
-        run: mvn -DskipTests package
+        run: mvn --batch-mode --no-transfer-progress verify
 
       - name: Frontend install
         working-directory: frontend
         run: npm ci
+
+      - name: Frontend production dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev --registry=https://registry.npmjs.org
 
       - name: Frontend lint
         working-directory: frontend

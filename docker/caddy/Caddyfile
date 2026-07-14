@@ -7,8 +7,13 @@
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self' https: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+		X-Permitted-Cross-Domain-Policies "none"
+		X-XSS-Protection "0"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 	}
@@ -21,9 +26,13 @@
 
 	@minio path /{$MAMOJI_MINIO_BUCKET}/*
 	handle @minio {
-		reverse_proxy minio:9000 {
-			header_up Host minio:9000
+		header {
+			Cache-Control "private, no-store"
+			?Content-Disposition "attachment"
+			Content-Security-Policy "sandbox; default-src 'none'"
+			X-Content-Type-Options "nosniff"
 		}
+		reverse_proxy minio:9000
 	}
 
 	handle /api/* {

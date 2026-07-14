@@ -4,6 +4,7 @@
 
 - `.env.production` 已从 `.env.production.example` 复制，并替换所有 `replace-with`、`example.com`、默认密码和默认 MinIO 密钥。
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`，`scripts/check-prod-env.sh` 已通过，生产启动 guard 未报错。
+- `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`，且部署未配置多个 backend 副本。
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类。
 - `MAMOJI_SCHEMA_COMPATIBILITY_ENABLED=false`，生产只依赖 Flyway migration。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
@@ -23,6 +24,7 @@
 - 已在预生产或临时恢复环境执行 `CONFIRM_RESTORE=yes scripts/restore-prod.sh <backup-dir>` 并验证业务可用。
 - 备份目录有独立磁盘或外部对象存储同步策略。
 - 已配置每日备份 cron，保留周期与公司数据恢复要求一致。
+- 已确认备份维护窗口会短暂停止入口、后端写入和 MinIO，并为探针设置了合理告警延迟。
 - 已记录最近一次可回滚代码 tag、镜像 tag 或发布包版本。
 
 ## 业务验收

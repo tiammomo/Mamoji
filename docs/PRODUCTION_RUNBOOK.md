@@ -5,6 +5,7 @@
 - 复制 `.env.production.example` 为 `.env.production`，替换所有默认密码、密钥、域名和邮箱。
 - 如同一台服务器存在多套环境，确保 `MAMOJI_COMPOSE_PROJECT_NAME` 不同，避免复用同名 volume。
 - 设置 `MAMOJI_RUNTIME_ENVIRONMENT=production`，启用生产启动 guard。guard 会拒绝 demo/open/localhost/default secret 等高风险配置。
+- 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。当前进程内读模型只支持一个后端实例；第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`。完成数据库直读仓储改造后才能解除该限制。
 - 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。它只在首次空库初始化时创建管理员、公司主体和管理员员工档案；系统已有用户后，改密码请走应用内操作。
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会生成测试账号、演示流水、演示员工、演示税费或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；只有排障时才临时关闭。
@@ -63,6 +64,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec backen
 ```bash
 scripts/backup-prod.sh
 ```
+
+脚本会进入短暂维护窗口：暂停 Caddy、前端、后端写入和 MinIO，完成 PostgreSQL dump 与静止对象卷快照后恢复原先运行的服务。请安排在低峰期，并让外部探针对该窗口使用合理的告警延迟。
 
 建议通过 cron 每天执行一次：
 
