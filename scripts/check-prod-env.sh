@@ -130,6 +130,49 @@ if ! [[ "${MAMOJI_PASSWORD_MIN_LENGTH:-0}" =~ ^[0-9]+$ ]] || (( MAMOJI_PASSWORD_
   fail "MAMOJI_PASSWORD_MIN_LENGTH must be at least 12"
 fi
 
+db_pool_max="${MAMOJI_DB_POOL_MAX_SIZE:-20}"
+db_pool_min="${MAMOJI_DB_POOL_MIN_IDLE:-4}"
+db_pool_connection_timeout="${MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS:-5000}"
+db_pool_validation_timeout="${MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS:-2000}"
+http_max_threads="${MAMOJI_HTTP_MAX_THREADS:-100}"
+http_min_spare_threads="${MAMOJI_HTTP_MIN_SPARE_THREADS:-10}"
+http_max_connections="${MAMOJI_HTTP_MAX_CONNECTIONS:-4096}"
+
+if ! [[ "$db_pool_max" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_DB_POOL_MAX_SIZE must be a positive integer"
+fi
+if ! [[ "$db_pool_min" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  fail "MAMOJI_DB_POOL_MIN_IDLE must be a non-negative integer"
+fi
+if [[ "$db_pool_max" =~ ^[1-9][0-9]*$ && "$db_pool_min" =~ ^(0|[1-9][0-9]*)$ ]] && (( db_pool_min > db_pool_max )); then
+  fail "MAMOJI_DB_POOL_MIN_IDLE must not exceed MAMOJI_DB_POOL_MAX_SIZE"
+fi
+if ! [[ "$db_pool_connection_timeout" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS must be a positive integer"
+fi
+if ! [[ "$db_pool_validation_timeout" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS must be a positive integer"
+fi
+if [[ "$db_pool_connection_timeout" =~ ^[1-9][0-9]*$ && "$db_pool_validation_timeout" =~ ^[1-9][0-9]*$ ]] \
+  && (( db_pool_validation_timeout >= db_pool_connection_timeout )); then
+  fail "MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS must be lower than MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS"
+fi
+if ! [[ "$http_max_threads" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_HTTP_MAX_THREADS must be a positive integer"
+fi
+if ! [[ "$http_min_spare_threads" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  fail "MAMOJI_HTTP_MIN_SPARE_THREADS must be a non-negative integer"
+fi
+if [[ "$http_max_threads" =~ ^[1-9][0-9]*$ && "$http_min_spare_threads" =~ ^(0|[1-9][0-9]*)$ ]] \
+  && (( http_min_spare_threads > http_max_threads )); then
+  fail "MAMOJI_HTTP_MIN_SPARE_THREADS must not exceed MAMOJI_HTTP_MAX_THREADS"
+fi
+if ! [[ "$http_max_connections" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_HTTP_MAX_CONNECTIONS must be a positive integer"
+elif [[ "$http_max_threads" =~ ^[1-9][0-9]*$ ]] && (( http_max_connections < http_max_threads )); then
+  fail "MAMOJI_HTTP_MAX_CONNECTIONS must not be lower than MAMOJI_HTTP_MAX_THREADS"
+fi
+
 if (( ${#errors[@]} > 0 )); then
   printf 'Production environment check failed:\n' >&2
   printf ' - %s\n' "${errors[@]}" >&2

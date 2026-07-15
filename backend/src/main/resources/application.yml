@@ -1,5 +1,15 @@
 server:
   port: 38080
+  shutdown: graceful
+  tomcat:
+    connection-timeout: ${MAMOJI_HTTP_CONNECTION_TIMEOUT:5s}
+    keep-alive-timeout: ${MAMOJI_HTTP_KEEP_ALIVE_TIMEOUT:20s}
+    max-keep-alive-requests: ${MAMOJI_HTTP_MAX_KEEP_ALIVE_REQUESTS:100}
+    max-connections: ${MAMOJI_HTTP_MAX_CONNECTIONS:4096}
+    accept-count: ${MAMOJI_HTTP_ACCEPT_COUNT:100}
+    threads:
+      max: ${MAMOJI_HTTP_MAX_THREADS:100}
+      min-spare: ${MAMOJI_HTTP_MIN_SPARE_THREADS:10}
   compression:
     enabled: true
     min-response-size: 1KB
@@ -10,6 +20,8 @@ debug: false
 spring:
   application:
     name: mamoji-backend
+  lifecycle:
+    timeout-per-shutdown-phase: ${MAMOJI_SHUTDOWN_TIMEOUT:30s}
   datasource:
     url: ${MAMOJI_DATASOURCE_URL:jdbc:postgresql://localhost:5432/mamoji}
     username: ${MAMOJI_DATASOURCE_USERNAME:mamoji}
@@ -18,7 +30,18 @@ spring:
     hikari:
       maximum-pool-size: ${MAMOJI_DB_POOL_MAX_SIZE:10}
       minimum-idle: ${MAMOJI_DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS:5000}
+      validation-timeout: ${MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS:2000}
+      idle-timeout: ${MAMOJI_DB_POOL_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${MAMOJI_DB_POOL_MAX_LIFETIME_MS:1800000}
+      keepalive-time: ${MAMOJI_DB_POOL_KEEPALIVE_MS:120000}
+      leak-detection-threshold: ${MAMOJI_DB_POOL_LEAK_DETECTION_MS:0}
       initialization-fail-timeout: 30000
+      data-source-properties:
+        connectTimeout: ${MAMOJI_DB_CONNECT_TIMEOUT_SECONDS:5}
+        socketTimeout: ${MAMOJI_DB_SOCKET_TIMEOUT_SECONDS:30}
+        tcpKeepAlive: true
+        ApplicationName: mamoji-backend
   flyway:
     enabled: ${MAMOJI_FLYWAY_ENABLED:true}
     baseline-on-migrate: true
@@ -29,6 +52,16 @@ spring:
       max-request-size: 90MB
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
   endpoints:
     web:
       exposure:

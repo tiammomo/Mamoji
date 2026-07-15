@@ -14,6 +14,8 @@
 - `MAMOJI_OUTBOX_ENABLED=true`，`MAMOJI_OUTBOX_CONSUMER_ENABLED=true`，异步事件先走数据库 Outbox。
 - Caddy、MinIO、Prometheus 和备份 helper 镜像均固定明确版本，不使用 `latest`。
 - 公网只开放 `80/443`；PostgreSQL、后端、前端、MinIO API/Console 和 Prometheus 不直接暴露公网。
+- 已根据主机容量复核各服务 CPU、内存和 PID 限制，容器限制总和不会挤占宿主机与文件缓存所需余量。
+- 后端 Docker 停止宽限期大于 Spring 优雅停机窗口，Hikari 连接池上限与 PostgreSQL `max_connections` 留有运维连接余量。
 - `docker compose -f docker-compose.prod.yml --env-file .env.production config` 通过。
 - `mvn --settings docker/maven-settings.xml -f backend/pom.xml test`、`npm audit --omit=dev --registry=https://registry.npmjs.org`、`npm run lint`、`npm run build` 全部通过。
 
@@ -45,5 +47,8 @@
 - `notification_deliveries` 没有 `dead` 状态投递，外部 Webhook 没有持续失败。
 - 告警通知渠道已接入公司现有平台，或已规划 Alertmanager 接入。
 - `/healthz` 已接入负载均衡或外部探针。
+- Docker 后端探针使用 `/actuator/health/readiness` 且数据库中断时会转为非就绪；`/actuator/health/liveness` 不依赖外部服务。
 - 磁盘空间、CPU、内存、PostgreSQL volume、MinIO volume 已纳入主机级监控。
 - 发布后执行 `scripts/smoke-prod.sh` 并人工抽查登录、员工、薪酬、税务、附件和审计日志。
+- 在预生产执行 `scripts/concurrency-smoke.sh` 只读模式并记录并发数、p95/p99、错误率、Hikari 等待和 CPU/内存；混合模式只在显式允许写入的维护窗口执行，且确认临时分类已清理。
+- 在预生产执行 `MAMOJI_WORKFLOW_ALLOW_WRITES=yes scripts/workflow-smoke.sh`，确认账户、分类、流水新增/修改/删除与余额回滚闭环通过，且临时业务数据已清理。

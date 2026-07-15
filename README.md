@@ -325,6 +325,25 @@ MAMOJI_REGISTRATION_MODE=open \
 scripts/smoke-prod.sh
 ```
 
+核心记账闭环烟测（会创建并自动清理带唯一前缀的临时账户、分类和流水）：
+
+```bash
+MAMOJI_WORKFLOW_ALLOW_WRITES=yes scripts/workflow-smoke.sh
+```
+
+并发读取烟测（默认不写业务数据，可通过环境变量调整并发数、操作数和延迟阈值）：
+
+```bash
+API_BASE_URL=http://localhost:38080/api/v1 \
+HEALTH_URL=http://localhost:38080/actuator/health \
+BASE_URL=http://localhost:33000 \
+MAMOJI_LOAD_EMAIL=test@mamoji.com \
+MAMOJI_LOAD_PASSWORD=123456 \
+MAMOJI_LOAD_CONCURRENCY=8 \
+MAMOJI_LOAD_OPERATIONS=200 \
+scripts/concurrency-smoke.sh
+```
+
 查询 Outbox 状态：
 
 ```bash

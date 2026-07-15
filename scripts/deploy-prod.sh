@@ -6,6 +6,7 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.prod.yml}"
 SKIP_BACKUP="${SKIP_BACKUP:-false}"
 SKIP_SMOKE="${SKIP_SMOKE:-false}"
+RUN_CONCURRENCY_SMOKE="${RUN_CONCURRENCY_SMOKE:-false}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing env file: $ENV_FILE" >&2
@@ -39,6 +40,10 @@ compose ps
 
 if [[ "$SKIP_SMOKE" != "true" ]]; then
   ENV_FILE="$ENV_FILE" "$ROOT_DIR/scripts/smoke-prod.sh"
+fi
+
+if [[ "$RUN_CONCURRENCY_SMOKE" == "true" ]]; then
+  ENV_FILE="$ENV_FILE" MAMOJI_LOAD_MODE=read "$ROOT_DIR/scripts/concurrency-smoke.sh"
 fi
 
 echo "Deployment completed"

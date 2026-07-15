@@ -1,9 +1,21 @@
 name: ${MAMOJI_COMPOSE_PROJECT_NAME:-mamoji-prod}
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${MAMOJI_LOG_MAX_SIZE:-20m}
+    max-file: ${MAMOJI_LOG_MAX_FILES:-5}
+
 services:
   caddy:
     image: caddy:${MAMOJI_CADDY_VERSION:-2.11.4-alpine}
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_CADDY_STOP_GRACE_PERIOD:-20s}
+    cpus: "${MAMOJI_CADDY_CPUS:-0.50}"
+    mem_limit: ${MAMOJI_CADDY_MEMORY_LIMIT:-256m}
+    pids_limit: ${MAMOJI_CADDY_PIDS_LIMIT:-128}
+    logging: *default-logging
     environment:
       MAMOJI_PUBLIC_HOST: ${MAMOJI_PUBLIC_HOST:?MAMOJI_PUBLIC_HOST is required}
       MAMOJI_TLS_EMAIL: ${MAMOJI_TLS_EMAIL:?MAMOJI_TLS_EMAIL is required}
@@ -27,7 +39,14 @@ services:
       dockerfile: backend/Dockerfile
     image: mamoji-backend:prod
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_BACKEND_STOP_GRACE_PERIOD:-45s}
+    cpus: "${MAMOJI_BACKEND_CPUS:-2.0}"
+    mem_limit: ${MAMOJI_BACKEND_MEMORY_LIMIT:-1536m}
+    pids_limit: ${MAMOJI_BACKEND_PIDS_LIMIT:-256}
+    logging: *default-logging
     environment:
+      JAVA_TOOL_OPTIONS: "${MAMOJI_JAVA_TOOL_OPTIONS:--XX:InitialRAMPercentage=20.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError}"
       MAMOJI_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${MAMOJI_POSTGRES_DB:?MAMOJI_POSTGRES_DB is required}
       MAMOJI_DATASOURCE_USERNAME: ${MAMOJI_POSTGRES_USER:?MAMOJI_POSTGRES_USER is required}
       MAMOJI_DATASOURCE_PASSWORD: ${MAMOJI_POSTGRES_PASSWORD:?MAMOJI_POSTGRES_PASSWORD is required}
@@ -36,6 +55,22 @@ services:
       MAMOJI_SCHEMA_COMPATIBILITY_ENABLED: ${MAMOJI_SCHEMA_COMPATIBILITY_ENABLED:-false}
       MAMOJI_DB_POOL_MAX_SIZE: ${MAMOJI_DB_POOL_MAX_SIZE:-20}
       MAMOJI_DB_POOL_MIN_IDLE: ${MAMOJI_DB_POOL_MIN_IDLE:-4}
+      MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS: ${MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS:-5000}
+      MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS: ${MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS:-2000}
+      MAMOJI_DB_POOL_IDLE_TIMEOUT_MS: ${MAMOJI_DB_POOL_IDLE_TIMEOUT_MS:-600000}
+      MAMOJI_DB_POOL_MAX_LIFETIME_MS: ${MAMOJI_DB_POOL_MAX_LIFETIME_MS:-1800000}
+      MAMOJI_DB_POOL_KEEPALIVE_MS: ${MAMOJI_DB_POOL_KEEPALIVE_MS:-120000}
+      MAMOJI_DB_POOL_LEAK_DETECTION_MS: ${MAMOJI_DB_POOL_LEAK_DETECTION_MS:-0}
+      MAMOJI_DB_CONNECT_TIMEOUT_SECONDS: ${MAMOJI_DB_CONNECT_TIMEOUT_SECONDS:-5}
+      MAMOJI_DB_SOCKET_TIMEOUT_SECONDS: ${MAMOJI_DB_SOCKET_TIMEOUT_SECONDS:-30}
+      MAMOJI_HTTP_CONNECTION_TIMEOUT: ${MAMOJI_HTTP_CONNECTION_TIMEOUT:-5s}
+      MAMOJI_HTTP_KEEP_ALIVE_TIMEOUT: ${MAMOJI_HTTP_KEEP_ALIVE_TIMEOUT:-20s}
+      MAMOJI_HTTP_MAX_KEEP_ALIVE_REQUESTS: ${MAMOJI_HTTP_MAX_KEEP_ALIVE_REQUESTS:-100}
+      MAMOJI_HTTP_MAX_CONNECTIONS: ${MAMOJI_HTTP_MAX_CONNECTIONS:-4096}
+      MAMOJI_HTTP_ACCEPT_COUNT: ${MAMOJI_HTTP_ACCEPT_COUNT:-100}
+      MAMOJI_HTTP_MAX_THREADS: ${MAMOJI_HTTP_MAX_THREADS:-100}
+      MAMOJI_HTTP_MIN_SPARE_THREADS: ${MAMOJI_HTTP_MIN_SPARE_THREADS:-10}
+      MAMOJI_SHUTDOWN_TIMEOUT: ${MAMOJI_SHUTDOWN_TIMEOUT:-30s}
       MAMOJI_BOOTSTRAP_MODE: ${MAMOJI_BOOTSTRAP_MODE:-bootstrap}
       MAMOJI_BOOTSTRAP_ADMIN_EMAIL: ${MAMOJI_BOOTSTRAP_ADMIN_EMAIL:?MAMOJI_BOOTSTRAP_ADMIN_EMAIL is required}
       MAMOJI_BOOTSTRAP_ADMIN_PASSWORD: ${MAMOJI_BOOTSTRAP_ADMIN_PASSWORD:?MAMOJI_BOOTSTRAP_ADMIN_PASSWORD is required}
@@ -86,7 +121,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:38080/actuator/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:38080/actuator/health/readiness"]
       interval: 10s
       timeout: 3s
       start_period: 20s
@@ -101,6 +136,12 @@ services:
         NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS: "false"
     image: mamoji-frontend:prod
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_FRONTEND_STOP_GRACE_PERIOD:-30s}
+    cpus: "${MAMOJI_FRONTEND_CPUS:-1.0}"
+    mem_limit: ${MAMOJI_FRONTEND_MEMORY_LIMIT:-768m}
+    pids_limit: ${MAMOJI_FRONTEND_PIDS_LIMIT:-256}
+    logging: *default-logging
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${MAMOJI_PUBLIC_API_BASE_URL:?MAMOJI_PUBLIC_API_BASE_URL is required}
       NEXT_PUBLIC_SHOW_DEMO_CREDENTIALS: "false"
@@ -123,6 +164,13 @@ services:
   postgres:
     image: postgres:18.4-alpine
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_POSTGRES_STOP_GRACE_PERIOD:-60s}
+    cpus: "${MAMOJI_POSTGRES_CPUS:-2.0}"
+    mem_limit: ${MAMOJI_POSTGRES_MEMORY_LIMIT:-2g}
+    pids_limit: ${MAMOJI_POSTGRES_PIDS_LIMIT:-256}
+    shm_size: ${MAMOJI_POSTGRES_SHM_SIZE:-256m}
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${MAMOJI_POSTGRES_DB:?MAMOJI_POSTGRES_DB is required}
       POSTGRES_USER: ${MAMOJI_POSTGRES_USER:?MAMOJI_POSTGRES_USER is required}
@@ -139,6 +187,12 @@ services:
   minio:
     image: quay.io/minio/minio:${MAMOJI_MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_MINIO_STOP_GRACE_PERIOD:-30s}
+    cpus: "${MAMOJI_MINIO_CPUS:-1.0}"
+    mem_limit: ${MAMOJI_MINIO_MEMORY_LIMIT:-1g}
+    pids_limit: ${MAMOJI_MINIO_PIDS_LIMIT:-256}
+    logging: *default-logging
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MAMOJI_MINIO_ACCESS_KEY:?MAMOJI_MINIO_ACCESS_KEY is required}
@@ -155,6 +209,12 @@ services:
   prometheus:
     image: prom/prometheus:${MAMOJI_PROMETHEUS_VERSION:-v3.12.0}
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${MAMOJI_PROMETHEUS_STOP_GRACE_PERIOD:-30s}
+    cpus: "${MAMOJI_PROMETHEUS_CPUS:-1.0}"
+    mem_limit: ${MAMOJI_PROMETHEUS_MEMORY_LIMIT:-1g}
+    pids_limit: ${MAMOJI_PROMETHEUS_PIDS_LIMIT:-256}
+    logging: *default-logging
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=15d"
