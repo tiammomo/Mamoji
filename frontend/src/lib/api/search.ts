@@ -14,5 +14,6 @@ export type GlobalSearchResponse = {
 };
 
 export const globalSearchApi = {
-  search: (keyword: string, limit = 5) => client.get<GlobalSearchResponse>("/search", { params: { keyword, limit } }),
+  search: (keyword: string, limit = 5, signal?: AbortSignal) =>
+    client.get<GlobalSearchResponse>("/search", { params: { keyword, limit }, signal }),
 };

@@ -134,15 +134,23 @@ export default function TransactionImportModal({ visible, onClose, onSuccess }: 
               <div className="max-h-[360px] overflow-auto">
                 <table className="w-full min-w-[760px] border-collapse text-xs">
                   <thead className="sticky top-0 z-10" style={{ backgroundColor: "var(--bg-color-card)" }}>
-                    <tr>{["行", "日期", "类型", "金额", "分类", "账户", "备注 / 校验"].map((label) => <th key={label} className="border-b px-3 py-2 text-left font-medium" style={{ borderColor: "var(--border-color-light)", color: "var(--text-color-2)" }}>{label}</th>)}</tr>
+                    <tr>{[
+                      { label: "行", align: "text-center" },
+                      { label: "日期", align: "text-center" },
+                      { label: "类型", align: "text-center" },
+                      { label: "金额", align: "text-right" },
+                      { label: "分类", align: "text-left" },
+                      { label: "账户", align: "text-left" },
+                      { label: "备注 / 校验", align: "text-left" },
+                    ].map((column) => <th key={column.label} className={`border-b px-3 py-2 font-medium ${column.align}`} style={{ borderColor: "var(--border-color-light)", color: "var(--text-color-2)" }}>{column.label}</th>)}</tr>
                   </thead>
                   <tbody>
                     {preview.rows.map((row) => (
                       <tr key={row.rowNumber} style={{ backgroundColor: row.errors.length ? "rgba(239, 68, 68, 0.045)" : row.duplicate ? "var(--color-warning-soft)" : undefined }}>
-                        <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}>{row.rowNumber}</td>
-                        <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}>{row.date || "--"}</td>
-                        <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}><Tag size="small" color={row.type === 1 ? "green" : "red"}>{row.type === 1 ? "收入" : "支出"}</Tag></td>
-                        <td className="border-b px-3 py-2 whitespace-nowrap" style={{ borderColor: "var(--border-color-light)" }}>{formatAmount(row.amount)}</td>
+                        <td className="border-b px-3 py-2 text-center" style={{ borderColor: "var(--border-color-light)" }}>{row.rowNumber}</td>
+                        <td className="border-b px-3 py-2 text-center" style={{ borderColor: "var(--border-color-light)" }}>{row.date || "--"}</td>
+                        <td className="border-b px-3 py-2 text-center" style={{ borderColor: "var(--border-color-light)" }}><Tag size="small" color={row.type === 1 ? "green" : "red"}>{row.type === 1 ? "收入" : "支出"}</Tag></td>
+                        <td className="border-b px-3 py-2 text-right whitespace-nowrap" style={{ borderColor: "var(--border-color-light)" }}>{formatAmount(row.amount)}</td>
                         <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}>{row.categoryName || "--"}</td>
                         <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}>{row.accountName || "--"}</td>
                         <td className="border-b px-3 py-2" style={{ borderColor: "var(--border-color-light)" }}>

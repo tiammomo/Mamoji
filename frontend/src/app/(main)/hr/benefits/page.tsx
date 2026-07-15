@@ -285,7 +285,7 @@ export default function BenefitsPage() {
         </div>
       ) : null}
 
-      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="metric-grid metric-wrap-until-xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <ReferenceMetric title="内置参考条目" value={benefitPolicies.length} suffix="项" caption="不是已匹配政策数量" />
         <ReferenceMetric title="官方来源链接" value={model.sourceCount} suffix="个" caption="办理前应逐项打开复核" />
         <ReferenceMetric title="含公开金额示例" value={model.amountExampleCount} suffix="项" caption="不合计为公司机会金额" tone="warning" />

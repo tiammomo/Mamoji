@@ -180,7 +180,7 @@ export default function ApprovalsPage() {
         extra={<div className="flex items-center gap-2">{refreshing ? <Tag color="arcoblue">刷新中</Tag> : null}<Button icon={<IconRefresh />} onClick={() => void loadData(true)}>刷新</Button><Button type="primary" icon={<IconPlus />} onClick={openCreate}>发起申请</Button></div>}
       />
 
-      <div className="metric-grid grid grid-cols-2 xl:grid-cols-4">
+      <div className="metric-grid metric-wrap-until-xl grid grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => (
           <Card className="metric-card" key={card.label} loading={loading} style={{ borderRadius: 14 }}>
             <div className="flex items-start justify-between gap-3">
@@ -207,19 +207,36 @@ export default function ApprovalsPage() {
       <Card className={rows.length === 0 ? "bi-compact-empty" : undefined} title={<div className="flex items-center gap-2"><span>审批台账</span><Tag color="arcoblue">{total}</Tag></div>} style={{ borderRadius: 14 }}>
         {loading ? <Skeleton /> : rows.length === 0 ? <Empty description="暂无匹配审批申请" /> : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] border-collapse text-sm">
-              <thead><tr style={{ backgroundColor: "var(--bg-color-page)" }}>{["申请", "类型", "金额", "申请人 / 审批人", "状态", "提交时间", "操作"].map((label) => <th key={label} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{label}</th>)}</tr></thead>
+            <table className="w-full min-w-[980px] table-fixed border-collapse text-sm">
+              <colgroup>
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "15%" }} />
+                <col style={{ width: "8%" }} />
+              </colgroup>
+              <thead><tr style={{ backgroundColor: "var(--bg-color-page)" }}>{[
+                { label: "申请", align: "text-left" },
+                { label: "类型", align: "text-center" },
+                { label: "金额", align: "text-right" },
+                { label: "申请人 / 审批人", align: "text-center" },
+                { label: "状态", align: "text-center" },
+                { label: "提交时间", align: "text-center" },
+                { label: "操作", align: "text-center" },
+              ].map((column) => <th key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>{column.label}</th>)}</tr></thead>
               <tbody>{rows.map((row) => {
                 const type = requestTypeMeta[row.requestType] || requestTypeMeta.other;
                 const state = statusMeta[row.status] || { label: row.status, color: "gray" };
                 return <tr key={row.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
-                  <td className="px-4 py-4"><button type="button" className="cursor-pointer text-left" onClick={() => void openDetail(row.id)}><div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{row.title}</div><div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>#{row.id}{row.entityId ? ` · ${row.entityType} #${row.entityId}` : ""}</div></button></td>
-                  <td className="px-4 py-4"><Tag color={type.color}>{type.label}</Tag></td>
-                  <td className="px-4 py-4 font-medium whitespace-nowrap" style={{ color: "var(--text-color-1)" }}>{row.amount > 0 ? formatAmount(row.amount) : "--"}</td>
-                  <td className="px-4 py-4 text-xs" style={{ color: "var(--text-color-3)" }}>申请人 #{row.applicantUserId}<br />审批人 {row.assigneeUserId ? `#${row.assigneeUserId}` : "待分配"}</td>
-                  <td className="px-4 py-4"><Tag color={state.color}>{state.label}</Tag></td>
-                  <td className="px-4 py-4 text-xs" style={{ color: "var(--text-color-3)" }}>{formatDateTime(row.createdAt)}</td>
-                  <td className="px-4 py-4"><Button type="text" size="small" icon={<IconEye />} onClick={() => void openDetail(row.id)}>详情</Button></td>
+                  <td className="px-4 py-4 align-middle"><button type="button" className="cursor-pointer text-left" onClick={() => void openDetail(row.id)}><div className="font-semibold" style={{ color: "var(--text-color-1)" }}>{row.title}</div><div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>#{row.id}{row.entityId ? ` · ${row.entityType} #${row.entityId}` : ""}</div></button></td>
+                  <td className="px-4 py-4 text-center align-middle"><Tag color={type.color}>{type.label}</Tag></td>
+                  <td className="px-4 py-4 text-right font-medium whitespace-nowrap align-middle" style={{ color: "var(--text-color-1)" }}>{row.amount > 0 ? formatAmount(row.amount) : "--"}</td>
+                  <td className="px-4 py-4 text-center text-xs align-middle" style={{ color: "var(--text-color-3)" }}>申请人 #{row.applicantUserId}<br />审批人 {row.assigneeUserId ? `#${row.assigneeUserId}` : "待分配"}</td>
+                  <td className="px-4 py-4 text-center align-middle"><Tag color={state.color}>{state.label}</Tag></td>
+                  <td className="px-4 py-4 text-center text-xs align-middle" style={{ color: "var(--text-color-3)" }}>{formatDateTime(row.createdAt)}</td>
+                  <td className="px-4 py-4 text-center align-middle"><Button type="text" size="small" icon={<IconEye />} onClick={() => void openDetail(row.id)}>详情</Button></td>
                 </tr>;
               })}</tbody>
             </table>

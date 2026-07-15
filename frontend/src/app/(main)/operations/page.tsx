@@ -421,7 +421,7 @@ export default function OperationsPage() {
         />
       )}
 
-      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="metric-grid metric-wrap-until-xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         {metricCards.map((card) => (
           <Card className="metric-card" key={card.label} style={{ borderRadius: 12, minHeight: 136 }}>
             <div className="flex h-full min-h-[96px] flex-col justify-between">

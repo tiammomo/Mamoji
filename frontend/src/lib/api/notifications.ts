@@ -2,9 +2,9 @@ import client from "./client";
 import type { NotificationItem, NotificationPreference, NotificationSummary, PaginatedResponse } from "@/lib/types";
 
 export const notificationApi = {
-  list: (params?: { page?: number; size?: number; unreadOnly?: boolean }) =>
-    client.get<PaginatedResponse<NotificationItem>>("/notifications", { params }),
-  summary: () => client.get<NotificationSummary>("/notifications/summary"),
+  list: (params?: { page?: number; size?: number; unreadOnly?: boolean }, signal?: AbortSignal) =>
+    client.get<PaginatedResponse<NotificationItem>>("/notifications", { params, signal }),
+  summary: (signal?: AbortSignal) => client.get<NotificationSummary>("/notifications/summary", { signal }),
   preference: () => client.get<NotificationPreference>("/notifications/preferences"),
   updatePreference: (data: Partial<NotificationPreference>) =>
     client.put<NotificationPreference>("/notifications/preferences", data),

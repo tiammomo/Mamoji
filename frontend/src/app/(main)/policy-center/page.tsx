@@ -681,7 +681,7 @@ export default function PolicyCenterPage() {
                       <div className="text-base font-semibold" style={{ color: "var(--text-color-1)" }}>{rule.item}</div>
                       <Tag color="arcoblue">{rule.effectivePeriod}</Tag>
                     </div>
-                    <div className="bi-segment-grid mt-3 grid grid-cols-1 sm:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+                    <div className="bi-segment-grid bi-segment-four mt-3 grid grid-cols-1 sm:grid-cols-[repeat(2,minmax(0,1fr))] 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
                       {[
                         { label: "基数上下限", value: rule.baseRange },
                         { label: "公司承担比例", value: rule.companyRate },

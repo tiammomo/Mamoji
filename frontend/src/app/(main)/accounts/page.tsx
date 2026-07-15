@@ -33,6 +33,7 @@ import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import RiskBadge from "@/components/common/RiskBadge";
 import AccountReconciliationModal from "@/components/accounts/AccountReconciliationModal";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { accountApi } from "@/lib/api/accounts";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
@@ -119,6 +120,8 @@ export default function AccountsPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [reconcilingAccount, setReconcilingAccount] = useState<Account | null>(null);
   const [form] = Form.useForm();
+  const saveAction = useAsyncAction<"save">();
+  const saving = saveAction.isRunning("save");
   const { accounts, summary } = viewData;
 
   const refreshData = async (quiet = false) => {
@@ -255,30 +258,32 @@ export default function AccountsPage() {
   };
 
   const handleSubmit = async (values: AccountFormValues) => {
-    try {
-      const payload: CreateAccountDTO = {
-        ...values,
-        balance: Number(values.balance || 0),
-        availableBalance: Number(values.availableBalance ?? values.balance ?? 0),
-        creditLimit: Number(values.creditLimit || 0),
-        frozenAmount: Number(values.frozenAmount || 0),
-        status: Number(values.status ?? 1),
-        includeInNetWorth: values.includeInNetWorth !== false && values.includeInNetWorth !== "false",
-      };
-      if (editingId) {
-        await accountApi.update(editingId, payload);
-        Message.success("账户已更新");
-      } else {
-        await accountApi.create(payload);
-        Message.success("账户已创建");
+    await saveAction.run("save", async () => {
+      try {
+        const payload: CreateAccountDTO = {
+          ...values,
+          balance: Number(values.balance || 0),
+          availableBalance: Number(values.availableBalance ?? values.balance ?? 0),
+          creditLimit: Number(values.creditLimit || 0),
+          frozenAmount: Number(values.frozenAmount || 0),
+          status: Number(values.status ?? 1),
+          includeInNetWorth: values.includeInNetWorth !== false && values.includeInNetWorth !== "false",
+        };
+        if (editingId) {
+          await accountApi.update(editingId, payload);
+          Message.success("账户已更新");
+        } else {
+          await accountApi.create(payload);
+          Message.success("账户已创建");
+        }
+        setModalVisible(false);
+        form.resetFields();
+        setEditingId(null);
+        await refreshData(true);
+      } catch {
+        Message.error("账户保存失败");
       }
-      setModalVisible(false);
-      form.resetFields();
-      setEditingId(null);
-      await refreshData(true);
-    } catch {
-      Message.error("账户保存失败");
-    }
+    });
   };
 
   const handleDelete = (id: number) => {
@@ -398,7 +403,7 @@ export default function AccountsPage() {
         ) : accountTypeStats.length === 0 ? (
           <div className="text-sm" style={{ color: "var(--text-color-3)" }}>暂无账户结构</div>
         ) : (
-          <div className="bi-segment-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="bi-segment-grid bi-segment-accounts grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
             {accountTypeStats.map((row) => {
               const meta = accountTypeMeta[row.type] || { label: row.type, icon: <IconSafe />, color: "gray" };
               return (
@@ -436,14 +441,14 @@ export default function AccountsPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1080px] table-fixed border-collapse text-sm">
             <colgroup>
-              <col style={{ width: "23%" }} />
-              <col style={{ width: "12%" }} />
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "10%" }} />
               <col style={{ width: "14%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "11%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "10%" }} />
               <col style={{ width: "7%" }} />
-              <col style={{ width: "8%" }} />
+              <col style={{ width: "7%" }} />
             </colgroup>
             <thead>
               <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
@@ -563,8 +568,13 @@ export default function AccountsPage() {
       <Modal
         title={editingId ? "编辑资金账户" : "新增资金账户"}
         visible={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          if (!saving) setModalVisible(false);
+        }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ width: 760 }}
       >
         <Form form={form} layout="vertical" onSubmit={handleSubmit}>

@@ -33,6 +33,7 @@ import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import { receiptApi } from "@/lib/api/receipts";
 import { approvalApi } from "@/lib/api/approvals";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 import type { ReceiptAuditLog, ReceiptPayload, ReceiptQuery, ReceiptSummary, ReceiptVoucher } from "@/lib/types";
@@ -151,11 +152,12 @@ export default function ReceiptsPage() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingVoucher, setEditingVoucher] = useState<ReceiptVoucher | null>(null);
   const [auditLogs, setAuditLogs] = useState<ReceiptAuditLog[]>([]);
-  const [workflowUpdatingId, setWorkflowUpdatingId] = useState<number | null>(null);
   const [attachmentOpeningId, setAttachmentOpeningId] = useState<number | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [batchUploading, setBatchUploading] = useState(false);
   const [form] = Form.useForm();
+  const action = useAsyncAction<string>();
+  const saving = action.isRunning("save");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -289,85 +291,84 @@ export default function ReceiptsPage() {
   };
 
   const handleSubmit = async (values: ReceiptPayload) => {
-    try {
-      const payload: ReceiptPayload = {
-        ...values,
-        amount: Number(values.amount || 0),
-        taxAmount: Number(values.taxAmount || 0),
-        transactionId: values.transactionId ? Number(values.transactionId) : null,
-      };
-      if (editingVoucher) {
-        await receiptApi.update(editingVoucher.id, {
-          ...payload,
-          fileName: selectedFile?.name || payload.fileName,
-          fileSize: selectedFile?.size || payload.fileSize,
-          fileType: selectedFile?.type || payload.fileType,
-        });
-        Message.success("凭证已更新");
-      } else if (selectedFile) {
-        await receiptApi.upload(selectedFile, payload);
-        Message.success("凭证已上传");
-      } else {
-        await receiptApi.create(payload);
-        Message.success("凭证已创建");
+    await action.run("save", async () => {
+      try {
+        const payload: ReceiptPayload = {
+          ...values,
+          amount: Number(values.amount || 0),
+          taxAmount: Number(values.taxAmount || 0),
+          transactionId: values.transactionId ? Number(values.transactionId) : null,
+        };
+        if (editingVoucher) {
+          await receiptApi.update(editingVoucher.id, {
+            ...payload,
+            fileName: selectedFile?.name || payload.fileName,
+            fileSize: selectedFile?.size || payload.fileSize,
+            fileType: selectedFile?.type || payload.fileType,
+          });
+          Message.success("凭证已更新");
+        } else if (selectedFile) {
+          await receiptApi.upload(selectedFile, payload);
+          Message.success("凭证已上传");
+        } else {
+          await receiptApi.create(payload);
+          Message.success("凭证已创建");
+        }
+        setModalVisible(false);
+        form.resetFields();
+        setSelectedFile(null);
+        await loadData(filters, true);
+      } catch {
+        Message.error("凭证保存失败");
       }
-      setModalVisible(false);
-      form.resetFields();
-      setSelectedFile(null);
-      await loadData(filters, true);
-    } catch {
-      Message.error("凭证保存失败");
-    }
+    });
   };
 
   const updateStatus = async (voucher: ReceiptVoucher, status: string) => {
-    try {
-      setWorkflowUpdatingId(voucher.id);
-      await receiptApi.update(voucher.id, {
-        status,
-        invoiceCheckStatus: ["sales_invoice", "purchase_invoice"].includes(voucher.voucherType) ? "verified" : voucher.invoiceCheckStatus,
-        deductionStatus: voucher.voucherType === "purchase_invoice" && voucher.deductionStatus === "pending" ? "deductible" : voucher.deductionStatus,
-      });
-      Message.success("状态已更新");
-      await loadData(filters, true);
-    } catch {
-      Message.error("状态更新失败");
-    } finally {
-      setWorkflowUpdatingId(null);
-    }
+    await action.run(`workflow:${voucher.id}`, async () => {
+      try {
+        await receiptApi.update(voucher.id, {
+          status,
+          invoiceCheckStatus: ["sales_invoice", "purchase_invoice"].includes(voucher.voucherType) ? "verified" : voucher.invoiceCheckStatus,
+          deductionStatus: voucher.voucherType === "purchase_invoice" && voucher.deductionStatus === "pending" ? "deductible" : voucher.deductionStatus,
+        });
+        Message.success("状态已更新");
+        await loadData(filters, true);
+      } catch {
+        Message.error("状态更新失败");
+      }
+    });
   };
 
   const updateWorkflow = async (voucher: ReceiptVoucher, payload: Partial<ReceiptPayload>, successMessage: string) => {
-    try {
-      setWorkflowUpdatingId(voucher.id);
-      await receiptApi.update(voucher.id, payload);
-      Message.success(successMessage);
-      await loadData(filters, true);
-    } catch {
-      Message.error("流程状态更新失败");
-    } finally {
-      setWorkflowUpdatingId(null);
-    }
+    await action.run(`workflow:${voucher.id}`, async () => {
+      try {
+        await receiptApi.update(voucher.id, payload);
+        Message.success(successMessage);
+        await loadData(filters, true);
+      } catch {
+        Message.error("流程状态更新失败");
+      }
+    });
   };
 
   const submitApproval = async (voucher: ReceiptVoucher) => {
-    try {
-      setWorkflowUpdatingId(voucher.id);
-      await approvalApi.create({
-        requestType: voucher.voucherType === "reimbursement" ? "reimbursement" : "payment",
-        entityType: "receipt_voucher",
-        entityId: voucher.id,
-        title: `${voucher.voucherType === "reimbursement" ? "报销" : "付款"}审批：${voucher.title}`,
-        amount: Number(voucher.amount || 0),
-        description: [voucher.counterparty, voucher.businessPurpose, voucher.voucherNo].filter(Boolean).join(" · "),
-      });
-      Message.success("审批申请已提交，可在审批中心跟踪进度");
-      await loadData(filters, true);
-    } catch {
-      Message.error("审批申请提交失败，请检查是否已有待处理申请");
-    } finally {
-      setWorkflowUpdatingId(null);
-    }
+    await action.run(`workflow:${voucher.id}`, async () => {
+      try {
+        await approvalApi.create({
+          requestType: voucher.voucherType === "reimbursement" ? "reimbursement" : "payment",
+          entityType: "receipt_voucher",
+          entityId: voucher.id,
+          title: `${voucher.voucherType === "reimbursement" ? "报销" : "付款"}审批：${voucher.title}`,
+          amount: Number(voucher.amount || 0),
+          description: [voucher.counterparty, voucher.businessPurpose, voucher.voucherNo].filter(Boolean).join(" · "),
+        });
+        Message.success("审批申请已提交，可在审批中心跟踪进度");
+        await loadData(filters, true);
+      } catch {
+        Message.error("审批申请提交失败，请检查是否已有待处理申请");
+      }
+    });
   };
 
   const openAttachment = async (voucher: ReceiptVoucher) => {
@@ -771,7 +772,7 @@ export default function ReceiptsPage() {
                             type="text"
                             size="mini"
                             title="核验"
-                            loading={workflowUpdatingId === voucher.id}
+                            loading={action.isRunning(`workflow:${voucher.id}`)}
                             icon={<IconCheckCircle />}
                             onClick={() => updateStatus(voucher, voucher.transactionId ? "linked" : "verified")}
                           />
@@ -781,7 +782,7 @@ export default function ReceiptsPage() {
                             type="text"
                             size="mini"
                             title="提交审批"
-                            loading={workflowUpdatingId === voucher.id}
+                            loading={action.isRunning(`workflow:${voucher.id}`)}
                             icon={<IconCheckCircle />}
                             onClick={() => submitApproval(voucher)}
                           />
@@ -794,7 +795,7 @@ export default function ReceiptsPage() {
                             type="text"
                             size="mini"
                             title="会计过账"
-                            loading={workflowUpdatingId === voucher.id}
+                            loading={action.isRunning(`workflow:${voucher.id}`)}
                             icon={<IconFile />}
                             onClick={() => updateWorkflow(voucher, { accountingStatus: "posted" }, "会计凭证已过账")}
                           />
@@ -835,8 +836,13 @@ export default function ReceiptsPage() {
       <Modal
         title={editingVoucher ? "编辑凭证" : "新增凭证"}
         visible={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          if (!saving) setModalVisible(false);
+        }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ width: 720 }}
       >
         <Form form={form} layout="vertical" onSubmit={handleSubmit}>

@@ -22,6 +22,7 @@ import BudgetProgress from "@/components/common/BudgetProgress";
 import RiskBadge from "@/components/common/RiskBadge";
 import EmptyState from "@/components/common/EmptyState";
 import AppPagination from "@/components/common/AppPagination";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { formatAmount, formatDateTime, formatPercent } from "@/lib/utils/format";
 import type { Budget, BudgetStatus, CreateBudgetDTO, RiskLevel } from "@/lib/types";
 
@@ -167,6 +168,8 @@ export default function BudgetsPage() {
   const [budgetTypeFilter, setBudgetTypeFilter] = useState<BudgetTypeFilter>("all");
   const [quickView, setQuickView] = useState<QuickView>("all");
   const [form] = Form.useForm();
+  const saveAction = useAsyncAction<"save">();
+  const saving = saveAction.isRunning("save");
   const monthRange = useMemo(() => currentMonthRange(), []);
   const visibleBudgetTypeOptions = useMemo(
     () => isHousehold
@@ -361,30 +364,32 @@ export default function BudgetsPage() {
   };
 
   const handleSubmit = async (values: BudgetFormValues) => {
-    try {
-      const data = {
-        name: values.name,
-        amount: Number(values.amount || 0),
-        startDate: String(values.startDate || ""),
-        endDate: String(values.endDate || ""),
-        warningThreshold: Number(values.warningThreshold ?? 80),
-        categoryId: values.categoryId || undefined,
-      };
+    await saveAction.run("save", async () => {
+      try {
+        const data = {
+          name: values.name,
+          amount: Number(values.amount || 0),
+          startDate: String(values.startDate || ""),
+          endDate: String(values.endDate || ""),
+          warningThreshold: Number(values.warningThreshold ?? 80),
+          categoryId: values.categoryId || undefined,
+        };
 
-      if (editingId) {
-        await budgetApi.update(editingId, { ...data, status: values.status });
-        Message.success("更新成功");
-      } else {
-        await budgetApi.create(data);
-        Message.success("创建成功");
+        if (editingId) {
+          await budgetApi.update(editingId, { ...data, status: values.status });
+          Message.success("更新成功");
+        } else {
+          await budgetApi.create(data);
+          Message.success("创建成功");
+        }
+        setModalVisible(false);
+        form.resetFields();
+        setEditingId(null);
+        await fetchData();
+      } catch {
+        Message.error("操作失败");
       }
-      setModalVisible(false);
-      form.resetFields();
-      setEditingId(null);
-      await fetchData();
-    } catch {
-      Message.error("操作失败");
-    }
+    });
   };
 
   const handleDelete = (id: number) => {
@@ -445,7 +450,7 @@ export default function BudgetsPage() {
         }
       />
 
-      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
+      <div className="metric-grid metric-wrap-until-lg grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
           <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
             <div className="flex h-[92px] flex-col justify-between">
@@ -513,7 +518,7 @@ export default function BudgetsPage() {
           </Select>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="filter-secondary-row filter-secondary-row-three mt-3">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center md:w-[356px]">
             <DatePicker
               format="YYYY-MM-DD"
@@ -580,12 +585,12 @@ export default function BudgetsPage() {
                         setSelectedBudget(budget);
                       }
                     }}
-                    className="w-full cursor-pointer border-b px-4 py-4 text-left transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
+                    className="w-full cursor-pointer border-b px-4 text-left transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
                     style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-color-card)" }}
                   >
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(260px,1.15fr)_minmax(260px,1.1fr)_minmax(160px,0.7fr)] xl:items-center">
-                      <div className="min-w-0 border-b pb-3 xl:border-b-0 xl:border-r xl:pb-0 xl:pr-4" style={{ borderColor: "var(--border-color-light)" }}>
-                        <div className="flex items-start gap-3">
+                    <div className="budget-ledger-row grid grid-cols-1 xl:grid-cols-[minmax(220px,1fr)_minmax(260px,1.15fr)_minmax(260px,1.1fr)_minmax(160px,0.7fr)]">
+                      <div className="budget-ledger-cell">
+                        <div className="flex h-full items-center gap-3">
                           <span
                             className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl"
                             style={{ backgroundColor: "var(--color-fill-1)", color: "var(--color-primary)" }}
@@ -604,7 +609,7 @@ export default function BudgetsPage() {
                         </div>
                       </div>
 
-                      <div className="bi-segment-grid grid grid-cols-3">
+                      <div className="budget-ledger-cell budget-ledger-metrics bi-segment-grid grid grid-cols-3">
                         <div className="rounded-lg px-3 py-2" style={{ backgroundColor: "var(--bg-color-page)" }}>
                           <div className="text-xs" style={{ color: "var(--text-color-3)" }}>预算</div>
                           <div className="mt-1 truncate font-semibold" style={{ color: "var(--text-color-1)" }}>
@@ -625,37 +630,39 @@ export default function BudgetsPage() {
                         </div>
                       </div>
 
-                      <div className="min-w-0">
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <span className="text-xs" style={{ color: "var(--text-color-3)" }}>执行进度</span>
-                          <span className="text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>
-                            {formatPercent(budget.usageRate)}
-                          </span>
-                        </div>
-                        <BudgetProgress
-                          spent={budget.spent}
-                          amount={budget.amount}
-                          usageRate={budget.usageRate}
-                          warningThreshold={budget.warningThreshold}
-                          riskLevel={budget.riskLevel}
-                          showLabel={false}
-                        />
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
-                          <div>
-                            {formatIsoDate(budget.startDate)} - {formatIsoDate(budget.endDate)}
+                      <div className="budget-ledger-cell">
+                        <div className="flex h-full min-w-0 flex-col justify-center">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <span className="text-xs" style={{ color: "var(--text-color-3)" }}>执行进度</span>
+                            <span className="text-sm font-semibold" style={{ color: "var(--text-color-1)" }}>
+                              {formatPercent(budget.usageRate)}
+                            </span>
                           </div>
-                          <div className="text-right">
-                            时间 {formatPercent(periodProgress)}
+                          <BudgetProgress
+                            spent={budget.spent}
+                            amount={budget.amount}
+                            usageRate={budget.usageRate}
+                            warningThreshold={budget.warningThreshold}
+                            riskLevel={budget.riskLevel}
+                            showLabel={false}
+                          />
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ color: "var(--text-color-3)" }}>
+                            <div>
+                              {formatIsoDate(budget.startDate)} - {formatIsoDate(budget.endDate)}
+                            </div>
+                            <div className="text-right">
+                              时间 {formatPercent(periodProgress)}
+                            </div>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-3 xl:flex-col xl:items-end">
-                        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                      <div className="budget-ledger-cell budget-ledger-status flex items-center justify-between gap-3 xl:flex-col xl:items-center xl:justify-center">
+                        <div className="flex flex-wrap items-center gap-2 xl:justify-center">
                           <Tag color={status.color}>{status.label}</Tag>
                           <RiskBadge level={budget.riskLevel} />
                         </div>
-                        <div className="text-left text-xs xl:text-right">
+                        <div className="text-left text-xs xl:text-center">
                           <div style={{ color: "var(--text-color-3)" }}>{getDeadlineText(budget)}</div>
                           <div className="mt-1" style={{ color: budget.warningReached ? "var(--color-warning)" : "var(--text-color-4)" }}>
                             阈值 {budget.warningThreshold}% · {getPaceText(budget)}
@@ -801,10 +808,14 @@ export default function BudgetsPage() {
         title={editingId ? "编辑预算" : t("new")}
         visible={modalVisible}
         onCancel={() => {
+          if (saving) return;
           setModalVisible(false);
           setEditingId(null);
         }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ borderRadius: 16 }}
         unmountOnExit
       >

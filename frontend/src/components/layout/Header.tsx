@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dropdown, Avatar, Badge, Tooltip, Input, Empty, Message, Spin, Tag } from "@arco-design/web-react";
 import {
   IconMenu,
@@ -24,7 +24,7 @@ import type { NotificationItem } from "@/lib/types";
 import { activeNavigationItem, flattenNavigation, navigationFor } from "./navigation";
 
 export default function Header() {
-  const { toggleSidebar, theme, setTheme, locale, setLocale, activeSubjectType } = useAppStore();
+  const { toggleSidebar, theme, setTheme, locale, setLocale, activeCompanyId, activeSubjectType } = useAppStore();
   const { user, logout } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
@@ -36,8 +36,23 @@ export default function Header() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsFailed, setNotificationsFailed] = useState(false);
-  const [businessSearchResults, setBusinessSearchResults] = useState<GlobalSearchResult[]>([]);
-  const [businessSearchLoading, setBusinessSearchLoading] = useState(false);
+  const [businessSearchState, setBusinessSearchState] = useState<{
+    requestKey: string;
+    results: GlobalSearchResult[];
+    loading: boolean;
+  }>({ requestKey: "", results: [], loading: false });
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [notificationActionId, setNotificationActionId] = useState<number | null>(null);
+  const [markingAllNotificationsRead, setMarkingAllNotificationsRead] = useState(false);
+  const logoutPendingRef = useRef(false);
+  const notificationDataRevisionRef = useRef(0);
+  const notificationActionIdsRef = useRef(new Set<number>());
+  const markAllNotificationsPendingRef = useRef(false);
+  const notificationListControllerRef = useRef<AbortController | null>(null);
+  const notificationSummaryRequestRef = useRef<{
+    controller: AbortController;
+    promise: Promise<void>;
+  } | null>(null);
   const navigationGroups = useMemo(
     () => navigationFor(activeSubjectType, user?.role === 1),
     [activeSubjectType, user?.role]
@@ -45,6 +60,12 @@ export default function Header() {
   const navigationItems = useMemo(() => flattenNavigation(navigationGroups), [navigationGroups]);
   const currentNavigationItem = activeNavigationItem(pathname, navigationItems);
   const normalizedSearch = globalSearch.trim().toLocaleLowerCase();
+  const businessSearchRequestKey = `${activeCompanyId ?? "unscoped"}:${globalSearch.trim()}`;
+  const businessSearchResults = businessSearchState.requestKey === businessSearchRequestKey
+    ? businessSearchState.results
+    : [];
+  const businessSearchLoading = businessSearchState.requestKey === businessSearchRequestKey
+    && businessSearchState.loading;
   const searchResults = navigationItems.filter((item) => {
     if (!normalizedSearch) return true;
     const label = t(`nav.${item.labelKey}`).toLocaleLowerCase();
@@ -57,8 +78,16 @@ export default function Header() {
   const avatarColor = user?.avatar?.split("|")[1] || "#6366f1";
 
   const handleLogout = async () => {
-    await logout();
-    router.push("/login");
+    if (logoutPendingRef.current) return;
+    logoutPendingRef.current = true;
+    setLoggingOut(true);
+    try {
+      await logout();
+      router.replace("/login");
+    } finally {
+      logoutPendingRef.current = false;
+      setLoggingOut(false);
+    }
   };
 
   const toggleTheme = () => {
@@ -88,53 +117,98 @@ export default function Header() {
     setGlobalSearch("");
   };
 
-  const loadNotificationSummary = useCallback(async () => {
-    try {
-      const res = await notificationApi.summary();
-      setUnreadCount(res.data.unreadCount || 0);
-    } catch {
-      setUnreadCount(0);
+  const loadNotificationSummary = useCallback(() => {
+    if (markAllNotificationsPendingRef.current || notificationActionIdsRef.current.size > 0) {
+      return Promise.resolve();
     }
+    const pending = notificationSummaryRequestRef.current;
+    if (pending) return pending.promise;
+
+    const controller = new AbortController();
+    const promise = (async () => {
+      try {
+        const res = await notificationApi.summary(controller.signal);
+        if (!controller.signal.aborted) {
+          setUnreadCount(res.data.unreadCount || 0);
+        }
+      } catch {
+        // Keep the last known count on transient polling failures.
+      }
+    })();
+    notificationSummaryRequestRef.current = { controller, promise };
+    const release = () => {
+      if (notificationSummaryRequestRef.current?.promise === promise) {
+        notificationSummaryRequestRef.current = null;
+      }
+    };
+    void promise.then(release, release);
+    return promise;
   }, []);
 
   const loadNotifications = useCallback(async () => {
+    if (markAllNotificationsPendingRef.current || notificationActionIdsRef.current.size > 0) return;
+    notificationListControllerRef.current?.abort();
+    const controller = new AbortController();
+    const revision = notificationDataRevisionRef.current;
+    notificationListControllerRef.current = controller;
     setNotificationsLoading(true);
     setNotificationsFailed(false);
     try {
-      const [listRes, summaryRes] = await Promise.all([
-        notificationApi.list({ page: 0, size: 8 }),
-        notificationApi.summary(),
+      const [listRes] = await Promise.all([
+        notificationApi.list({ page: 0, size: 8 }, controller.signal),
+        loadNotificationSummary(),
       ]);
-      setNotifications(listRes.data.content);
-      setUnreadCount(summaryRes.data.unreadCount || 0);
+      if (!controller.signal.aborted && revision === notificationDataRevisionRef.current) {
+        setNotifications(listRes.data.content);
+      }
     } catch {
-      setNotificationsFailed(true);
+      if (!controller.signal.aborted && revision === notificationDataRevisionRef.current) {
+        setNotificationsFailed(true);
+      }
     } finally {
-      setNotificationsLoading(false);
+      if (notificationListControllerRef.current === controller) {
+        notificationListControllerRef.current = null;
+        setNotificationsLoading(false);
+      }
     }
-  }, []);
+  }, [loadNotificationSummary]);
 
   useEffect(() => {
+    const refreshWhenAvailable = () => {
+      if (document.visibilityState !== "hidden" && navigator.onLine) {
+        void loadNotificationSummary();
+      }
+    };
     const starter = window.setTimeout(() => {
-      void loadNotificationSummary();
+      refreshWhenAvailable();
     }, 0);
     const timer = window.setInterval(() => {
-      void loadNotificationSummary();
+      refreshWhenAvailable();
     }, 45000);
+    document.addEventListener("visibilitychange", refreshWhenAvailable);
+    window.addEventListener("online", refreshWhenAvailable);
     return () => {
       window.clearTimeout(starter);
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenAvailable);
+      window.removeEventListener("online", refreshWhenAvailable);
+      notificationSummaryRequestRef.current?.controller.abort();
+      notificationSummaryRequestRef.current = null;
     };
   }, [loadNotificationSummary]);
 
   useEffect(() => {
     if (!notificationVisible) {
+      notificationListControllerRef.current?.abort();
       return;
     }
     const timer = window.setTimeout(() => {
       void loadNotifications();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      notificationListControllerRef.current?.abort();
+    };
   }, [notificationVisible, loadNotifications]);
 
   useEffect(() => {
@@ -149,26 +223,39 @@ export default function Header() {
   }, []);
 
   useEffect(() => {
-    if (normalizedSearch.length < 2) return;
-    let cancelled = false;
+    if (!searchVisible || !activeCompanyId || normalizedSearch.length < 2) return;
+
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
-      setBusinessSearchLoading(true);
+      setBusinessSearchState({ requestKey: businessSearchRequestKey, results: [], loading: true });
       try {
-        const response = await globalSearchApi.search(globalSearch.trim());
-        if (!cancelled) setBusinessSearchResults(response.data.results);
+        const response = await globalSearchApi.search(globalSearch.trim(), 5, controller.signal);
+        if (!controller.signal.aborted) {
+          setBusinessSearchState({
+            requestKey: businessSearchRequestKey,
+            results: response.data.results,
+            loading: false,
+          });
+        }
       } catch {
-        if (!cancelled) setBusinessSearchResults([]);
-      } finally {
-        if (!cancelled) setBusinessSearchLoading(false);
+        if (!controller.signal.aborted) {
+          setBusinessSearchState({ requestKey: businessSearchRequestKey, results: [], loading: false });
+        }
       }
     }, 260);
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
+      controller.abort();
     };
-  }, [globalSearch, normalizedSearch]);
+  }, [activeCompanyId, businessSearchRequestKey, globalSearch, normalizedSearch, searchVisible]);
 
   const openNotification = async (item: NotificationItem) => {
+    if (markAllNotificationsPendingRef.current || notificationActionIdsRef.current.size > 0) return;
+    notificationActionIdsRef.current.add(item.id);
+    notificationDataRevisionRef.current += 1;
+    notificationSummaryRequestRef.current?.controller.abort();
+    notificationSummaryRequestRef.current = null;
+    setNotificationActionId(item.id);
     try {
       if (!item.readAt) {
         await notificationApi.markRead(item.id);
@@ -185,16 +272,28 @@ export default function Header() {
       }
     } catch {
       Message.error(t("common.notificationActionFailed"));
+    } finally {
+      notificationActionIdsRef.current.delete(item.id);
+      setNotificationActionId((current) => current === item.id ? null : current);
     }
   };
 
   const markAllNotificationsRead = async () => {
+    if (markAllNotificationsPendingRef.current || notificationActionIdsRef.current.size > 0) return;
+    markAllNotificationsPendingRef.current = true;
+    notificationDataRevisionRef.current += 1;
+    notificationSummaryRequestRef.current?.controller.abort();
+    notificationSummaryRequestRef.current = null;
+    setMarkingAllNotificationsRead(true);
     try {
       await notificationApi.markAllRead();
       setUnreadCount(0);
       setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })));
     } catch {
       Message.error(t("common.notificationActionFailed"));
+    } finally {
+      markAllNotificationsPendingRef.current = false;
+      setMarkingAllNotificationsRead(false);
     }
   };
 
@@ -351,7 +450,13 @@ export default function Header() {
             {t("common.unreadCount", { count: unreadCount })}
           </div>
         </div>
-        <Button size="small" type="text" disabled={unreadCount === 0} onClick={markAllNotificationsRead}>
+        <Button
+          size="small"
+          type="text"
+          loading={markingAllNotificationsRead}
+          disabled={unreadCount === 0 || notificationActionId !== null}
+          onClick={markAllNotificationsRead}
+        >
           {t("common.markAllRead")}
         </Button>
       </div>
@@ -374,7 +479,9 @@ export default function Header() {
             <button
               key={item.id}
               type="button"
-              className="block w-full border-b px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              disabled={notificationActionId !== null || markingAllNotificationsRead}
+              aria-busy={notificationActionId === item.id}
+              className="block w-full border-b px-4 py-3 text-left transition-colors hover:bg-black/5 disabled:cursor-wait disabled:opacity-60 dark:hover:bg-white/5"
               style={{
                 borderColor: "var(--border-color)",
                 background: item.readAt ? "transparent" : "rgba(22, 93, 255, 0.06)",
@@ -543,10 +650,12 @@ export default function Header() {
               </button>
               <button
                 type="button"
-                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left text-red-500 hover:bg-black/5 dark:hover:bg-white/5"
+                disabled={loggingOut}
+                aria-busy={loggingOut}
+                className="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-4 py-2 text-left text-red-500 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-white/5"
                 onClick={handleLogout}
               >
-                <IconPoweroff />
+                {loggingOut ? <Spin size={14} /> : <IconPoweroff />}
                 <span>{t("auth.logout")}</span>
               </button>
             </div>

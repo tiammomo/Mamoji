@@ -211,7 +211,7 @@ export default function PerformancePage() {
         </div>
       ) : null}
 
-      <div className="metric-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="metric-grid metric-wrap-until-xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="候选人员范围"
           value={eligibleEmployees.length}

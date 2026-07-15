@@ -7,6 +7,10 @@ import { useCategoryStore } from "./categoryStore";
 const TOKEN_KEY = "token";
 const TOKEN_EXPIRES_AT_KEY = "tokenExpiresAt";
 
+let authRevision = 0;
+let currentUserRequest: { token: string; promise: Promise<void> } | null = null;
+let logoutRequest: { token: string | null; promise: Promise<void> } | null = null;
+
 const isBrowser = () => typeof window !== "undefined";
 
 const clearStoredSession = () => {
@@ -70,52 +74,112 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loading: true,
 
   login: async (data) => {
-    const res = await authApi.login(data);
-    const { token, tokenExpiresAt, user } = res.data;
-    resetUserContext();
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
-    set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
+    const revision = ++authRevision;
+    try {
+      const res = await authApi.login(data);
+      if (revision !== authRevision) return;
+      const { token, tokenExpiresAt, user } = res.data;
+      resetUserContext();
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
+      set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
+    } catch (error) {
+      if (revision === authRevision) {
+        set({ loading: false });
+      }
+      throw error;
+    }
   },
 
   register: async (data) => {
-    const res = await authApi.register(data);
-    const { token, tokenExpiresAt, user } = res.data;
-    resetUserContext();
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
-    set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
-  },
-
-  logout: async () => {
-    const token = get().token;
+    const revision = ++authRevision;
     try {
-      if (token) {
-        await authApi.logout();
-      }
-    } finally {
-      clearStoredSession();
+      const res = await authApi.register(data);
+      if (revision !== authRevision) return;
+      const { token, tokenExpiresAt, user } = res.data;
       resetUserContext();
-      set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
+      set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
+    } catch (error) {
+      if (revision === authRevision) {
+        set({ loading: false });
+      }
+      throw error;
     }
   },
 
-  fetchCurrentUser: async () => {
+  logout: () => {
+    const token = get().token;
+    if (logoutRequest?.token === token) {
+      return logoutRequest.promise;
+    }
+
+    const revision = ++authRevision;
+    const promise = (async () => {
+      try {
+        if (token) {
+          await authApi.logout();
+        }
+      } catch {
+        // Local logout must still succeed when the server is unavailable or the
+        // session has already expired.
+      } finally {
+        if (revision === authRevision) {
+          clearStoredSession();
+          resetUserContext();
+          set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+        }
+      }
+    })();
+    logoutRequest = { token, promise };
+    const release = () => {
+      if (logoutRequest?.promise === promise) {
+        logoutRequest = null;
+      }
+    };
+    void promise.then(release, release);
+    return promise;
+  },
+
+  fetchCurrentUser: () => {
     const { token, tokenExpiresAt } = get();
     if (!token || isExpired(tokenExpiresAt)) {
-      clearStoredSession();
-      resetUserContext();
-      set({ loading: false });
-      return;
-    }
-    try {
-      const res = await authApi.me();
-      set({ user: res.data, isAuthenticated: true, loading: false });
-    } catch {
+      authRevision += 1;
       clearStoredSession();
       resetUserContext();
       set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+      return Promise.resolve();
     }
+
+    if (currentUserRequest?.token === token) {
+      return currentUserRequest.promise;
+    }
+
+    const revision = authRevision;
+    const promise = (async () => {
+      try {
+        const res = await authApi.me();
+        if (revision === authRevision && get().token === token) {
+          set({ user: res.data, isAuthenticated: true, loading: false });
+        }
+      } catch {
+        if (revision === authRevision && get().token === token) {
+          authRevision += 1;
+          clearStoredSession();
+          resetUserContext();
+          set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+        }
+      }
+    })();
+    currentUserRequest = { token, promise };
+    const release = () => {
+      if (currentUserRequest?.promise === promise) {
+        currentUserRequest = null;
+      }
+    };
+    void promise.then(release, release);
+    return promise;
   },
 
   updateUser: (user) => set({ user }),

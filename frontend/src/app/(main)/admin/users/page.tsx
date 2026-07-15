@@ -6,6 +6,7 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import { enterpriseApi } from "@/lib/api/enterprise";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
 import type {
@@ -108,15 +109,15 @@ const experienceTypeLabels: Record<string, string> = {
 };
 
 const employeeTableColumns = [
-  { label: "员工", width: "18%", align: "text-left" },
-  { label: "部门", width: "9%", align: "text-center" },
-  { label: "岗位", width: "11%", align: "text-center" },
-  { label: "学历/技能", width: "13%", align: "text-center" },
-  { label: "状态", width: "8%", align: "text-center" },
-  { label: "企业角色", width: "11%", align: "text-center" },
-  { label: "范围", width: "7%", align: "text-center" },
-  { label: "用工", width: "7%", align: "text-center" },
-  { label: "入职日期", width: "10%", align: "text-center" },
+  { label: "员工", width: "17%", align: "text-left" },
+  { label: "部门", width: "8%", align: "text-center" },
+  { label: "岗位", width: "9%", align: "text-center" },
+  { label: "学历/技能", width: "12%", align: "text-center" },
+  { label: "状态", width: "7%", align: "text-center" },
+  { label: "企业角色", width: "10%", align: "text-center" },
+  { label: "范围", width: "6%", align: "text-center" },
+  { label: "用工", width: "6%", align: "text-center" },
+  { label: "入职日期", width: "8%", align: "text-center" },
   { label: "月人力成本", width: "12%", align: "text-right" },
   { label: "操作", width: "5%", align: "text-center" },
 ] as const;
@@ -210,6 +211,8 @@ export default function AdminUsersPage() {
   const [experienceDrafts, setExperienceDrafts] = useState<EmployeeExperience[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const saveAction = useAsyncAction<"save">();
+  const saving = saveAction.isRunning("save");
   const employeesPagination = useClientPagination(employees, 10);
 
   const departmentMap = useMemo(
@@ -346,22 +349,24 @@ export default function AdminUsersPage() {
   });
 
   const handleSubmit = async (values: EmployeeFormValues) => {
-    try {
-      const payload = toPayload(values);
-      if (editingEmployee) {
-        await enterpriseApi.updateEmployee(editingEmployee.id, payload);
-        Message.success("员工信息已更新");
-      } else {
-        await enterpriseApi.createEmployee(payload);
-        Message.success("员工信息已创建");
+    await saveAction.run("save", async () => {
+      try {
+        const payload = toPayload(values);
+        if (editingEmployee) {
+          await enterpriseApi.updateEmployee(editingEmployee.id, payload);
+          Message.success("员工信息已更新");
+        } else {
+          await enterpriseApi.createEmployee(payload);
+          Message.success("员工信息已创建");
+        }
+        setModalVisible(false);
+        setEditingEmployee(null);
+        setLoading(true);
+        await fetchData(keyword, status);
+      } catch {
+        Message.error("员工信息保存失败");
       }
-      setModalVisible(false);
-      setEditingEmployee(null);
-      setLoading(true);
-      void fetchData(keyword, status);
-    } catch {
-      Message.error("员工信息保存失败");
-    }
+    });
   };
 
   const pendingTaxes = taxItems.filter((item) => item.status !== "paid");
@@ -549,12 +554,12 @@ export default function AdminUsersPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-5 align-middle whitespace-nowrap">
+                        <td className="px-4 py-5 text-center align-middle whitespace-nowrap">
                           <div className="flex justify-center">
                             <Tag color={statusConfig.color}>{statusConfig.label}</Tag>
                           </div>
                         </td>
-                        <td className="px-4 py-5 align-middle whitespace-nowrap">
+                        <td className="px-4 py-5 text-center align-middle whitespace-nowrap">
                           <div className="flex justify-center">
                             <Tag color={role.color}>{role.label}</Tag>
                           </div>
@@ -562,12 +567,12 @@ export default function AdminUsersPage() {
                         <td className="px-4 py-5 align-middle text-center whitespace-nowrap">{accessScopeLabels[employee.accessScope] || employee.accessScope}</td>
                         <td className="px-4 py-5 align-middle text-center whitespace-nowrap">{employmentTypeLabels[employee.employmentType] || employee.employmentType}</td>
                         <td className="px-4 py-5 align-middle text-center whitespace-nowrap">{employee.hireDate}</td>
-                        <td className="px-4 py-5 align-middle whitespace-nowrap">
+                        <td className="px-4 py-5 text-right align-middle whitespace-nowrap">
                           <div className="flex justify-end">
                             <AmountDisplay amount={employee.monthlyCost} type={2} />
                           </div>
                         </td>
-                        <td className="px-4 py-5 align-middle whitespace-nowrap">
+                        <td className="px-4 py-5 text-center align-middle whitespace-nowrap">
                           <div className="flex justify-center">
                             <Button
                               aria-label={`编辑 ${employee.name}`}
@@ -947,8 +952,13 @@ export default function AdminUsersPage() {
       <Modal
         title={editingEmployee ? "编辑员工信息" : "新增员工信息"}
         visible={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          if (!saving) setModalVisible(false);
+        }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ width: 960 }}
       >
         <Form form={form} layout="vertical" onSubmit={handleSubmit}>

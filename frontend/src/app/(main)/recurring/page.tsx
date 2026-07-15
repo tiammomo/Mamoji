@@ -21,6 +21,7 @@ import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
 import EmptyState from "@/components/common/EmptyState";
 import AppPagination from "@/components/common/AppPagination";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount, formatDate } from "@/lib/utils/format";
 
@@ -195,6 +196,8 @@ export default function RecurringPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [form] = Form.useForm();
+  const action = useAsyncAction<string>();
+  const saving = action.isRunning("save");
   const monthRange = useMemo(() => currentMonthRange(), []);
   const visibleCategoryOptions = useMemo(
     () => isHousehold
@@ -211,6 +214,9 @@ export default function RecurringPage() {
     try {
       const res = await recurringApi.list();
       setItems(res.data);
+      setSelectedItem((current) => current
+        ? res.data.find((item) => item.id === current.id) ?? null
+        : null);
     } catch {
       Message.error("周期事项加载失败");
     } finally {
@@ -407,56 +413,62 @@ export default function RecurringPage() {
   };
 
   const handleSubmit = async (values: RecurringFormValues) => {
-    try {
-      const data: CreateRecurringDTO = {
-        name: values.name,
-        type: Number(values.type) as 1 | 2,
-        amount: Number(values.amount || 0),
-        frequency: values.frequency,
-        interval: Number(values.interval || 1),
-        dayOfWeek: values.dayOfWeek ? Number(values.dayOfWeek) : undefined,
-        dayOfMonth: values.dayOfMonth ? Number(values.dayOfMonth) : undefined,
-        monthOfYear: values.monthOfYear ? Number(values.monthOfYear) : undefined,
-        startDate: String(values.startDate || ""),
-        endDate: values.endDate ? String(values.endDate) : undefined,
-        note: values.note || undefined,
-      };
+    await action.run("save", async () => {
+      try {
+        const data: CreateRecurringDTO = {
+          name: values.name,
+          type: Number(values.type) as 1 | 2,
+          amount: Number(values.amount || 0),
+          frequency: values.frequency,
+          interval: Number(values.interval || 1),
+          dayOfWeek: values.dayOfWeek ? Number(values.dayOfWeek) : undefined,
+          dayOfMonth: values.dayOfMonth ? Number(values.dayOfMonth) : undefined,
+          monthOfYear: values.monthOfYear ? Number(values.monthOfYear) : undefined,
+          startDate: String(values.startDate || ""),
+          endDate: values.endDate ? String(values.endDate) : undefined,
+          note: values.note || undefined,
+        };
 
-      if (editingId) {
-        await recurringApi.update(editingId, data);
-        Message.success("更新成功");
-      } else {
-        await recurringApi.create(data);
-        Message.success("创建成功");
+        if (editingId) {
+          await recurringApi.update(editingId, data);
+          Message.success("更新成功");
+        } else {
+          await recurringApi.create(data);
+          Message.success("创建成功");
+        }
+
+        setModalVisible(false);
+        setEditingId(null);
+        form.resetFields();
+        await fetchData();
+      } catch {
+        Message.error(editingId ? "更新失败" : "创建失败");
       }
-
-      setModalVisible(false);
-      setEditingId(null);
-      form.resetFields();
-      await fetchData();
-    } catch {
-      Message.error(editingId ? "更新失败" : "创建失败");
-    }
+    });
   };
 
   const handleToggle = async (item: RecurringItem) => {
-    try {
-      await recurringApi.toggle(item.id);
-      Message.success(item.status === 1 ? "已暂停" : "已启用");
-      await fetchData();
-    } catch {
-      Message.error("操作失败");
-    }
+    await action.run(`item:${item.id}`, async () => {
+      try {
+        await recurringApi.toggle(item.id);
+        Message.success(item.status === 1 ? "已暂停" : "已启用");
+        await fetchData();
+      } catch {
+        Message.error("操作失败");
+      }
+    });
   };
 
   const handleExecute = async (item: RecurringItem) => {
-    try {
-      await recurringApi.execute(item.id);
-      Message.success(isHousehold ? "执行成功，已生成家庭收支记录" : "执行成功，已生成经营流水");
-      await fetchData();
-    } catch {
-      Message.error("执行失败");
-    }
+    await action.run(`item:${item.id}`, async () => {
+      try {
+        await recurringApi.execute(item.id);
+        Message.success(isHousehold ? "执行成功，已生成家庭收支记录" : "执行成功，已生成经营流水");
+        await fetchData();
+      } catch {
+        Message.error("执行失败，若今日已执行请勿重复生成流水");
+      }
+    });
   };
 
   const handleDelete = (item: RecurringItem) => {
@@ -479,7 +491,7 @@ export default function RecurringPage() {
   };
 
   const renderActions = (item: RecurringItem) => (
-    <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+    <div className="flex items-center justify-center gap-1" onClick={(event) => event.stopPropagation()}>
       <Button
         type="text"
         size="mini"
@@ -491,7 +503,8 @@ export default function RecurringPage() {
         type="text"
         size="mini"
         icon={<IconPlayArrow />}
-        disabled={item.status !== 1}
+        loading={action.isRunning(`item:${item.id}`)}
+        disabled={item.status !== 1 || action.isRunning(`item:${item.id}`)}
         onClick={() => handleExecute(item)}
         style={{ color: item.status === 1 ? "var(--color-primary)" : "var(--text-color-4)" }}
       />
@@ -499,6 +512,7 @@ export default function RecurringPage() {
         type="text"
         size="mini"
         icon={<IconEdit />}
+        disabled={action.isRunning(`item:${item.id}`)}
         onClick={() => openEdit(item)}
         style={{ color: "var(--text-color-3)" }}
       />
@@ -507,6 +521,7 @@ export default function RecurringPage() {
         size="mini"
         status="danger"
         icon={<IconDelete />}
+        disabled={action.isRunning(`item:${item.id}`)}
         onClick={() => handleDelete(item)}
       />
     </div>
@@ -525,7 +540,7 @@ export default function RecurringPage() {
         }
       />
 
-      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
+      <div className="metric-grid metric-wrap-until-lg grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
           <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
             <div className="flex h-[92px] flex-col justify-between">
@@ -602,7 +617,7 @@ export default function RecurringPage() {
           </Select>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="filter-secondary-row filter-secondary-row-three mt-3">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center md:w-[356px]">
             <DatePicker
               format="YYYY-MM-DD"
@@ -672,9 +687,18 @@ export default function RecurringPage() {
                 </colgroup>
                 <thead>
                   <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                    {["事项与类型", "周期规则", "金额影响", "下次执行", "有效期", "执行情况", "状态", "操作"].map((column) => (
-                      <th key={column} className="px-3 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>
-                        {column}
+                    {[
+                      { label: "事项与类型", align: "text-left" },
+                      { label: "周期规则", align: "text-left" },
+                      { label: "金额影响", align: "text-right" },
+                      { label: "下次执行", align: "text-center" },
+                      { label: "有效期", align: "text-center" },
+                      { label: "执行情况", align: "text-center" },
+                      { label: "状态", align: "text-center" },
+                      { label: "操作", align: "text-center" },
+                    ].map((column) => (
+                      <th key={column.label} className={`px-3 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>
+                        {column.label}
                       </th>
                     ))}
                   </tr>
@@ -704,13 +728,13 @@ export default function RecurringPage() {
                           <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{getFrequencyLabel(item)}</div>
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>间隔 {item.interval}</div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
+                        <td className="px-3 py-4 text-right align-middle">
                           <AmountDisplay amount={item.amount} type={item.type} showSign size="medium" />
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>
                             {isThisMonth(item.nextExecution, monthRange) ? "计入本月预估" : "非本月执行"}
                           </div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
+                        <td className="px-3 py-4 text-center align-middle">
                           <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{formatDate(item.nextExecution)}</div>
                           <div
                             className="mt-2 inline-flex rounded-md px-2 py-1 text-xs"
@@ -722,27 +746,33 @@ export default function RecurringPage() {
                             {getDueText(item)}
                           </div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
+                        <td className="px-3 py-4 text-center align-middle">
                           <div style={{ color: "var(--text-color-1)" }}>{formatDate(item.startDate)}</div>
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>
                             至 {item.endDate ? formatDate(item.endDate) : "长期有效"}
                           </div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
+                        <td className="px-3 py-4 text-center align-middle">
                           <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{item.executionCount} 次</div>
                           <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>
                             上次 {item.lastExecuted ? formatDate(item.lastExecuted) : "尚未执行"}
                           </div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
-                          <div className="flex items-center gap-2">
-                            <Switch size="small" checked={item.status === 1} onChange={() => handleToggle(item)} />
+                        <td className="px-3 py-4 text-center align-middle">
+                          <div className="flex items-center justify-center gap-2">
+                            <Switch
+                              size="small"
+                              checked={item.status === 1}
+                              loading={action.isRunning(`item:${item.id}`)}
+                              disabled={action.isRunning(`item:${item.id}`)}
+                              onChange={() => handleToggle(item)}
+                            />
                             <span className="text-xs" style={{ color: item.status === 1 ? "#10b981" : "var(--text-color-4)" }}>
                               {item.status === 1 ? "启用" : "暂停"}
                             </span>
                           </div>
                         </td>
-                        <td className="px-3 py-4 align-middle">
+                        <td className="px-3 py-4 text-center align-middle">
                           {renderActions(item)}
                         </td>
                       </tr>
@@ -853,13 +883,19 @@ export default function RecurringPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button type="primary" icon={<IconPlayArrow />} disabled={selectedItem.status !== 1} onClick={() => handleExecute(selectedItem)}>
+              <Button
+                type="primary"
+                icon={<IconPlayArrow />}
+                loading={action.isRunning(`item:${selectedItem.id}`)}
+                disabled={selectedItem.status !== 1 || action.isRunning(`item:${selectedItem.id}`)}
+                onClick={() => handleExecute(selectedItem)}
+              >
                 执行并生成流水
               </Button>
-              <Button icon={<IconEdit />} onClick={() => openEdit(selectedItem)}>
+              <Button disabled={action.isRunning(`item:${selectedItem.id}`)} icon={<IconEdit />} onClick={() => openEdit(selectedItem)}>
                 编辑事项
               </Button>
-              <Button status="danger" icon={<IconDelete />} onClick={() => handleDelete(selectedItem)}>
+              <Button disabled={action.isRunning(`item:${selectedItem.id}`)} status="danger" icon={<IconDelete />} onClick={() => handleDelete(selectedItem)}>
                 删除事项
               </Button>
             </div>
@@ -871,10 +907,14 @@ export default function RecurringPage() {
         title={editingId ? "编辑周期事项" : t("new")}
         visible={modalVisible}
         onCancel={() => {
+          if (saving) return;
           setModalVisible(false);
           setEditingId(null);
         }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ borderRadius: 16 }}
         unmountOnExit
       >

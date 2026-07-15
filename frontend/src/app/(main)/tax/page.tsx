@@ -33,6 +33,7 @@ import AmountDisplay from "@/components/common/AmountDisplay";
 import AppPagination from "@/components/common/AppPagination";
 import { enterpriseApi } from "@/lib/api/enterprise";
 import { receiptApi } from "@/lib/api/receipts";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { useClientPagination } from "@/lib/hooks/useClientPagination";
 import { useAppStore } from "@/lib/stores/appStore";
 import { formatAmount } from "@/lib/utils/format";
@@ -329,9 +330,10 @@ export default function TaxPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<TaxItem | null>(null);
-  const [quickActionId, setQuickActionId] = useState<number | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<TaxFormValues>();
+  const action = useAsyncAction<string>();
+  const saving = action.isRunning("save");
 
   const loadData = async (quiet = false) => {
     if (quiet) {
@@ -672,21 +674,23 @@ export default function TaxPage() {
   };
 
   const handleSubmit = async (values: TaxFormValues) => {
-    try {
-      const payload = toPayload(values);
-      if (editingItem) {
-        await enterpriseApi.updateTaxItem(editingItem.id, payload);
-        Message.success("税务事项已更新");
-      } else {
-        await enterpriseApi.createTaxItem(payload);
-        Message.success("税务事项已新增");
+    await action.run("save", async () => {
+      try {
+        const payload = toPayload(values);
+        if (editingItem) {
+          await enterpriseApi.updateTaxItem(editingItem.id, payload);
+          Message.success("税务事项已更新");
+        } else {
+          await enterpriseApi.createTaxItem(payload);
+          Message.success("税务事项已新增");
+        }
+        setModalVisible(false);
+        setEditingItem(null);
+        await loadData(true);
+      } catch {
+        Message.error("税务事项保存失败");
       }
-      setModalVisible(false);
-      setEditingItem(null);
-      await loadData(true);
-    } catch {
-      Message.error("税务事项保存失败");
-    }
+    });
   };
 
   const handleDelete = (item: TaxItem) => {
@@ -707,39 +711,37 @@ export default function TaxPage() {
   };
 
   const handleMarkSubmitted = async (item: TaxItem) => {
-    try {
-      setQuickActionId(item.id);
-      await enterpriseApi.updateTaxItem(item.id, {
-        status: item.status === "estimated" ? "pending" : item.status,
-        filingStatus: "submitted",
-        declarationDate: today(),
-      });
-      Message.success("已标记为已申报");
-      await loadData(true);
-    } catch {
-      Message.error("申报状态更新失败");
-    } finally {
-      setQuickActionId(null);
-    }
+    await action.run(`quick:${item.id}`, async () => {
+      try {
+        await enterpriseApi.updateTaxItem(item.id, {
+          status: item.status === "estimated" ? "pending" : item.status,
+          filingStatus: "submitted",
+          declarationDate: today(),
+        });
+        Message.success("已标记为已申报");
+        await loadData(true);
+      } catch {
+        Message.error("申报状态更新失败");
+      }
+    });
   };
 
   const handleMarkPaid = async (item: TaxItem) => {
-    try {
-      setQuickActionId(item.id);
-      await enterpriseApi.updateTaxItem(item.id, {
-        status: "paid",
-        filingStatus: "accepted",
-        paymentStatus: "paid",
-        paidAmount: Number(item.taxAmount || 0),
-        paymentDate: today(),
-      });
-      Message.success("已标记为已缴纳");
-      await loadData(true);
-    } catch {
-      Message.error("缴纳状态更新失败");
-    } finally {
-      setQuickActionId(null);
-    }
+    await action.run(`quick:${item.id}`, async () => {
+      try {
+        await enterpriseApi.updateTaxItem(item.id, {
+          status: "paid",
+          filingStatus: "accepted",
+          paymentStatus: "paid",
+          paidAmount: Number(item.taxAmount || 0),
+          paymentDate: today(),
+        });
+        Message.success("已标记为已缴纳");
+        await loadData(true);
+      } catch {
+        Message.error("缴纳状态更新失败");
+      }
+    });
   };
 
   const nextDueItem = upcomingItems[0] || null;
@@ -1094,7 +1096,7 @@ export default function TaxPage() {
                             type="text"
                             size="mini"
                             title="标记已申报"
-                            loading={quickActionId === item.id}
+                            loading={action.isRunning(`quick:${item.id}`)}
                             icon={<IconCheckCircle />}
                             onClick={() => handleMarkSubmitted(item)}
                           />
@@ -1104,7 +1106,7 @@ export default function TaxPage() {
                             type="text"
                             size="mini"
                             title="标记已缴纳"
-                            loading={quickActionId === item.id}
+                            loading={action.isRunning(`quick:${item.id}`)}
                             icon={<IconSafe />}
                             onClick={() => handleMarkPaid(item)}
                           />
@@ -1359,10 +1361,14 @@ export default function TaxPage() {
         title={editingItem ? "编辑税务事项" : "新增税务事项"}
         visible={modalVisible}
         onCancel={() => {
+          if (saving) return;
           setModalVisible(false);
           setEditingItem(null);
         }}
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        maskClosable={!saving}
+        closable={!saving}
         style={{ width: 820 }}
         unmountOnExit
       >

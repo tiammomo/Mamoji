@@ -270,11 +270,28 @@ export default function OrganizationPage() {
 
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col style={{ width: 160 }} />
+                  <col style={{ width: 140 }} />
+                  <col style={{ width: 170 }} />
+                  <col style={{ width: 110 }} />
+                  <col style={{ width: 220 }} />
+                  <col style={{ width: 90 }} />
+                  <col style={{ width: 80 }} />
+                </colgroup>
                 <thead>
                   <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                    {["部门", "负责人", "岗位", "人员", "预算与成本", "状态", "操作"].map((label) => (
-                      <th key={label} className="px-4 py-3 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-color-2)" }}>
-                        {label}
+                    {[
+                      { label: "部门", align: "text-left" },
+                      { label: "负责人", align: "text-left" },
+                      { label: "岗位", align: "text-left" },
+                      { label: "人员", align: "text-center" },
+                      { label: "预算与成本", align: "text-left" },
+                      { label: "状态", align: "text-center" },
+                      { label: "操作", align: "text-center" },
+                    ].map((column) => (
+                      <th key={column.label} className={`px-4 py-3 font-medium whitespace-nowrap ${column.align}`} style={{ color: "var(--text-color-2)" }}>
+                        {column.label}
                       </th>
                     ))}
                   </tr>
@@ -305,7 +322,7 @@ export default function OrganizationPage() {
                           )) : <span style={{ color: "var(--text-color-3)" }}>--</span>}
                         </div>
                       </td>
-                      <td className="px-4 py-4 align-middle">
+                      <td className="px-4 py-4 text-center align-middle">
                         <div className="font-medium">{department.activeCount} 在岗</div>
                         <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>待入职 {department.onboardingCount}</div>
                       </td>
@@ -327,10 +344,10 @@ export default function OrganizationPage() {
                           预算 <AmountDisplay amount={department.budget} size="small" />
                         </div>
                       </td>
-                      <td className="px-4 py-4 align-middle">
+                      <td className="px-4 py-4 text-center align-middle">
                         <Tag color={department.status === 1 ? "green" : "gray"}>{department.status === 1 ? "启用" : "停用"}</Tag>
                       </td>
-                      <td className="px-4 py-4 align-middle">
+                      <td className="px-4 py-4 text-center align-middle">
                         <Button type="text" size="mini" icon={<IconEdit />} title="编辑部门" onClick={() => openEdit(department)} />
                       </td>
                     </tr>

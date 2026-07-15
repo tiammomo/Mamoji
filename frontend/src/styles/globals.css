@@ -510,7 +510,6 @@ input:-webkit-autofill:focus {
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.02em;
-  text-align: left;
 }
 
 .app-main-inner table:not(.arco-table-element) tbody tr {
@@ -1365,6 +1364,40 @@ input:-webkit-autofill:focus {
   background: var(--bg-color-card) !important;
 }
 
+.filter-secondary-row {
+  display: grid !important;
+  grid-template-columns: minmax(320px, 1.15fr) minmax(280px, 1fr) minmax(110px, 0.38fr) minmax(110px, 0.38fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-secondary-row > * {
+  width: 100% !important;
+  min-width: 0;
+}
+
+.filter-secondary-row.filter-secondary-row-three {
+  grid-template-columns: minmax(320px, 1fr) minmax(110px, 0.25fr) minmax(110px, 0.25fr);
+}
+
+@media (max-width: 767px) {
+  .filter-secondary-row,
+  .filter-secondary-row.filter-secondary-row-three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .filter-secondary-row,
+  .filter-secondary-row.filter-secondary-row-three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-secondary-row.filter-secondary-row-three > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .app-main-inner select:not([class*="arco-"]) {
   min-height: 38px;
   border: 1px solid var(--border-color);
@@ -1490,6 +1523,181 @@ input:-webkit-autofill:focus {
 
 .bi-segment-grid > *:last-child {
   border-right: 0 !important;
+}
+
+.budget-ledger-row {
+  gap: 0 !important;
+  align-items: stretch;
+}
+
+.budget-ledger-cell {
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.budget-ledger-cell:last-child {
+  border-bottom: 0;
+}
+
+.budget-ledger-metrics {
+  padding: 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.budget-ledger-metrics > * {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+@media (min-width: 640px) and (max-width: 1279px) {
+  .bi-segment-grid.bi-segment-accounts > * {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts > *:nth-child(2n) {
+    border-right: 0 !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts:has(> :last-child:nth-child(2n)) > *:nth-last-child(-n + 2) {
+    border-bottom: 0 !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts > *:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  .bi-segment-grid.bi-segment-accounts > * {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts > *:nth-child(3n) {
+    border-right: 0 !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts:has(> :last-child:nth-child(3n)) > *:nth-last-child(-n + 3),
+  .bi-segment-grid.bi-segment-accounts:has(> :last-child:nth-child(3n + 2)) > *:nth-last-child(-n + 2) {
+    border-bottom: 0 !important;
+  }
+
+  .bi-segment-grid.bi-segment-accounts > *:last-child:nth-child(3n + 1) {
+    grid-column: 1 / -1;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1535px) {
+  .bi-segment-grid.bi-segment-four > * {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .bi-segment-grid.bi-segment-four > *:nth-child(2n) {
+    border-right: 0 !important;
+  }
+
+  .bi-segment-grid.bi-segment-four > *:nth-last-child(-n + 2) {
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .metric-wrap-until-lg > .metric-card,
+  .metric-wrap-until-xl > .metric-card,
+  .metric-wrap-until-2xl > .metric-card {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .metric-wrap-until-lg > .metric-card:nth-child(2n),
+  .metric-wrap-until-xl > .metric-card:nth-child(2n),
+  .metric-wrap-until-2xl > .metric-card:nth-child(2n) {
+    border-right: 0 !important;
+  }
+
+  .metric-wrap-until-lg > .metric-card:nth-last-child(-n + 2),
+  .metric-wrap-until-xl > .metric-card:nth-last-child(-n + 2),
+  .metric-wrap-until-2xl > .metric-card:nth-last-child(-n + 2) {
+    border-bottom: 0 !important;
+  }
+
+  .metric-stack-until-lg > .metric-card {
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .metric-stack-until-lg > .metric-card:last-child {
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .metric-wrap-until-xl > .metric-card,
+  .metric-wrap-until-2xl > .metric-card {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .metric-wrap-until-xl > .metric-card:nth-child(2n),
+  .metric-wrap-until-2xl > .metric-card:nth-child(2n) {
+    border-right: 0 !important;
+  }
+
+  .metric-wrap-until-xl > .metric-card:nth-last-child(-n + 2),
+  .metric-wrap-until-2xl > .metric-card:nth-last-child(-n + 2) {
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 1280px) and (max-width: 1535px) {
+  .metric-wrap-until-2xl > .metric-card {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 1px solid var(--border-color-light) !important;
+  }
+
+  .metric-wrap-until-2xl > .metric-card:nth-child(3n) {
+    border-right: 0 !important;
+  }
+
+  .metric-wrap-until-2xl > .metric-card:nth-last-child(-n + 3) {
+    border-bottom: 0 !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  .budget-ledger-cell {
+    padding: 16px;
+    border-right: 1px solid var(--border-color-light);
+    border-bottom: 0;
+  }
+
+  .budget-ledger-cell:first-child {
+    padding-left: 0;
+  }
+
+  .budget-ledger-cell:last-child {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .budget-ledger-metrics {
+    padding: 0;
+    border-top: 0;
+    border-bottom: 0;
+  }
+
+  .budget-ledger-status {
+    text-align: center;
+  }
 }
 
 .bi-flat-list > * + * {
@@ -2320,6 +2528,15 @@ input:-webkit-autofill:focus {
 
   .bi-segment-grid > *:last-child {
     border-bottom: 0 !important;
+  }
+
+  .budget-ledger-metrics > * {
+    border-right: 1px solid var(--border-color-light) !important;
+    border-bottom: 0 !important;
+  }
+
+  .budget-ledger-metrics > *:last-child {
+    border-right: 0 !important;
   }
 
   .tax-profile-grid > div:nth-child(odd) {

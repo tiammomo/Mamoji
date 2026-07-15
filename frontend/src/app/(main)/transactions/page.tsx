@@ -525,7 +525,7 @@ export default function TransactionsPage() {
   };
 
   const renderActions = (tx: Transaction) => (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center justify-center gap-1">
       <Button
         aria-label={`${t("viewAction")} #${tx.id}`}
         title={t("viewAction")}
@@ -672,7 +672,7 @@ export default function TransactionsPage() {
         }
       />
 
-      <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
+      <div className="metric-grid metric-wrap-until-lg grid grid-cols-2 lg:grid-cols-6">
         {summaryCards.map((item) => (
           <Card className="metric-card" key={item.label} loading={initialLoading} style={{ borderRadius: 12 }}>
             <div className="text-xs" style={{ color: "var(--text-color-3)" }}>{item.label}</div>
@@ -777,7 +777,7 @@ export default function TransactionsPage() {
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="filter-secondary-row mt-3">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center md:w-[356px]">
             <DatePicker
               aria-label={t("startDate")}
@@ -882,17 +882,17 @@ export default function TransactionsPage() {
               <thead>
                 <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
                   {[
-                    t("date"),
-                    t("descriptionColumn"),
-                    t("category"),
-                    t("account"),
-                    t("amount"),
-                    t("linkageStatus"),
-                    t("tags"),
-                    t("actions"),
+                    { label: t("date"), align: "text-left" },
+                    { label: t("descriptionColumn"), align: "text-left" },
+                    { label: t("category"), align: "text-left" },
+                    { label: t("account"), align: "text-left" },
+                    { label: t("amount"), align: "text-right" },
+                    { label: t("linkageStatus"), align: "text-center" },
+                    { label: t("tags"), align: "text-left" },
+                    { label: t("actions"), align: "text-center" },
                   ].map((column) => (
-                    <th scope="col" key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>
-                      {column}
+                    <th scope="col" key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>
+                      {column.label}
                     </th>
                   ))}
                 </tr>
@@ -931,13 +931,13 @@ export default function TransactionsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-4 align-middle">
+                      <td className="px-4 py-4 text-center align-middle">
                         <Tag color="gray" title={t("linkageUnavailable")}>{t("manualReview")}</Tag>
                       </td>
                       <td className="px-4 py-4 align-middle">
                         <div className="flex flex-wrap gap-1">{renderFlagTags(tx)}</div>
                       </td>
-                      <td className="px-4 py-4 align-middle">{renderActions(tx)}</td>
+                      <td className="px-4 py-4 text-center align-middle">{renderActions(tx)}</td>
                     </tr>
                   );
                 })}

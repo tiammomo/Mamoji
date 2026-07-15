@@ -791,7 +791,7 @@ export default function ReportsPage() {
         </Card>
       ) : (
         <>
-          <div className="metric-grid grid grid-cols-2 lg:grid-cols-6">
+          <div className="metric-grid metric-wrap-until-lg grid grid-cols-2 lg:grid-cols-6">
             {summaryCards.map((item) => (
               <Card className="metric-card" key={item.label} style={{ borderRadius: 12 }}>
                 <div className="flex h-[98px] flex-col justify-between">
@@ -930,18 +930,23 @@ export default function ReportsPage() {
                   <table className="w-full min-w-[720px] table-fixed text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["账户", "类型", "余额", "经营判断"].map((column) => (
-                          <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
+                        {[
+                          { label: "账户", align: "text-left" },
+                          { label: "类型", align: "text-center" },
+                          { label: "余额", align: "text-right" },
+                          { label: "经营判断", align: "text-left" },
+                        ].map((column) => (
+                          <th key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>{column.label}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {(assets?.accounts || []).map((account) => (
                         <tr key={`${account.type}-${account.name}`} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
-                          <td className="px-4 py-3">{account.name}</td>
-                          <td className="px-4 py-3">{account.type}</td>
-                          <td className="px-4 py-3"><AmountDisplay amount={Math.abs(account.balance)} type={account.balance >= 0 ? 1 : 2} showSign /></td>
-                          <td className="px-4 py-3" style={{ color: "var(--text-color-3)" }}>{account.balance < 0 ? "需关注负债" : "可用资金"}</td>
+                          <td className="px-4 py-3 align-middle">{account.name}</td>
+                          <td className="px-4 py-3 text-center align-middle">{account.type}</td>
+                          <td className="px-4 py-3 text-right align-middle"><AmountDisplay amount={Math.abs(account.balance)} type={account.balance >= 0 ? 1 : 2} showSign /></td>
+                          <td className="px-4 py-3 align-middle" style={{ color: "var(--text-color-3)" }}>{account.balance < 0 ? "需关注负债" : "可用资金"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -969,29 +974,36 @@ export default function ReportsPage() {
                     </colgroup>
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["预算", "周期", "执行进度", "风险", "剩余额度", "操作"].map((column) => (
-                          <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
+                        {[
+                          { label: "预算", align: "text-left" },
+                          { label: "周期", align: "text-center" },
+                          { label: "执行进度", align: "text-left" },
+                          { label: "风险", align: "text-center" },
+                          { label: "剩余额度", align: "text-right" },
+                          { label: "操作", align: "text-center" },
+                        ].map((column) => (
+                          <th key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>{column.label}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {budgets.map((budget) => (
                         <tr key={budget.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
-                          <td className="px-4 py-4">
+                          <td className="px-4 py-4 align-middle">
                             <div className="font-medium">{budget.name}</div>
                             <div className="mt-1 text-xs" style={{ color: "var(--text-color-4)" }}>{budget.categoryName || "公司整体"}</div>
                           </td>
-                          <td className="px-4 py-4 text-xs" style={{ color: "var(--text-color-3)" }}>{displayDate(budget.startDate)}<br />至 {displayDate(budget.endDate)}</td>
-                          <td className="px-4 py-4">
+                          <td className="px-4 py-4 text-center text-xs align-middle" style={{ color: "var(--text-color-3)" }}>{displayDate(budget.startDate)}<br />至 {displayDate(budget.endDate)}</td>
+                          <td className="px-4 py-4 align-middle">
                             <Progress percent={Math.min(100, budget.usageRate * 100)} showText={false} color={budget.usageRate >= 1 ? "#ef4444" : "#6366f1"} />
                             <div className="mt-1 flex justify-between text-xs" style={{ color: "var(--text-color-4)" }}>
                               <span>{displayPercent(budget.usageRate)}</span>
                               <span>{formatAmount(budget.spent)} / {formatAmount(budget.amount)}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-4"><Tag color={budgetRiskColors[budget.riskLevel] || "gray"}>{budget.riskMessage || budget.riskLevel}</Tag></td>
-                          <td className="px-4 py-4"><AmountDisplay amount={Math.abs(budget.remainingAmount)} type={budget.remainingAmount >= 0 ? 1 : 2} /></td>
-                          <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openBudgetDetail(budget)}>查看详情</Button></td>
+                          <td className="px-4 py-4 text-center align-middle"><Tag color={budgetRiskColors[budget.riskLevel] || "gray"}>{budget.riskMessage || budget.riskLevel}</Tag></td>
+                          <td className="px-4 py-4 text-right align-middle"><AmountDisplay amount={Math.abs(budget.remainingAmount)} type={budget.remainingAmount >= 0 ? 1 : 2} /></td>
+                          <td className="px-4 py-4 text-center align-middle"><Button type="text" size="small" onClick={() => openBudgetDetail(budget)}>查看详情</Button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1006,7 +1018,7 @@ export default function ReportsPage() {
                 <EmptyState title="税务分析暂不可用" description="税务、收入或主体数据尚未加载完成，请重新加载后查看" />
               ) : (
               <>
-              <div className="metric-grid metric-grid-odd mb-4 grid grid-cols-1 lg:grid-cols-3">
+              <div className="metric-grid metric-grid-odd metric-stack-until-lg mb-4 grid grid-cols-1 lg:grid-cols-3">
                 <Card className="metric-card" style={{ borderRadius: 12 }}>
                   <div className="text-xs" style={{ color: "var(--text-color-3)" }}>待处理税费</div>
                   <div className="mt-2"><AmountDisplay amount={operatingSummary.pendingTax} type={2} size="large" /></div>
@@ -1028,8 +1040,16 @@ export default function ReportsPage() {
                   <table className="w-full min-w-[840px] table-fixed text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["事项", "期间", "税种", "应缴/已缴", "截止日", "状态", "操作"].map((column) => (
-                          <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
+                        {[
+                          { label: "事项", align: "text-left" },
+                          { label: "期间", align: "text-center" },
+                          { label: "税种", align: "text-center" },
+                          { label: "应缴/已缴", align: "text-right" },
+                          { label: "截止日", align: "text-center" },
+                          { label: "状态", align: "text-center" },
+                          { label: "操作", align: "text-center" },
+                        ].map((column) => (
+                          <th key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>{column.label}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1038,13 +1058,13 @@ export default function ReportsPage() {
                         const status = taxStatus(item);
                         return (
                           <tr key={item.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
-                            <td className="px-4 py-4">{item.name}</td>
-                            <td className="px-4 py-4">{item.period}</td>
-                            <td className="px-4 py-4">{taxTypeLabel(item.taxType)}</td>
-                            <td className="px-4 py-4">{formatAmount(item.taxAmount)} / {formatAmount(item.paidAmount)}</td>
-                            <td className="px-4 py-4">{displayDate(item.dueDate)}</td>
-                            <td className="px-4 py-4"><Tag color={status.color}>{status.label}</Tag></td>
-                            <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openTaxDetail(item)}>查看详情</Button></td>
+                            <td className="px-4 py-4 align-middle">{item.name}</td>
+                            <td className="px-4 py-4 text-center align-middle">{item.period}</td>
+                            <td className="px-4 py-4 text-center align-middle">{taxTypeLabel(item.taxType)}</td>
+                            <td className="px-4 py-4 text-right align-middle">{formatAmount(item.taxAmount)} / {formatAmount(item.paidAmount)}</td>
+                            <td className="px-4 py-4 text-center align-middle">{displayDate(item.dueDate)}</td>
+                            <td className="px-4 py-4 text-center align-middle"><Tag color={status.color}>{status.label}</Tag></td>
+                            <td className="px-4 py-4 text-center align-middle"><Button type="text" size="small" onClick={() => openTaxDetail(item)}>查看详情</Button></td>
                           </tr>
                         );
                       })}
@@ -1087,21 +1107,29 @@ export default function ReportsPage() {
                   <table className="w-full min-w-[860px] table-fixed text-sm">
                     <thead>
                       <tr style={{ backgroundColor: "var(--bg-color-page)" }}>
-                        {["人员", "部门", "岗位", "薪资", "社保/公积金", "月成本", "操作"].map((column) => (
-                          <th key={column} className="px-4 py-3 text-left font-medium" style={{ color: "var(--text-color-2)" }}>{column}</th>
+                        {[
+                          { label: "人员", align: "text-left" },
+                          { label: "部门", align: "text-left" },
+                          { label: "岗位", align: "text-left" },
+                          { label: "薪资", align: "text-right" },
+                          { label: "社保/公积金", align: "text-right" },
+                          { label: "月成本", align: "text-right" },
+                          { label: "操作", align: "text-center" },
+                        ].map((column) => (
+                          <th key={column.label} className={`px-4 py-3 font-medium ${column.align}`} style={{ color: "var(--text-color-2)" }}>{column.label}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {employees.map((employee) => (
                         <tr key={employee.id} className="border-b" style={{ borderColor: "var(--border-color-light)" }}>
-                          <td className="px-4 py-4">{employee.name}</td>
-                          <td className="px-4 py-4">{employee.departmentName || "--"}</td>
-                          <td className="px-4 py-4">{employee.position}</td>
-                          <td className="px-4 py-4">{formatAmount(employee.salary)}</td>
-                          <td className="px-4 py-4">{formatAmount(employee.socialInsurance + employee.housingFund)}</td>
-                          <td className="px-4 py-4"><AmountDisplay amount={employee.monthlyCost} type={2} /></td>
-                          <td className="px-4 py-4"><Button type="text" size="small" onClick={() => openEmployeeDetail(employee)}>查看详情</Button></td>
+                          <td className="px-4 py-4 align-middle">{employee.name}</td>
+                          <td className="px-4 py-4 align-middle">{employee.departmentName || "--"}</td>
+                          <td className="px-4 py-4 align-middle">{employee.position}</td>
+                          <td className="px-4 py-4 text-right align-middle">{formatAmount(employee.salary)}</td>
+                          <td className="px-4 py-4 text-right align-middle">{formatAmount(employee.socialInsurance + employee.housingFund)}</td>
+                          <td className="px-4 py-4 text-right align-middle"><AmountDisplay amount={employee.monthlyCost} type={2} /></td>
+                          <td className="px-4 py-4 text-center align-middle"><Button type="text" size="small" onClick={() => openEmployeeDetail(employee)}>查看详情</Button></td>
                         </tr>
                       ))}
                     </tbody>
