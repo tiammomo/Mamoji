@@ -24,7 +24,7 @@ public class PagedResponse<T> {
     public static <T> PagedResponse<T> of(List<T> items, PageRequest pageRequest) {
         int safePage = pageRequest.page();
         int safeSize = pageRequest.size();
-        int from = Math.min(safePage * safeSize, items.size());
+        int from = (int) Math.min((long) safePage * safeSize, items.size());
         int to = Math.min(from + safeSize, items.size());
         int totalPages = (int) Math.ceil((double) items.size() / safeSize);
         return new PagedResponse<>(items.subList(from, to), items.size(), totalPages, safeSize, safePage);

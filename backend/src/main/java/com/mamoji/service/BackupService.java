@@ -27,9 +27,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -86,17 +89,22 @@ public class BackupService {
     private final AccessControlService accessControl;
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate snapshotTransaction;
 
     public BackupService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
-        JdbcTemplate jdbc
+        JdbcTemplate jdbc,
+        PlatformTransactionManager transactionManager
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.jdbc = jdbc;
+        this.snapshotTransaction = new TransactionTemplate(transactionManager);
+        this.snapshotTransaction.setReadOnly(true);
+        this.snapshotTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
         this.objectMapper = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .enable(DeserializationFeature.USE_LONG_FOR_INTS);
@@ -122,7 +130,10 @@ public class BackupService {
 
     public ResponseEntity<Map<String, Object>> export(String authorization) {
         User user = accessControl.requireAdmin(authorization);
-        Map<String, Object> data = readDatasets();
+        Map<String, Object> data = snapshotTransaction.execute(status -> readDatasets());
+        if (data == null) {
+            throw new IllegalStateException("Failed to create a consistent backup snapshot");
+        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("format", FORMAT);
         payload.put("version", VERSION);

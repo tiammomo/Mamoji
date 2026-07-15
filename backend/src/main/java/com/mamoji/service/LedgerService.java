@@ -101,20 +101,28 @@ public class LedgerService {
             .toList();
     }
 
+    @Transactional
     public Map<String, Object> addLedgerMember(String authorization, long ledgerId, Map<String, Object> body) {
-        Ledger ledger = getLedger(authorization, ledgerId);
+        getLedger(authorization, ledgerId);
+        Ledger ledger = store.ledgerForUpdate(ledgerId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ledger not found"));
         long currentUserId = accessControl.requireUser(authorization).id;
         if (ledger.ownerId != currentUserId) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can add members");
         }
         long userId = longValue(body.get("userId"), 0);
         require(store.users.get(userId), "User not found");
-        store.member(ledgerId, userId, textOr(body.get("role"), "viewer"));
+        if (!store.ledgerMemberExists(ledgerId, userId)) {
+            store.member(ledgerId, userId, textOr(body.get("role"), "viewer"));
+        }
         return Map.of("success", true);
     }
 
+    @Transactional
     public void removeLedgerMember(String authorization, long ledgerId, long userId) {
-        Ledger ledger = getLedger(authorization, ledgerId);
+        getLedger(authorization, ledgerId);
+        Ledger ledger = store.ledgerForUpdate(ledgerId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ledger not found"));
         long currentUserId = accessControl.requireUser(authorization).id;
         if (ledger.ownerId != currentUserId) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can remove members");
@@ -127,11 +135,11 @@ public class LedgerService {
             .filter(ledger -> Objects.equals(ledger.companyId, companyId))
             .filter(ledger -> ledger.ownerId == userId && ledger.isDefault)
             .map(ledger -> ledger.id)
-            .findFirst()
+            .min(Long::compareTo)
             .or(() -> store.ledgers.values().stream()
                 .filter(ledger -> ledger.ownerId == userId && Objects.equals(ledger.companyId, companyId))
                 .map(ledger -> ledger.id)
-                .findFirst());
+                .min(Long::compareTo));
     }
 
     private boolean isLedgerMember(long ledgerId, long userId) {

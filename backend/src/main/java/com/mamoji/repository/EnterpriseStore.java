@@ -1348,12 +1348,19 @@ public class EnterpriseStore {
     }
 
     public List<Employee> sortedEmployees(long companyId) {
-        return employees.values().stream()
+        return sortedEmployees(companyId, true);
+    }
+
+    public List<Employee> sortedEmployees(long companyId, boolean includeProfileDetails) {
+        List<Employee> result = employees.values().stream()
             .filter(employee -> employee.companyId == companyId)
             .sorted(Comparator.comparing((Employee employee) -> employee.status.equals("departed")).thenComparing(employee -> employee.id))
             .peek(this::attachDepartmentName)
-            .peek(this::attachEmployeeProfileDetails)
             .toList();
+        if (includeProfileDetails) {
+            attachEmployeeProfileDetails(companyId, result);
+        }
+        return result;
     }
 
     public List<EmploymentEvent> sortedEmploymentEvents(long companyId) {
@@ -1981,25 +1988,34 @@ public class EnterpriseStore {
             .orElse(null);
     }
 
-    private void attachEmployeeProfileDetails(Employee employee) {
-        employee.certificates = employeeCertificates(employee.id);
-        employee.experiences = employeeExperiences(employee.id);
-    }
-
-    private List<EmployeeCertificate> employeeCertificates(long employeeId) {
-        return jdbc.query("""
-            SELECT * FROM employee_certificates
-            WHERE employee_id = ?
-            ORDER BY COALESCE(expiry_date, '9999-12-31'), id
-            """, (rs, rowNum) -> mapEmployeeCertificate(rs), employeeId);
-    }
-
-    private List<EmployeeExperience> employeeExperiences(long employeeId) {
-        return jdbc.query("""
-            SELECT * FROM employee_experiences
-            WHERE employee_id = ?
-            ORDER BY COALESCE(start_date, '0000-01-01') DESC, id DESC
-            """, (rs, rowNum) -> mapEmployeeExperience(rs), employeeId);
+    private void attachEmployeeProfileDetails(long companyId, List<Employee> companyEmployees) {
+        if (companyEmployees.isEmpty()) {
+            return;
+        }
+        Map<Long, List<EmployeeCertificate>> certificatesByEmployee = new HashMap<>();
+        jdbc.query("""
+            SELECT certificate.*
+            FROM employee_certificates certificate
+            JOIN employees employee ON employee.id = certificate.employee_id
+            WHERE employee.company_id = ?
+            ORDER BY certificate.employee_id, COALESCE(certificate.expiry_date, '9999-12-31'), certificate.id
+            """, (rs, rowNum) -> mapEmployeeCertificate(rs), companyId).forEach(certificate ->
+            certificatesByEmployee.computeIfAbsent(certificate.employeeId, ignored -> new ArrayList<>()).add(certificate)
+        );
+        Map<Long, List<EmployeeExperience>> experiencesByEmployee = new HashMap<>();
+        jdbc.query("""
+            SELECT experience.*
+            FROM employee_experiences experience
+            JOIN employees employee ON employee.id = experience.employee_id
+            WHERE employee.company_id = ?
+            ORDER BY experience.employee_id, COALESCE(experience.start_date, '0000-01-01') DESC, experience.id DESC
+            """, (rs, rowNum) -> mapEmployeeExperience(rs), companyId).forEach(experience ->
+            experiencesByEmployee.computeIfAbsent(experience.employeeId, ignored -> new ArrayList<>()).add(experience)
+        );
+        for (Employee employee : companyEmployees) {
+            employee.certificates = List.copyOf(certificatesByEmployee.getOrDefault(employee.id, List.of()));
+            employee.experiences = List.copyOf(experiencesByEmployee.getOrDefault(employee.id, List.of()));
+        }
     }
 
     private void attachEntityTransferNames(EntityTransfer transfer) {

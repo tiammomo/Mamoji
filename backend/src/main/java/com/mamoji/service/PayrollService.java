@@ -15,6 +15,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +27,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -50,6 +54,7 @@ public class PayrollService {
         this.outboxEventService = outboxEventService;
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<PayrollRun> listRuns(String authorization, Long companyId, String period) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
@@ -66,8 +71,7 @@ public class PayrollService {
                 WHERE company_id = ? AND period = ?
                 ORDER BY id DESC
                 """, this::mapRun, company.id, normalizedPeriod);
-        runs.forEach(this::attachItems);
-        return runs;
+        return attachItems(runs);
     }
 
     @Transactional
@@ -79,7 +83,7 @@ public class PayrollService {
         if (payrollRunExists(company.id, period)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Payroll run already exists for this period");
         }
-        List<PayrollRunItem> items = enterpriseStore.sortedEmployees(company.id).stream()
+        List<PayrollRunItem> items = enterpriseStore.sortedEmployees(company.id, false).stream()
             .filter(employee -> List.of("active", "probation").contains(employee.status))
             .map(employee -> snapshotItem(company.id, period, employee))
             .toList();
@@ -124,7 +128,7 @@ public class PayrollService {
     @Transactional
     public PayrollRun closeRun(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
-        PayrollRun run = findRun(id);
+        PayrollRun run = findRunForUpdate(id);
         Company company = accessControl.resolveCompany(user, run.companyId);
         accessControl.requirePayrollManager(user, company.id);
         if ("closed".equals(run.status)) {
@@ -136,7 +140,11 @@ public class PayrollService {
             SET status = 'closed', closed_by_user_id = ?, closed_at = ?, updated_at = ?
             WHERE id = ?
             """, user.id, now, now, id);
-        PayrollRun closed = attachItems(findRun(id));
+        run.status = "closed";
+        run.closedByUserId = user.id;
+        run.closedAt = now;
+        run.updatedAt = now;
+        PayrollRun closed = attachItems(run);
         enterpriseStore.auditLog(company.id, "payroll_run", closed.id, "close", "锁定薪酬月结批次: " + closed.period, user.id, user.nickname);
         outboxEventService.publish("payroll.run.closed", company.id, "payroll_run", closed.id, user.id, Map.of(
             "period", closed.period,
@@ -148,12 +156,12 @@ public class PayrollService {
         return closed;
     }
 
-    private PayrollRun findRun(long id) {
-        List<PayrollRun> runs = jdbc.query("SELECT * FROM payroll_runs WHERE id = ?", this::mapRun, id);
+    private PayrollRun findRunForUpdate(long id) {
+        List<PayrollRun> runs = jdbc.query("SELECT * FROM payroll_runs WHERE id = ? FOR UPDATE", this::mapRun, id);
         if (runs.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Payroll run not found");
         }
-        return runs.get(0);
+        return runs.getFirst();
     }
 
     private boolean payrollRunExists(long companyId, String period) {
@@ -250,6 +258,27 @@ public class PayrollService {
             ORDER BY employee_name, id
             """, this::mapItem, run.id);
         return run;
+    }
+
+    private List<PayrollRun> attachItems(List<PayrollRun> runs) {
+        if (runs.isEmpty()) {
+            return runs;
+        }
+        String placeholders = String.join(", ", Collections.nCopies(runs.size(), "?"));
+        Object[] runIds = runs.stream().map(run -> run.id).toArray();
+        List<PayrollRunItem> items = jdbc.query("""
+            SELECT * FROM payroll_run_items
+            WHERE run_id IN (%s)
+            ORDER BY run_id, employee_name, id
+            """.formatted(placeholders), this::mapItem, runIds);
+        Map<Long, List<PayrollRunItem>> itemsByRun = new HashMap<>();
+        for (PayrollRunItem item : items) {
+            itemsByRun.computeIfAbsent(item.runId, ignored -> new ArrayList<>()).add(item);
+        }
+        for (PayrollRun run : runs) {
+            run.items = List.copyOf(itemsByRun.getOrDefault(run.id, List.of()));
+        }
+        return runs;
     }
 
     private PayrollRun mapRun(ResultSet rs, int rowNum) throws SQLException {

@@ -122,6 +122,7 @@ class AuthAndPermissionIntegrationTest {
         ApiResponse registered = request("POST", "/api/v1/auth/register", Map.of(
             "email", email,
             "nickname", "Invited Member",
+            "avatar", "🧭|#123456",
             "password", password,
             "inviteToken", inviteToken
         ), null);
@@ -129,6 +130,14 @@ class AuthAndPermissionIntegrationTest {
         Map<String, Object> session = parseMap(registered.body());
         assertNotNull(session.get("token"));
         assertFalse(registered.body().contains("passwordHash"));
+        Map<String, Object> membership = jdbc.queryForMap("""
+            SELECT lm.nickname, lm.avatar
+            FROM ledger_members lm
+            JOIN users u ON u.id = lm.user_id
+            WHERE u.email = ?
+            """, email);
+        assertEquals("Invited Member", membership.get("nickname"));
+        assertEquals("🧭|#123456", membership.get("avatar"));
     }
 
     @Test

@@ -50,7 +50,7 @@ public class RecurringService {
         return store.recurringItems.values().stream()
             .filter(item -> item.userId == userId)
             .filter(item -> Objects.equals(item.companyId, company.id))
-            .sorted(Comparator.comparing(item -> item.nextExecution))
+            .sorted(Comparator.comparing((RecurringItem item) -> item.nextExecution).thenComparing(item -> item.id))
             .toList();
     }
 
@@ -248,7 +248,7 @@ public class RecurringService {
         return store.categories.values().stream()
             .filter(category -> category.userId == userId && Objects.equals(category.companyId, companyId) && category.type.equals(typeName))
             .map(category -> category.id)
-            .findFirst();
+            .min(Long::compareTo);
     }
 
     private RecurringItem copyRecurring(RecurringItem source) {

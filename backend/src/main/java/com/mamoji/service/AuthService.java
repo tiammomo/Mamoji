@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -82,9 +83,7 @@ public class AuthService {
         User user = matchedUser.get();
         loginSecurityService.recordSuccess(email, clientIp);
         if (passwordHasher.needsUpgrade(user.passwordHash)) {
-            user.passwordHash = passwordHasher.hash(password);
-            touch(user);
-            store.saveUser(user);
+            store.updatePasswordHashIfCurrent(user, passwordHasher.hash(password), InMemoryStore.now());
         }
         return authenticated(user);
     }
@@ -104,14 +103,19 @@ public class AuthService {
         }
         RegistrationInvite invite = invitationForRegistration(email, text(body.get("inviteToken")));
         validateNewPassword(password);
-        User user = store.user(
-            email,
-            textOr(body.get("nickname"), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
-            textOr(body.get("avatar"), "😊|#3370ff"),
-            passwordHasher.hash(password),
-            invite == null ? Roles.USER : invite.role,
-            invite == null ? Permissions.ALL : invite.permissions
-        );
+        User user;
+        try {
+            user = store.user(
+                email,
+                textOr(body.get("nickname"), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
+                textOr(body.get("avatar"), "😊|#3370ff"),
+                passwordHasher.hash(password),
+                invite == null ? Roles.USER : invite.role,
+                invite == null ? Permissions.ALL : invite.permissions
+            );
+        } catch (DuplicateKeyException ignored) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+        }
         if (invite != null) {
             invite.acceptedAt = OffsetDateTime.now().toString();
             invite.acceptedUserId = user.id;
@@ -179,8 +183,11 @@ public class AuthService {
         return accessControl.requireUser(authorization);
     }
 
+    @Transactional
     public User updateProfile(String authorization, Map<String, Object> body) {
-        User user = accessControl.requireUser(authorization);
+        User current = accessControl.requireUser(authorization);
+        User user = store.userForUpdate(current.id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
         if (body.containsKey("nickname")) {
             user.nickname = text(body.get("nickname"));
         }
@@ -193,8 +200,11 @@ public class AuthService {
         return user;
     }
 
+    @Transactional
     public Map<String, Object> changePassword(String authorization, Map<String, Object> body) {
-        User user = accessControl.requireUser(authorization);
+        User current = accessControl.requireUser(authorization);
+        User user = store.userForUpdate(current.id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
         if (!passwordHasher.matches(text(body.get("oldPassword")), user.passwordHash)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Old password is incorrect");
         }
@@ -235,7 +245,7 @@ public class AuthService {
             }
             return null;
         }
-        RegistrationInvite invite = store.findRegistrationInviteByToken(token)
+        RegistrationInvite invite = store.registrationInviteForUpdate(token)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid registration invite"));
         if (invite.acceptedAt != null && !invite.acceptedAt.isBlank()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration invite has already been used");

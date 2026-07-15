@@ -390,6 +390,49 @@ public class InMemoryStore {
         Map<String, String> params,
         PageRequest pageRequest
     ) {
+        TransactionQuery query = transactionQuery(userId, companyId, params);
+        String from = query.from();
+        List<Object> arguments = query.arguments();
+        Long total = jdbc.queryForObject("SELECT COUNT(*) " + from, Long.class, arguments.toArray());
+        List<Object> pageArguments = new ArrayList<>(arguments);
+        pageArguments.add(pageRequest.size());
+        pageArguments.add((long) pageRequest.page() * pageRequest.size());
+        List<TransactionRecord> content = jdbc.query(
+            "SELECT t.* " + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
+            (rs, rowNum) -> mapTransaction(rs),
+            pageArguments.toArray()
+        );
+        content.forEach(this::attachTransactionRelations);
+        long totalElements = total == null ? 0 : total;
+        int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
+        return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
+    }
+
+    public List<TransactionRecord> queryTransactionSummaryRows(
+        long userId,
+        long companyId,
+        Map<String, String> params
+    ) {
+        TransactionQuery query = transactionQuery(userId, companyId, params);
+        return jdbc.query("""
+            SELECT t.id, t.type, t.amount, t.note, t.category_id, t.account_id, t.is_refundable,
+                   c.name AS summary_category_name, a.name AS summary_account_name
+            """ + query.from(), (rs, rowNum) -> {
+            TransactionRecord transaction = new TransactionRecord();
+            transaction.id = rs.getLong("id");
+            transaction.type = rs.getInt("type");
+            transaction.amount = money(rs.getString("amount"));
+            transaction.note = rs.getString("note");
+            transaction.categoryId = rs.getLong("category_id");
+            transaction.accountId = rs.getLong("account_id");
+            transaction.isRefundable = rs.getInt("is_refundable") == 1;
+            transaction.categoryName = rs.getString("summary_category_name");
+            transaction.accountName = rs.getString("summary_account_name");
+            return transaction;
+        }, query.arguments().toArray());
+    }
+
+    private TransactionQuery transactionQuery(long userId, long companyId, Map<String, String> params) {
         StringBuilder from = new StringBuilder("""
             FROM transactions t
             LEFT JOIN categories c ON c.id = t.category_id
@@ -414,21 +457,10 @@ public class InMemoryStore {
             arguments.add(pattern);
             arguments.add(pattern);
         }
-
-        Long total = jdbc.queryForObject("SELECT COUNT(*) " + from, Long.class, arguments.toArray());
-        List<Object> pageArguments = new ArrayList<>(arguments);
-        pageArguments.add(pageRequest.size());
-        pageArguments.add((long) pageRequest.page() * pageRequest.size());
-        List<TransactionRecord> content = jdbc.query(
-            "SELECT t.* " + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
-            (rs, rowNum) -> mapTransaction(rs),
-            pageArguments.toArray()
-        );
-        content.forEach(this::attachTransactionRelations);
-        long totalElements = total == null ? 0 : total;
-        int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
-        return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
+        return new TransactionQuery(from.toString(), List.copyOf(arguments));
     }
+
+    private record TransactionQuery(String from, List<Object> arguments) { }
 
     private void addLongCondition(StringBuilder sql, List<Object> arguments, String column, String rawValue) {
         if (rawValue == null || rawValue.isBlank()) return;
@@ -586,7 +618,7 @@ public class InMemoryStore {
             INSERT INTO users (email, nickname, avatar, family_id, role, permissions, password_hash, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindUserInsert(ps, user));
-        users.put(user.id, user);
+        afterCommit(() -> users.put(user.id, user));
         return user;
     }
 
@@ -750,10 +782,16 @@ public class InMemoryStore {
         member.ledgerId = ledgerId;
         member.userId = userId;
         member.role = role;
-        Optional.ofNullable(users.get(userId)).ifPresent(user -> {
-            member.nickname = user.nickname;
-            member.avatar = user.avatar;
-        });
+        User memberUser = Optional.ofNullable(users.get(userId))
+            .orElseGet(() -> jdbc.query(
+                "SELECT * FROM users WHERE id = ?",
+                (rs, rowNum) -> mapUser(rs),
+                userId
+            ).stream().findFirst().orElse(null));
+        if (memberUser != null) {
+            member.nickname = memberUser.nickname;
+            member.avatar = memberUser.avatar;
+        }
         member.joinedAt = now();
         member.id = insert("""
             INSERT INTO ledger_members (ledger_id, user_id, role, nickname, avatar, joined_at)
@@ -817,7 +855,7 @@ public class InMemoryStore {
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindRegistrationInvite(ps, invite));
-        registrationInvites.put(invite.id, invite);
+        afterCommit(() -> registrationInvites.put(invite.id, invite));
         return invite;
     }
 
@@ -838,22 +876,35 @@ public class InMemoryStore {
     }
 
     public void saveRegistrationInvite(RegistrationInvite invite) {
-        registrationInvites.put(invite.id, invite);
         jdbc.update("""
             UPDATE registration_invites SET token = ?, email = ?, role = ?, permissions = ?, expires_at = ?,
                 accepted_at = ?, accepted_user_id = ?, invited_by_user_id = ?, created_at = ?, updated_at = ?
             WHERE id = ?
             """, invite.token, invite.email, invite.role, invite.permissions, invite.expiresAt, invite.acceptedAt,
             invite.acceptedUserId, invite.invitedByUserId, invite.createdAt, invite.updatedAt, invite.id);
+        afterCommit(() -> registrationInvites.put(invite.id, invite));
     }
 
     public void saveUser(User user) {
-        users.put(user.id, user);
         jdbc.update("""
             UPDATE users SET email = ?, nickname = ?, avatar = ?, family_id = ?, role = ?, permissions = ?,
                 password_hash = ?, created_at = ?, updated_at = ? WHERE id = ?
             """, user.email, user.nickname, user.avatar, user.familyId, user.role, user.permissions,
             user.passwordHash, user.createdAt, user.updatedAt, user.id);
+        afterCommit(() -> users.put(user.id, user));
+    }
+
+    public void updatePasswordHashIfCurrent(User current, String passwordHash, String updatedAt) {
+        int updated = jdbc.update("""
+            UPDATE users SET password_hash = ?, updated_at = ?
+            WHERE id = ? AND password_hash = ?
+            """, passwordHash, updatedAt, current.id, current.passwordHash);
+        if (updated == 1) {
+            User replacement = copyUser(current);
+            replacement.passwordHash = passwordHash;
+            replacement.updatedAt = updatedAt;
+            afterCommit(() -> users.put(replacement.id, replacement));
+        }
     }
 
     public void saveAccount(Account account) {
@@ -923,11 +974,11 @@ public class InMemoryStore {
 
     public void rememberToken(String token, long userId, String expiresAt) {
         String tokenKey = tokenStorageKey(token);
-        tokens.put(tokenKey, new AuthSession(userId, expiresAt));
         jdbc.update("""
             INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)
             ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
             """, tokenKey, userId, now(), expiresAt);
+        afterCommit(() -> tokens.put(tokenKey, new AuthSession(userId, expiresAt)));
     }
 
     public void revokeToken(String authorizationHeader) {
@@ -936,9 +987,11 @@ public class InMemoryStore {
         }
         String token = authorizationHeader.substring(7);
         String tokenKey = tokenStorageKey(token);
-        tokens.remove(tokenKey);
-        tokens.remove(token);
         jdbc.update("DELETE FROM auth_tokens WHERE token IN (?, ?)", tokenKey, token);
+        afterCommit(() -> {
+            tokens.remove(tokenKey);
+            tokens.remove(token);
+        });
     }
 
     public void deleteAccount(long id) {
@@ -967,8 +1020,8 @@ public class InMemoryStore {
     }
 
     public void deleteUser(long id) {
-        users.remove(id);
         jdbc.update("DELETE FROM users WHERE id = ?", id);
+        afterCommit(() -> users.remove(id));
     }
 
     public void deleteLedgerMember(long ledgerId, long userId) {
@@ -1006,8 +1059,43 @@ public class InMemoryStore {
         }
     }
 
+    private User copyUser(User source) {
+        User copy = new User();
+        copy.id = source.id;
+        copy.email = source.email;
+        copy.nickname = source.nickname;
+        copy.avatar = source.avatar;
+        copy.familyId = source.familyId;
+        copy.role = source.role;
+        copy.permissions = source.permissions;
+        copy.passwordHash = source.passwordHash;
+        copy.createdAt = source.createdAt;
+        copy.updatedAt = source.updatedAt;
+        return copy;
+    }
+
     public Optional<User> findUserByEmail(String email) {
         return users.values().stream().filter(user -> user.email.equalsIgnoreCase(email)).findFirst();
+    }
+
+    public Optional<User> userForUpdate(long id) {
+        List<User> matches = jdbc.query("SELECT * FROM users WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapUser(rs), id);
+        return matches.stream().findFirst();
+    }
+
+    public Optional<RegistrationInvite> registrationInviteForUpdate(String token) {
+        List<RegistrationInvite> matches = jdbc.query(
+            "SELECT * FROM registration_invites WHERE token = ? FOR UPDATE",
+            (rs, rowNum) -> mapRegistrationInvite(rs),
+            token
+        );
+        return matches.stream().findFirst();
+    }
+
+    public long lockAndCountUsers() {
+        jdbc.execute("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE");
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class);
+        return count == null ? 0 : count;
     }
 
     public Optional<Account> accountForUpdate(long id) {
@@ -1023,6 +1111,21 @@ public class InMemoryStore {
     public Optional<Budget> budgetForUpdate(long id) {
         List<Budget> matches = jdbc.query("SELECT * FROM budgets WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapBudget(rs), id);
         return matches.stream().findFirst();
+    }
+
+    public Optional<Ledger> ledgerForUpdate(long id) {
+        List<Ledger> matches = jdbc.query("SELECT * FROM ledgers WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapLedger(rs), id);
+        return matches.stream().findFirst();
+    }
+
+    public boolean ledgerMemberExists(long ledgerId, long userId) {
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
+            Integer.class,
+            ledgerId,
+            userId
+        );
+        return count != null && count > 0;
     }
 
     public boolean accountHasTransactions(long accountId) {

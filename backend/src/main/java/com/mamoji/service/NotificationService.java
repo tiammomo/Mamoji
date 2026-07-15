@@ -30,6 +30,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
@@ -117,6 +119,7 @@ public class NotificationService {
             """);
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public PagedResponse<NotificationView> list(String authorization, Map<String, String> params) {
         User user = accessControl.requireUser(authorization);
         boolean unreadOnly = bool(params.get("unreadOnly"));
@@ -132,7 +135,7 @@ public class NotificationService {
             this::mapNotification,
             user.id,
             pageRequest.size(),
-            pageRequest.page() * pageRequest.size()
+            (long) pageRequest.page() * pageRequest.size()
         );
         long totalElements = total == null ? 0 : total;
         int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
@@ -141,26 +144,18 @@ public class NotificationService {
 
     public Map<String, Object> summary(String authorization) {
         User user = accessControl.requireUser(authorization);
-        Integer unreadCount = jdbc.queryForObject(
-            "SELECT count(*) FROM notifications WHERE user_id = ? AND read_at IS NULL",
-            Integer.class,
-            user.id
-        );
-        Integer pendingDeliveryCount = jdbc.queryForObject(
-            "SELECT count(*) FROM notification_deliveries WHERE user_id = ? AND status IN ('pending', 'failed', 'processing')",
-            Integer.class,
-            user.id
-        );
-        Integer failedDeliveryCount = jdbc.queryForObject(
-            "SELECT count(*) FROM notification_deliveries WHERE user_id = ? AND status = 'dead'",
-            Integer.class,
-            user.id
-        );
-        return Map.of(
-            "unreadCount", unreadCount == null ? 0 : unreadCount,
-            "pendingDeliveryCount", pendingDeliveryCount == null ? 0 : pendingDeliveryCount,
-            "failedDeliveryCount", failedDeliveryCount == null ? 0 : failedDeliveryCount
-        );
+        return jdbc.queryForObject("""
+            SELECT
+                (SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL) AS unread_count,
+                (SELECT COUNT(*) FROM notification_deliveries
+                    WHERE user_id = ? AND status IN ('pending', 'failed', 'processing')) AS pending_delivery_count,
+                (SELECT COUNT(*) FROM notification_deliveries
+                    WHERE user_id = ? AND status = 'dead') AS failed_delivery_count
+            """, (rs, rowNum) -> Map.of(
+            "unreadCount", rs.getLong("unread_count"),
+            "pendingDeliveryCount", rs.getLong("pending_delivery_count"),
+            "failedDeliveryCount", rs.getLong("failed_delivery_count")
+        ), user.id, user.id, user.id);
     }
 
     public NotificationPreference preference(String authorization) {

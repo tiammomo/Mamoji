@@ -41,14 +41,11 @@ public class AccessControlService {
 
     public User requirePeopleManager(String authorization) {
         User user = requireUser(authorization);
-        Optional<Employee> employee = enterpriseStore.employees.values().stream()
+        boolean peopleRole = enterpriseStore.employees.values().stream()
             .filter(candidate -> Objects.equals(candidate.userId, user.id))
             .filter(this::hasActiveCompanyAccess)
             .filter(candidate -> hasCompanyWideWriteScope(candidate.accessScope))
-            .findFirst();
-        boolean peopleRole = employee
-            .map(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("hr_admin"))
-            .orElse(false);
+            .anyMatch(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("hr_admin"));
         if (user.role == Roles.ADMIN || peopleRole) {
             return user;
         }
@@ -57,14 +54,11 @@ public class AccessControlService {
 
     public User requireFinanceManager(String authorization) {
         User user = requireUser(authorization);
-        Optional<Employee> employee = enterpriseStore.employees.values().stream()
+        boolean financeRole = enterpriseStore.employees.values().stream()
             .filter(candidate -> Objects.equals(candidate.userId, user.id))
             .filter(this::hasActiveCompanyAccess)
             .filter(candidate -> hasCompanyWideWriteScope(candidate.accessScope))
-            .findFirst();
-        boolean financeRole = employee
-            .map(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("finance_admin"))
-            .orElse(false);
+            .anyMatch(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("finance_admin"));
         if (user.role == Roles.ADMIN || financeRole) {
             return user;
         }
@@ -161,7 +155,7 @@ public class AccessControlService {
             .filter(employee -> employee.companyId == companyId)
             .filter(employee -> Objects.equals(employee.userId, user.id))
             .filter(this::hasActiveCompanyAccess)
-            .findFirst();
+            .min(Comparator.comparingLong(employee -> employee.id));
     }
 
     public Company resolveCompany(User user, Long companyId) {

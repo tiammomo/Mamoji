@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -28,6 +29,7 @@ import java.util.Optional;
 import java.util.function.Predicate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -60,12 +62,14 @@ public class AccountingService {
     public List<Account> listAccounts(String authorization, Long companyId) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        return store.accounts.values().stream()
+        List<Account> accounts = store.accounts.values().stream()
             .filter(account -> account.userId == user.id)
             .filter(account -> Objects.equals(account.companyId, company.id))
-            .peek(this::attachAccountMetrics)
+            .map(this::copyAccount)
             .sorted(Comparator.comparing(account -> account.id))
             .toList();
+        attachAccountMetrics(accounts, user.id, company.id);
+        return accounts;
     }
 
     public Account getAccount(String authorization, long id) {
@@ -74,10 +78,19 @@ public class AccountingService {
 
     public Account getAccount(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        Account account = require(store.accounts.get(id), "Account not found");
+        Account account = copyAccount(require(store.accounts.get(id), "Account not found"));
         Company company = accessControl.resolveCompany(user, companyId == null ? account.companyId : companyId);
         assertScopedOwner(account.userId, account.companyId, user.id, company.id);
         attachAccountMetrics(account);
+        return account;
+    }
+
+    Account getAccountForUpdate(String authorization, long id, Long companyId) {
+        User user = requireUser(authorization);
+        Account account = store.accountForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+        Company company = accessControl.resolveCompany(user, companyId == null ? account.companyId : companyId);
+        assertScopedOwner(account.userId, account.companyId, user.id, company.id);
         return account;
     }
 
@@ -430,12 +443,14 @@ public class AccountingService {
         store.deleteBudget(budget.id);
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public PagedResponse<TransactionRecord> listTransactions(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
         return store.queryTransactions(user.id, company.id, params, PageRequest.from(params));
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Map<String, Object> transactionSummary(String authorization, Map<String, String> params) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
@@ -449,12 +464,7 @@ public class AccountingService {
         long largeCount = 0;
         long reviewCount = 0;
 
-        List<TransactionRecord> transactions = store.transactions.values().stream()
-            .filter(tx -> tx.userId == user.id)
-            .filter(tx -> Objects.equals(tx.companyId, company.id))
-            .peek(store::attachTransactionRelations)
-            .filter(filterTransaction(params))
-            .toList();
+        List<TransactionRecord> transactions = store.queryTransactionSummaryRows(user.id, company.id, params);
         for (TransactionRecord tx : transactions) {
             rows += 1;
             if (tx.type == 1) income = income.add(tx.amount);
@@ -782,6 +792,55 @@ public class AccountingService {
         account.riskLevel = accountRisk(account);
     }
 
+    private void attachAccountMetrics(List<Account> accounts, long userId, long companyId) {
+        Map<Long, AccountMetrics> metricsByAccount = new HashMap<>();
+        YearMonth current = YearMonth.now();
+        for (TransactionRecord tx : store.transactions.values()) {
+            if (tx.userId != userId || !Objects.equals(tx.companyId, companyId)) {
+                continue;
+            }
+            AccountMetrics metrics = metricsByAccount.computeIfAbsent(tx.accountId, ignored -> new AccountMetrics());
+            metrics.transactionCount++;
+            if (metrics.lastTransactionDate == null || tx.date.compareTo(metrics.lastTransactionDate) > 0) {
+                metrics.lastTransactionDate = tx.date;
+            }
+            if (sameMonth(tx.date, current)) {
+                if (tx.type == 1) {
+                    metrics.monthlyIncome = metrics.monthlyIncome.add(tx.amount);
+                } else if (tx.type == 2) {
+                    metrics.monthlyExpense = metrics.monthlyExpense.add(tx.amount);
+                } else if (tx.type == 3) {
+                    metrics.monthlyExpense = metrics.monthlyExpense.subtract(tx.amount);
+                }
+            }
+        }
+        for (Account account : accounts) {
+            AccountMetrics metrics = metricsByAccount.getOrDefault(account.id, new AccountMetrics());
+            account.monthlyIncome = metrics.monthlyIncome;
+            account.monthlyExpense = metrics.monthlyExpense.max(BigDecimal.ZERO);
+            account.currentMonthNetFlow = account.monthlyIncome.subtract(account.monthlyExpense);
+            account.transactionCount = metrics.transactionCount;
+            account.lastTransactionDate = metrics.lastTransactionDate;
+            if (account.availableBalance == null) {
+                account.availableBalance = account.balance.subtract(nullToZero(account.frozenAmount));
+            }
+            if (account.creditLimit == null) {
+                account.creditLimit = BigDecimal.ZERO;
+            }
+            if (account.frozenAmount == null) {
+                account.frozenAmount = BigDecimal.ZERO;
+            }
+            account.riskLevel = accountRisk(account);
+        }
+    }
+
+    private static final class AccountMetrics {
+        private BigDecimal monthlyIncome = BigDecimal.ZERO;
+        private BigDecimal monthlyExpense = BigDecimal.ZERO;
+        private long transactionCount;
+        private String lastTransactionDate;
+    }
+
     private String accountRisk(Account account) {
         if (account.status == 0) {
             return "medium";
@@ -1000,37 +1059,6 @@ public class AccountingService {
         risk.put("categoryCurrentMonth", categoryCurrent);
         risk.put("categoryLastMonth", categoryLast);
         return risk;
-    }
-
-    private Predicate<TransactionRecord> filterTransaction(Map<String, String> params) {
-        return tx -> {
-            if (params.get("type") != null && tx.type != intParam(params, "type", tx.type)) {
-                return false;
-            }
-            if (params.get("categoryId") != null && tx.categoryId != longParam(params, "categoryId", tx.categoryId)) {
-                return false;
-            }
-            if (params.get("accountId") != null && tx.accountId != longParam(params, "accountId", tx.accountId)) {
-                return false;
-            }
-            if (params.get("startDate") != null && tx.date.compareTo(params.get("startDate")) < 0) {
-                return false;
-            }
-            if (params.get("endDate") != null && tx.date.compareTo(params.get("endDate")) > 0) {
-                return false;
-            }
-            if (params.get("minAmount") != null && tx.amount.compareTo(decimalParam(params, "minAmount", tx.amount)) < 0) {
-                return false;
-            }
-            if (params.get("maxAmount") != null && tx.amount.compareTo(decimalParam(params, "maxAmount", tx.amount)) > 0) {
-                return false;
-            }
-            String keyword = params.getOrDefault("keyword", "").toLowerCase();
-            return keyword.isBlank()
-                || text(tx.note).toLowerCase().contains(keyword)
-                || (tx.categoryName != null && tx.categoryName.toLowerCase().contains(keyword))
-                || (tx.accountName != null && tx.accountName.toLowerCase().contains(keyword));
-        };
     }
 
     private String transactionSearchText(TransactionRecord tx) {

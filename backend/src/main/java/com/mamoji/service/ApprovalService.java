@@ -21,6 +21,7 @@ import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -55,6 +56,7 @@ public class ApprovalService {
         this.receiptService = receiptService;
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public PagedResponse<ApprovalRequest> list(String authorization, Map<String, String> params) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
@@ -89,20 +91,38 @@ public class ApprovalService {
         return new PagedResponse<>(content, totalElements, totalPages, page.size(), page.page());
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Object> summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
         String accessClause = user.role == Roles.ADMIN ? "" : " AND (applicant_user_id = ? OR assignee_user_id = ?)";
-        Object[] args = user.role == Roles.ADMIN ? new Object[] { company.id } : new Object[] { company.id, user.id, user.id };
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("total", count("SELECT COUNT(*) FROM approval_requests WHERE company_id = ?" + accessClause, args));
-        result.put("pending", count("SELECT COUNT(*) FROM approval_requests WHERE company_id = ? AND status = 'pending'" + accessClause, args));
-        result.put("approved", count("SELECT COUNT(*) FROM approval_requests WHERE company_id = ? AND status = 'approved'" + accessClause, args));
-        result.put("rejected", count("SELECT COUNT(*) FROM approval_requests WHERE company_id = ? AND status = 'rejected'" + accessClause, args));
-        result.put("minePending", count("SELECT COUNT(*) FROM approval_requests WHERE company_id = ? AND status = 'pending' AND assignee_user_id = ?", company.id, user.id));
-        return result;
+        List<Object> args = new ArrayList<>();
+        args.add(user.id);
+        args.add(company.id);
+        if (user.role != Roles.ADMIN) {
+            args.add(user.id);
+            args.add(user.id);
+        }
+        return jdbc.queryForObject("""
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                   COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+                   COUNT(*) FILTER (WHERE status = 'rejected') AS rejected,
+                   COUNT(*) FILTER (WHERE status = 'pending' AND assignee_user_id = ?) AS mine_pending
+            FROM approval_requests
+            WHERE company_id = ?
+            """ + accessClause, (rs, rowNum) -> {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("total", rs.getLong("total"));
+            result.put("pending", rs.getLong("pending"));
+            result.put("approved", rs.getLong("approved"));
+            result.put("rejected", rs.getLong("rejected"));
+            result.put("minePending", rs.getLong("mine_pending"));
+            return result;
+        }, args.toArray());
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public ApprovalDetail get(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequest(id);
@@ -125,6 +145,12 @@ public class ApprovalService {
         Long entityId = optionalLong(body.get("entityId")).orElse(null);
         validateEntity(user, company.id, entityType, entityId);
         if (entityId != null) {
+            String leaseKey = "approval:" + company.id + ":" + entityType + ":" + entityId;
+            jdbc.query(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
+                leaseKey
+            );
             Integer pending = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM approval_requests
                 WHERE company_id = ? AND entity_type = ? AND entity_id = ? AND status = 'pending'
@@ -262,11 +288,6 @@ public class ApprovalService {
         if (value == null || value.isBlank()) return;
         where.append(" AND ").append(column).append(" = ?");
         args.add(value);
-    }
-
-    private long count(String sql, Object... args) {
-        Long value = jdbc.queryForObject(sql, Long.class, args);
-        return value == null ? 0 : value;
     }
 
     private String allowed(String value, Set<String> values, String field) {

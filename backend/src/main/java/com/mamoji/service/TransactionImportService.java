@@ -24,7 +24,8 @@ import java.util.Objects;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -38,15 +39,18 @@ public class TransactionImportService {
     private final AccessControlService accessControl;
     private final InMemoryStore store;
     private final AccountingService accountingService;
+    private final TransactionTemplate writeTransaction;
 
     public TransactionImportService(
         AccessControlService accessControl,
         InMemoryStore store,
-        AccountingService accountingService
+        AccountingService accountingService,
+        PlatformTransactionManager transactionManager
     ) {
         this.accessControl = accessControl;
         this.store = store;
         this.accountingService = accountingService;
+        this.writeTransaction = new TransactionTemplate(transactionManager);
     }
 
     public byte[] template(String authorization) {
@@ -63,7 +67,6 @@ public class TransactionImportService {
         return response(parsed, 0, 0, List.of(), false);
     }
 
-    @Transactional
     public Map<String, Object> commit(
         String authorization,
         MultipartFile file,
@@ -75,6 +78,24 @@ public class TransactionImportService {
         if (parsed.invalidRows() > 0) {
             return response(parsed, 0, 0, List.of(), false);
         }
+        Map<String, Object> result = writeTransaction.execute(status -> commitRows(
+            authorization,
+            context,
+            parsed,
+            skipDuplicates
+        ));
+        if (result == null) {
+            throw new IllegalStateException("Transaction import did not produce a result");
+        }
+        return result;
+    }
+
+    private Map<String, Object> commitRows(
+        String authorization,
+        ImportContext context,
+        ParsedImport parsed,
+        boolean skipDuplicates
+    ) {
         int imported = 0;
         int skipped = 0;
         List<Long> ids = new ArrayList<>();

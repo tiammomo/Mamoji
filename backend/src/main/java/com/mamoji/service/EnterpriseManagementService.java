@@ -61,7 +61,7 @@ public class EnterpriseManagementService {
     public Map<String, Object> summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<Employee> employees = enterpriseStore.sortedEmployees(company.id);
+        List<Employee> employees = enterpriseStore.sortedEmployees(company.id, false);
         List<TaxItem> taxes = enterpriseStore.sortedTaxItems(company.id);
         BigDecimal monthlyPeopleCost = employees.stream()
             .filter(employee -> !employee.status.equals("departed"))

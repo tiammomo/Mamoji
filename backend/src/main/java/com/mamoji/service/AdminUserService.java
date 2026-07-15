@@ -11,10 +11,10 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.intValue;
-import static com.mamoji.service.support.DomainSupport.require;
 import static com.mamoji.service.support.DomainSupport.touch;
 
 @Service
@@ -39,9 +39,11 @@ public class AdminUserService {
         return PagedResponse.of(users, PageRequest.from(params));
     }
 
+    @Transactional
     public User updateUser(String authorization, long id, Map<String, Object> body) {
         User operator = accessControl.requireAdmin(authorization);
-        User user = require(store.users.get(id), "User not found");
+        User user = store.userForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
         if (body.containsKey("role")) {
             user.role = intValue(body.get("role"), user.role);
         }
@@ -54,12 +56,14 @@ public class AdminUserService {
         return user;
     }
 
+    @Transactional
     public void deleteUser(String authorization, long id) {
         User operator = accessControl.requireAdmin(authorization);
-        if (store.users.size() <= 1) {
+        if (store.lockAndCountUsers() <= 1) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot delete last user");
         }
-        User user = require(store.users.get(id), "User not found");
+        User user = store.userForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
         store.deleteUser(id);
         enterpriseStore.auditLog(0, "user", id, "delete", "删除用户: " + user.email, operator.id, operator.nickname);
     }

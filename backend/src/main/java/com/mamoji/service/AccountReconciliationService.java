@@ -58,7 +58,7 @@ public class AccountReconciliationService {
         Map<String, Object> body
     ) {
         User operator = accessControl.requireUser(authorization);
-        Account account = accountingService.getAccount(authorization, accountId, companyId);
+        Account account = accountingService.getAccountForUpdate(authorization, accountId, companyId);
         String statementDate = validDate(textOr(body.get("statementDate"), LocalDate.now().toString()));
         BigDecimal statementBalance = number(body.get("statementBalance"), account.balance).setScale(2, RoundingMode.HALF_UP);
         BigDecimal systemBalance = account.balance.setScale(2, RoundingMode.HALF_UP);

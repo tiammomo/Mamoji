@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Locale;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class GlobalSearchService {
@@ -19,6 +21,7 @@ public class GlobalSearchService {
         this.accessControl = accessControl;
     }
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public SearchResponse search(String authorization, Long companyId, String keyword, Integer requestedLimit) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
