@@ -189,7 +189,7 @@ export default function OrganizationPage() {
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
       <PageHeader
-        title="组织架构"
+        title="组织人员"
         subtitle={summary?.company
           ? `${summary.company.name} · 部门、岗位、负责人、成本中心和部门预算`
           : "部门、岗位、负责人、成本中心和部门预算"}

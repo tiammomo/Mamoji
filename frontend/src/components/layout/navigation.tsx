@@ -22,6 +22,8 @@ export type NavigationItem = {
   icon: ReactNode;
   keywords: string[];
   adminOnly?: boolean;
+  module?: string;
+  anyPermission?: string[];
 };
 
 export type NavigationGroup = {
@@ -33,50 +35,46 @@ const companyNavigation: NavigationGroup[] = [
   {
     labelKey: "workspaceGroup",
     items: [
-      { key: "/dashboard", labelKey: "dashboard", icon: <IconHome />, keywords: ["首页", "工作台", "home", "workspace"] },
-      { key: "/approvals", labelKey: "approvals", icon: <IconCheckCircle />, keywords: ["审批", "待办", "报销", "付款", "approval", "workflow"] },
+      { key: "/dashboard", labelKey: "dashboard", icon: <IconHome />, keywords: ["首页", "工作台", "home", "workspace"], module: "workspace" },
+      { key: "/approvals", labelKey: "approvals", icon: <IconCheckCircle />, keywords: ["审批", "待办", "报销", "付款", "approval", "workflow"], module: "approvals", anyPermission: ["approval.manage"] },
     ],
   },
   {
     labelKey: "operationsGroup",
     items: [
-      { key: "/operations", labelKey: "operationsOverview", icon: <IconDashboard />, keywords: ["经营", "总览", "operations"] },
-      { key: "/transactions", labelKey: "transactions", icon: <IconSwap />, keywords: ["流水", "收支", "交易", "ledger", "transaction"] },
-      { key: "/budgets", labelKey: "budgets", icon: <IconCalendar />, keywords: ["预算", "budget"] },
-      { key: "/reports", labelKey: "reports", icon: <IconStorage />, keywords: ["报表", "分析", "report", "analysis"] },
-      { key: "/recurring", labelKey: "recurring", icon: <IconCalendar />, keywords: ["周期", "固定", "提醒", "recurring"] },
+      { key: "/operations", labelKey: "operationsOverview", icon: <IconDashboard />, keywords: ["经营", "总览", "operations"], module: "operations", anyPermission: ["operations.read", "reports.read"] },
+      { key: "/transactions", labelKey: "transactions", icon: <IconSwap />, keywords: ["流水", "收支", "交易", "ledger", "transaction"], module: "transactions", anyPermission: ["operations.read", "operations.write", "finance.read"] },
+      { key: "/budgets", labelKey: "budgets", icon: <IconCalendar />, keywords: ["预算", "budget"], module: "budgets", anyPermission: ["budget.manage", "operations.read"] },
+      { key: "/reports", labelKey: "reports", icon: <IconStorage />, keywords: ["报表", "分析", "report", "analysis"], module: "reports", anyPermission: ["reports.read"] },
+      { key: "/recurring", labelKey: "recurring", icon: <IconCalendar />, keywords: ["周期", "固定", "提醒", "recurring"], module: "recurring", anyPermission: ["operations.read", "operations.write"] },
     ],
   },
   {
     labelKey: "financeGroup",
     items: [
-      { key: "/finance", labelKey: "financeOverview", icon: <IconDashboard />, keywords: ["财务", "资金", "finance"] },
-      { key: "/accounts", labelKey: "accounts", icon: <IconSafe />, keywords: ["账户", "银行", "现金", "account"] },
-      { key: "/receipts", labelKey: "receipts", icon: <IconFile />, keywords: ["票据", "发票", "凭证", "receipt", "voucher"] },
+      { key: "/finance", labelKey: "financeOverview", icon: <IconDashboard />, keywords: ["财务", "资金", "finance"], module: "finance", anyPermission: ["finance.read"] },
+      { key: "/accounts", labelKey: "accounts", icon: <IconSafe />, keywords: ["账户", "银行", "现金", "account"], module: "accounts", anyPermission: ["finance.read"] },
+      { key: "/receipts", labelKey: "receipts", icon: <IconFile />, keywords: ["票据", "发票", "凭证", "receipt", "voucher"], module: "evidence", anyPermission: ["finance.read"] },
+      { key: "/tax", labelKey: "taxManagement", icon: <IconFile />, keywords: ["税务", "申报", "合规", "tax"], module: "tax", anyPermission: ["tax.manage"] },
     ],
   },
   {
-    labelKey: "taxGroup",
+    labelKey: "peopleCostGroup",
     items: [
-      { key: "/tax", labelKey: "taxManagement", icon: <IconFile />, keywords: ["税务", "申报", "合规", "tax"] },
-    ],
-  },
-  {
-    labelKey: "hrGroup",
-    items: [
-      { key: "/hr/organization", labelKey: "organizationManagement", icon: <IconBranch />, keywords: ["组织", "部门", "organization"] },
-      { key: "/admin/users", labelKey: "userManagement", icon: <IconUserGroup />, keywords: ["员工", "人员", "用户", "employee", "people"] },
-      { key: "/admin/compensation", labelKey: "compensationManagement", icon: <IconIdcard />, keywords: ["薪酬", "工资", "payroll", "compensation"] },
-      { key: "/hr/benefits", labelKey: "benefitsManagement", icon: <IconSafe />, keywords: ["福利", "社保", "公积金", "benefits"] },
-      { key: "/hr/performance", labelKey: "performanceManagement", icon: <IconTrophy />, keywords: ["绩效", "performance"] },
+      { key: "/hr/organization", labelKey: "organizationPeople", icon: <IconBranch />, keywords: ["组织", "部门", "人员", "organization", "people"], module: "people-core", anyPermission: ["people.read"] },
+      { key: "/admin/compensation", labelKey: "payrollClose", icon: <IconIdcard />, keywords: ["薪酬", "工资", "月结", "payroll", "compensation"], module: "workforce-cost", anyPermission: ["workforce.cost.manage"] },
+      { key: "/hr/workforce-cost", labelKey: "workforceCost", icon: <IconDashboard />, keywords: ["人力成本", "部门成本", "趋势", "workforce", "cost"], module: "workforce-cost", anyPermission: ["workforce.cost.read", "workforce.cost.manage"] },
+      { key: "/hr/benefits", labelKey: "benefitsManagement", icon: <IconSafe />, keywords: ["福利", "社保", "公积金", "benefits"], module: "talent-suite", anyPermission: ["people.read"] },
+      { key: "/hr/performance", labelKey: "performanceManagement", icon: <IconTrophy />, keywords: ["绩效", "performance"], module: "talent-suite", anyPermission: ["people.read"] },
     ],
   },
   {
     labelKey: "systemGroup",
     items: [
-      { key: "/settings", labelKey: "settings", icon: <IconSettings />, keywords: ["设置", "偏好", "settings"] },
-      { key: "/policy-center", labelKey: "policyCenter", icon: <IconFile />, keywords: ["政策", "规则", "policy"] },
-      { key: "/backup", labelKey: "backup", icon: <IconStorage />, keywords: ["备份", "导出", "backup"], adminOnly: true },
+      { key: "/settings", labelKey: "settings", icon: <IconSettings />, keywords: ["设置", "偏好", "settings"], module: "settings" },
+      { key: "/admin/users", labelKey: "companyPermissions", icon: <IconUserGroup />, keywords: ["公司", "用户", "权限", "成员", "permission", "member"], module: "people-core", anyPermission: ["admin.permissions", "company.manage"] },
+      { key: "/policy-center", labelKey: "policyCenter", icon: <IconFile />, keywords: ["政策", "规则", "policy"], module: "policy", anyPermission: ["policy.read"] },
+      { key: "/backup", labelKey: "backup", icon: <IconStorage />, keywords: ["备份", "导出", "backup"], adminOnly: true, module: "backup", anyPermission: ["admin.permissions"] },
     ],
   },
 ];
@@ -107,12 +105,30 @@ const householdNavigation: NavigationGroup[] = [
   },
 ];
 
-export function navigationFor(subjectType: SubjectType, isAdmin = false) {
+export type NavigationAccess = {
+  isAdmin?: boolean;
+  permissions?: Iterable<string>;
+  modules?: Iterable<string>;
+};
+
+const DEFAULT_INTERNAL_MODULES = new Set([
+  "workspace", "approvals", "operations", "transactions", "budgets", "reports", "recurring",
+  "finance", "accounts", "evidence", "people-core", "workforce-cost", "settings",
+]);
+
+export function navigationFor(subjectType: SubjectType, access: NavigationAccess = {}) {
   const source = subjectType === "household" ? householdNavigation : companyNavigation;
+  const permissions = new Set(access.permissions || []);
+  const modules = access.modules ? new Set(access.modules) : DEFAULT_INTERNAL_MODULES;
   return source
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.adminOnly || isAdmin),
+      items: group.items.filter((item) => {
+        if (item.adminOnly && !access.isAdmin) return false;
+        if (item.module && !modules.has(item.module)) return false;
+        if (item.anyPermission?.length && !access.isAdmin && !item.anyPermission.some((key) => permissions.has(key))) return false;
+        return true;
+      }),
     }))
     .filter((group) => group.items.length > 0);
 }

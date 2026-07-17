@@ -53,9 +53,14 @@ export default function Header() {
     controller: AbortController;
     promise: Promise<void>;
   } | null>(null);
+  const accessContext = useAuthStore((state) => state.accessContext);
   const navigationGroups = useMemo(
-    () => navigationFor(activeSubjectType, user?.role === 1),
-    [activeSubjectType, user?.role]
+    () => navigationFor(activeSubjectType, {
+      isAdmin: user?.role === 1,
+      permissions: accessContext?.permissions,
+      modules: accessContext?.modules.enabled,
+    }),
+    [accessContext?.modules.enabled, accessContext?.permissions, activeSubjectType, user?.role]
   );
   const navigationItems = useMemo(() => flattenNavigation(navigationGroups), [navigationGroups]);
   const currentNavigationItem = activeNavigationItem(pathname, navigationItems);

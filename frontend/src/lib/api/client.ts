@@ -10,6 +10,8 @@ const SUBJECT_SCOPED_PATHS = [
   "/recurring",
   "/approvals",
   "/search",
+  "/workspace",
+  "/workforce-cost",
 ];
 
 const activeCompanyId = () => {

@@ -56,6 +56,11 @@ export interface TransactionImportResult {
   rows: TransactionImportRow[];
 }
 
+const requestKey = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 export const transactionApi = {
   list: (params: TransactionQuery) =>
     client.get<PaginatedResponse<Transaction>>("/transactions", { params }),
@@ -74,7 +79,9 @@ export const transactionApi = {
   },
   get: (id: number) => client.get<Transaction>(`/transactions/${id}`),
   create: (data: CreateTransactionDTO) =>
-    client.post<{ transaction: Transaction; risk: RiskAssessment }>("/transactions", data),
+    client.post<{ transaction: Transaction; risk: RiskAssessment; replayed?: boolean }>("/transactions", data, {
+      headers: { "Idempotency-Key": requestKey() },
+    }),
   update: (id: number, data: UpdateTransactionDTO) =>
     client.put<Transaction>(`/transactions/${id}`, data),
   delete: (id: number) => client.delete(`/transactions/${id}`),

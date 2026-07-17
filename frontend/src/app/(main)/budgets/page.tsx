@@ -33,7 +33,7 @@ type RiskFilter = "all" | RiskLevel;
 type BudgetTypeKey = "total" | "category" | "hr" | "tax" | "project";
 type BudgetTypeFilter = "all" | BudgetTypeKey;
 type QuickView = "all" | "active" | "warning" | "overrun" | "thisMonth";
-type BudgetFormValues = CreateBudgetDTO & { categoryId?: number; status?: BudgetStatus };
+type BudgetFormValues = CreateBudgetDTO & { version?: number; categoryId?: number; status?: BudgetStatus };
 
 const statusConfig: Record<BudgetStatus, { label: string; color: string }> = {
   0: { label: "已停用", color: "gray" },
@@ -376,7 +376,12 @@ export default function BudgetsPage() {
         };
 
         if (editingId) {
-          await budgetApi.update(editingId, { ...data, status: values.status });
+          await budgetApi.update(editingId, {
+            ...data,
+            version: Number(values.version ?? 0),
+            clearCategory: !values.categoryId,
+            status: values.status,
+          });
           Message.success("更新成功");
         } else {
           await budgetApi.create(data);

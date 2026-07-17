@@ -454,3 +454,19 @@ export interface PermissionMatrix {
   permissions: { key: string; name: string }[];
   matrix: { role: string; defaultScope: string; permissions: string[] }[];
 }
+
+export interface ProductModules {
+  mode: string;
+  enabled: string[];
+}
+
+export interface AccessContext {
+  actor: import("./user").User;
+  company: Company;
+  companies: Company[];
+  role: AccessRole | string;
+  scope: AccessScope | string;
+  departmentId: number | null;
+  permissions: string[];
+  modules: ProductModules;
+}

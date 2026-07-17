@@ -927,7 +927,7 @@ export default function CompensationPage() {
   return (
     <div className="mx-auto max-w-[1600px] animate-fade-in">
       <PageHeader
-        title="人员薪酬"
+        title="薪酬月结"
         subtitle={summary?.company
           ? `${summary.company.name} · 每人独立维护工资、考勤后应发、累计预扣个税、银行卡到账和公司总成本`
           : "每人独立维护工资、考勤后应发、累计预扣个税、银行卡到账和公司总成本"}

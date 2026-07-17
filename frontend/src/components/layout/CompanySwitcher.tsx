@@ -4,6 +4,7 @@ import { Dropdown, Form, Input, Message, Modal, Select, Spin } from "@arco-desig
 import { IconBranch, IconCheck, IconDown, IconLocation, IconPlus } from "@arco-design/web-react/icon";
 import { enterpriseApi } from "@/lib/api/enterprise";
 import { useAppStore } from "@/lib/stores/appStore";
+import { useAuthStore } from "@/lib/stores/authStore";
 import type { Company } from "@/lib/types";
 import { useTranslations } from "next-intl";
 
@@ -44,12 +45,25 @@ export default function CompanySwitcher() {
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
   const setActiveCompanyId = useAppStore((state) => state.setActiveCompanyId);
   const setActiveSubjectType = useAppStore((state) => state.setActiveSubjectType);
+  const user = useAuthStore((state) => state.user);
+  const accessContext = useAuthStore((state) => state.accessContext);
+  const refreshAccessContext = useAuthStore((state) => state.refreshAccessContext);
+  const householdEnabled = accessContext?.modules.enabled.includes("household") ?? false;
+  const canCreateCompany = user?.role === 1 || accessContext?.permissions.includes("company.create") === true;
   const selectedEntityType = Form.useWatch("entityType", form) || "company";
 
   const activeCompany = useMemo(
     () => companies.find((company) => company.id === activeCompanyId) || companies[0] || null,
     [activeCompanyId, companies]
   );
+
+  const activateCompany = useCallback((company: Company) => {
+    setActiveCompanyId(company.id);
+    setActiveSubjectType(company.entityType === "household" ? "household" : "company");
+    void refreshAccessContext(company.id).catch(() => {
+      Message.error(t("loadFailed"));
+    });
+  }, [refreshAccessContext, setActiveCompanyId, setActiveSubjectType, t]);
 
   const loadCompanies = useCallback(async () => {
     try {
@@ -59,8 +73,7 @@ export default function CompanySwitcher() {
 
       const storedCompanyId = useAppStore.getState().activeCompanyId;
       if (res.data.length > 0 && (!storedCompanyId || !res.data.some((company) => company.id === storedCompanyId))) {
-        setActiveCompanyId(res.data[0].id);
-        setActiveSubjectType(res.data[0].entityType === "household" ? "household" : "company");
+        activateCompany(res.data[0]);
       } else {
         const currentCompany = res.data.find((company) => company.id === storedCompanyId);
         if (currentCompany) {
@@ -72,7 +85,7 @@ export default function CompanySwitcher() {
     } finally {
       setLoading(false);
     }
-  }, [setActiveCompanyId, setActiveSubjectType, t]);
+  }, [activateCompany, setActiveSubjectType, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -116,8 +129,7 @@ export default function CompanySwitcher() {
         const next = prev.filter((company) => company.id !== res.data.id);
         return [...next, res.data].sort((left, right) => left.id - right.id);
       });
-      setActiveCompanyId(res.data.id);
-      setActiveSubjectType(res.data.entityType === "household" ? "household" : "company");
+      activateCompany(res.data);
       setModalVisible(false);
       form.resetFields();
       Message.success(t("createSuccess"));
@@ -160,8 +172,7 @@ export default function CompanySwitcher() {
               type="button"
               className="flex h-16 w-full cursor-pointer items-center gap-3 rounded-lg border-0 bg-transparent px-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
               onClick={() => {
-                setActiveCompanyId(company.id);
-                setActiveSubjectType(company.entityType === "household" ? "household" : "company");
+                activateCompany(company);
               }}
             >
               <span
@@ -188,7 +199,7 @@ export default function CompanySwitcher() {
         })}
       </div>
 
-      <div className="flex items-center border-t px-2" style={{ height: 52, borderColor: "var(--border-color)" }}>
+      {canCreateCompany && <div className="flex items-center border-t px-2" style={{ height: 52, borderColor: "var(--border-color)" }}>
         <button
           type="button"
           className="flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-transparent px-3 text-sm font-medium transition-colors hover:bg-black/5 dark:hover:bg-white/5"
@@ -198,7 +209,7 @@ export default function CompanySwitcher() {
           <IconPlus />
           {t("addSubject")}
         </button>
-      </div>
+      </div>}
     </div>
   );
 
@@ -209,7 +220,7 @@ export default function CompanySwitcher() {
           data-company-switcher-trigger
           type="button"
           aria-label={`切换主体，当前：${activeCompany?.name || "未选择主体"}`}
-          title="切换公司或家庭主体"
+          title={householdEnabled ? "切换公司或家庭主体" : "切换公司主体"}
           className="flex h-12 w-12 cursor-pointer items-center gap-2 rounded-full border px-2 text-left shadow-sm transition-all hover:-translate-y-px hover:shadow-md md:w-auto md:min-w-[252px] md:max-w-[360px] md:pl-2 md:pr-2"
           style={{
             borderColor: "rgba(99, 102, 241, 0.16)",
@@ -261,7 +272,7 @@ export default function CompanySwitcher() {
           layout="vertical"
           onSubmit={handleCreateCompany}
           onValuesChange={(changed) => {
-            if (changed.entityType === "household") {
+            if (householdEnabled && changed.entityType === "household") {
               form.setFieldsValue({ industry: "家庭资产管理", taxpayerType: "非经营主体" });
             }
             if (changed.entityType === "company") {
@@ -272,11 +283,11 @@ export default function CompanySwitcher() {
           <FormItem label="主体类型" field="entityType" rules={[{ required: true, message: "请选择主体类型" }]}>
             <Select>
               <Select.Option value="company">公司主体</Select.Option>
-              <Select.Option value="household">家庭主体</Select.Option>
+              {householdEnabled && <Select.Option value="household">家庭主体</Select.Option>}
             </Select>
           </FormItem>
           <FormItem label="主体名称" field="name" rules={[{ required: true, message: "请输入主体名称" }]}>
-            <Input placeholder="例如：广州某某贸易有限公司 / 家庭资产主体" />
+              <Input placeholder={householdEnabled ? "例如：广州某某贸易有限公司 / 家庭资产主体" : "例如：广州某某贸易有限公司"} />
           </FormItem>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <FormItem label="行业" field="industry" rules={[{ required: true, message: "请输入行业" }]}>

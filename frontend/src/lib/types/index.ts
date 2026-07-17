@@ -9,3 +9,5 @@ export * from "./enterprise";
 export * from "./receipt";
 export * from "./notification";
 export * from "./approval";
+export * from "./workspace";
+export * from "./workforce";

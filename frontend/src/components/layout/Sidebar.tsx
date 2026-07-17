@@ -38,9 +38,13 @@ export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const { sidebarCollapsed, toggleSidebar, activeSubjectType } = useAppStore();
-  const { user } = useAuthStore();
+  const { user, accessContext } = useAuthStore();
   const t = useTranslations("nav");
-  const menuGroups = navigationFor(activeSubjectType, user?.role === 1);
+  const menuGroups = navigationFor(activeSubjectType, {
+    isAdmin: user?.role === 1,
+    permissions: accessContext?.permissions,
+    modules: accessContext?.modules.enabled,
+  });
   const menuItems = flattenNavigation(menuGroups);
   const selectedKey = activeNavigationKey(pathname, menuItems);
   const selectedGroupKey = getSelectedGroupKey(menuGroups, selectedKey);

@@ -3,6 +3,7 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface Budget {
   id: number;
+  version?: number;
   name: string;
   amount: number;
   startDate: string;
@@ -34,12 +35,14 @@ export interface CreateBudgetDTO {
 }
 
 export interface UpdateBudgetDTO {
+  version: number;
   name?: string;
   amount?: number;
   startDate?: string;
   endDate?: string;
   warningThreshold?: number;
   categoryId?: number;
+  clearCategory?: boolean;
   status?: BudgetStatus;
 }
 

@@ -16,7 +16,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const locale = useLocale();
-  const { isAuthenticated, loading, fetchCurrentUser, user } = useAuthStore();
+  const { isAuthenticated, loading, fetchCurrentUser, user, accessContext } = useAuthStore();
   const { fetchCategories } = useCategoryStore();
   const hydratePreferences = useAppStore((state) => state.hydratePreferences);
   const activeCompanyId = useAppStore((state) => state.activeCompanyId);
@@ -63,8 +63,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
     if (user && user.role !== 1 && pathname.startsWith("/backup")) {
       router.replace("/dashboard");
+      return;
     }
-  }, [activeSubjectType, pathname, router, user]);
+    const optionalRoutes: Array<[string, string]> = [
+      ["/tax", "tax"],
+      ["/policy-center", "policy"],
+      ["/hr/organization", "people-core"],
+      ["/hr/workforce-cost", "workforce-cost"],
+      ["/hr/benefits", "talent-suite"],
+      ["/hr/performance", "talent-suite"],
+      ["/admin/compensation", "workforce-cost"],
+      ["/admin/users", "people-core"],
+      ["/backup", "backup"],
+    ];
+    const requiredModule = optionalRoutes.find(([prefix]) => pathname.startsWith(prefix))?.[1];
+    if (requiredModule && accessContext && !accessContext.modules.enabled.includes(requiredModule)) {
+      router.replace("/dashboard");
+    }
+  }, [accessContext, activeSubjectType, pathname, router, user]);
 
   if (loading) {
     return (

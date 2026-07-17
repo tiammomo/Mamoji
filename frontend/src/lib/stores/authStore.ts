@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { authApi } from "@/lib/api/auth";
-import type { User, LoginDTO, RegisterDTO } from "@/lib/types";
+import type { AccessContext, User, LoginDTO, RegisterDTO } from "@/lib/types";
 import { useAppStore } from "./appStore";
 import { useCategoryStore } from "./categoryStore";
 
@@ -55,6 +55,7 @@ const storedSession = readStoredSession();
 
 interface AuthState {
   user: User | null;
+  accessContext: AccessContext | null;
   token: string | null;
   tokenExpiresAt: string | null;
   isAuthenticated: boolean;
@@ -63,11 +64,13 @@ interface AuthState {
   register: (data: RegisterDTO) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<void>;
+  refreshAccessContext: (companyId?: number) => Promise<void>;
   updateUser: (user: User) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
+  accessContext: null,
   token: storedSession.token,
   tokenExpiresAt: storedSession.tokenExpiresAt,
   isAuthenticated: false,
@@ -83,6 +86,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.setItem(TOKEN_KEY, token);
       localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
       set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
+      try {
+        const context = await authApi.accessContext();
+        if (revision === authRevision) set({ accessContext: context.data });
+      } catch {
+        // Authentication remains valid when optional platform context is temporarily unavailable.
+      }
     } catch (error) {
       if (revision === authRevision) {
         set({ loading: false });
@@ -101,6 +110,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.setItem(TOKEN_KEY, token);
       localStorage.setItem(TOKEN_EXPIRES_AT_KEY, tokenExpiresAt);
       set({ user, token, tokenExpiresAt, isAuthenticated: true, loading: false });
+      try {
+        const context = await authApi.accessContext();
+        if (revision === authRevision) set({ accessContext: context.data });
+      } catch {
+        // Authentication remains valid when optional platform context is temporarily unavailable.
+      }
     } catch (error) {
       if (revision === authRevision) {
         set({ loading: false });
@@ -128,7 +143,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (revision === authRevision) {
           clearStoredSession();
           resetUserContext();
-          set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+          set({ user: null, accessContext: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
         }
       }
     })();
@@ -148,7 +163,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       authRevision += 1;
       clearStoredSession();
       resetUserContext();
-      set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+      set({ user: null, accessContext: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
       return Promise.resolve();
     }
 
@@ -159,16 +174,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const revision = authRevision;
     const promise = (async () => {
       try {
-        const res = await authApi.me();
+        const [res, context] = await Promise.all([authApi.me(), authApi.accessContext()]);
         if (revision === authRevision && get().token === token) {
-          set({ user: res.data, isAuthenticated: true, loading: false });
+          set({ user: res.data, accessContext: context.data, isAuthenticated: true, loading: false });
         }
       } catch {
         if (revision === authRevision && get().token === token) {
           authRevision += 1;
           clearStoredSession();
           resetUserContext();
-          set({ user: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
+          set({ user: null, accessContext: null, token: null, tokenExpiresAt: null, isAuthenticated: false, loading: false });
         }
       }
     })();
@@ -182,5 +197,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return promise;
   },
 
-  updateUser: (user) => set({ user }),
+  refreshAccessContext: async (companyId) => {
+    const res = await authApi.accessContext(companyId ? { companyId } : undefined);
+    set({ accessContext: res.data });
+  },
+
+  updateUser: (user) => set((state) => ({
+    user,
+    accessContext: state.accessContext ? { ...state.accessContext, actor: user } : null,
+  })),
 }));

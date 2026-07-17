@@ -19,9 +19,14 @@ export default function MobileNav() {
   const [moreVisible, setMoreVisible] = useState(false);
   const activeSubjectType = useAppStore((state) => state.activeSubjectType);
   const user = useAuthStore((state) => state.user);
+  const accessContext = useAuthStore((state) => state.accessContext);
   const groups = useMemo(
-    () => navigationFor(activeSubjectType, user?.role === 1),
-    [activeSubjectType, user?.role]
+    () => navigationFor(activeSubjectType, {
+      isAdmin: user?.role === 1,
+      permissions: accessContext?.permissions,
+      modules: accessContext?.modules.enabled,
+    }),
+    [accessContext?.modules.enabled, accessContext?.permissions, activeSubjectType, user?.role]
   );
   const allItems = useMemo(() => flattenNavigation(groups), [groups]);
   const activeKey = activeNavigationKey(pathname, allItems);
