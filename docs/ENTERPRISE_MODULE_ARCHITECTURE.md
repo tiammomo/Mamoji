@@ -1,326 +1,254 @@
-# Mamoji 企业模块架构
+# Mamoji 企业内部模块架构
+
+> 本文是代码拆分与依赖治理规范。目标是模块化单体，而不是立即拆成微服务；先获得清晰边界、稳定契约和独立测试，再根据真实吞吐与团队边界决定是否物理拆分。
+
+## 1. 架构原则
+
+1. 按业务能力拆分，不按 Controller、Service、Repository 技术层横向堆放。
+2. 公司边界、人员身份、数据范围和产品模块必须在进入业务用例前确定。
+3. 写模型归所属模块，跨模块只通过应用服务、只读投影或领域事件协作。
+4. 聚合首页使用专门读模型，不让前端承担跨模块编排。
+5. PostgreSQL 是在线事实来源；进程内集合不得参与在线授权或业务判断。
+6. 外部副作用经 Outbox 传播，数据库事务内不直接依赖消息系统或 Webhook。
+7. 模块开关是后端能力边界，不只是导航配置。
+
+## 2. 目标模块图
+
+```mermaid
+flowchart TB
+    host[企业门户 / IAM] --> identity[Platform Identity]
+    identity --> access[Access Context]
+    tenant[Company Memberships] --> access
+    product[Product Module Catalog] --> access
+
+    access --> workspace[Workspace Read Model]
+    access --> approvals[Approvals]
+    access --> operations[Operations]
+    access --> budget[Budget Control]
+    access --> finance[Finance & Accounts]
+    access --> evidence[Evidence & Receipts]
+    access --> people[People Core]
+    access --> workforce[Workforce Cost]
+
+    operations --> budget
+    approvals --> evidence
+    finance --> workspace
+    evidence --> workspace
+    budget --> workspace
+    approvals --> workspace
+    people --> workforce
+    workforce --> workspace
+
+    operations --> outbox[(Outbox)]
+    budget --> outbox
+    approvals --> outbox
+    evidence --> outbox
+```
+
+依赖方向是从业务用例指向平台契约或所属仓储。`workspace` 可以读取多个模块的投影，但不能反向成为它们的写入口。
+
+## 3. 模块能力拆分
+
+| 边界 | 命令职责 | 查询职责 | 主要数据 | 对外契约 |
+| --- | --- | --- | --- | --- |
+| `platform.identity` | 解析当前人员 | 当前 Actor | 用户会话/外部身份声明 | `ActorContext`、`@CurrentActor` |
+| `platform.tenant` | 同步成员关系 | 公司、角色、部门、范围 | `company_memberships` | `CompanyMembershipRepository` |
+| `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
+| `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
+| `workspace` | 无业务写入 | 跨模块健康度、待办、指标 | SQL 投影 | `GET /workspace` |
+| `approvals` | 提交、通过、驳回、撤回 | 我的申请/待办/轨迹 | `approval_requests/actions` | `/approvals`、Outbox |
+| `operations` | 流水、分类、周期事项 | 趋势、结构、经营风险 | `transactions/categories/recurring_items` | `/transactions`、`/stats` |
+| `budget` | 创建、调整、停用预算 | 执行额、使用率、风险 | `budgets` + 流水投影 | `/budgets`、Outbox |
+| `finance` | 账户维护、余额调整、对账 | 可用资金、账户风险 | `accounts/ledgers` | `/accounts`、`/ledgers` |
+| `evidence` | 票据、附件、审批/入账状态 | 凭证缺口、审计链 | `receipt_vouchers`、对象存储 | `/receipts`、Outbox |
+| `people-core` | 部门、员工与任职信息维护 | 组织、人员状态与经营投影 | `departments/employees/employment_events` | `/enterprise/departments`、`/enterprise/employees` |
+| `workforce-cost` | 薪酬批次生成、锁定 | 公司/部门人力成本、预算差异、趋势 | `payroll_runs/items` + 人员/流水只读投影 | `/payroll-runs`、`GET /workforce-cost` |
+| `notifications` | 偏好与发送状态 | 站内通知 | `notifications/deliveries` | `/notifications` |
+
+`people-core` 与 `workforce-cost` 是默认经营能力，`talent-suite`（福利、绩效）、税务、政策和备份 UI 是可选能力包。任何可选能力都不允许成为核心模块的反向依赖。
+
+## 4. 统一访问上下文
+
+所有新模块使用下面的入口模型：
+
+```text
+ActorContext
+  -> AccessContextService
+      -> enabled company
+      -> membership role/scope/department
+      -> permissions
+      -> enabled product modules
+```
+
+前端通过一次请求获得：
+
+```json
+{
+  "actor": {},
+  "company": {},
+  "companies": [],
+  "role": "finance_admin",
+  "scope": "company",
+  "departmentId": null,
+  "permissions": ["finance.read", "budget.manage"],
+  "modules": { "mode": "internal-module", "enabled": ["workspace", "budgets"] }
+}
+```
+
+规则：
+
+- Controller 不自行解析用户 ID 或相信客户端提交的操作者字段。
+- companyId 必须由访问上下文校验，不能只作为普通过滤参数。
+- `department` 和 `self` 范围必须进入 SQL 谓词；仅在 Java 返回后过滤会扩大数据暴露和读取成本。
+- `readonly` 表示公司级只读，是否可执行命令仍由 permission 判断。
+- 可选模块 API 使用 `@RequiresProductModule`，关闭时统一返回 404。
 
-> 本文定义 Mamoji 从“企业记账工具”升级为“初创公司经营管理系统”的模块边界。后续产品和代码设计应优先围绕 HR 人力资源管理、经营管理、财务管理、税务管理四条主线演进，再用审批、权限、报表和多主体能力把它们连接起来。
+## 5. 模块内部结构
 
-## 1. 模块总览
+新拆出的业务模块采用纵向目录：
 
-| 一级模块 | 目标 | 当前承载页面 | 后续页面方向 |
-| --- | --- | --- | --- |
-| 经营工作台 | 给创始人和管理层快速看到公司状态。 | `/dashboard` | 经营总览、风险待办、多主体汇总。 |
-| HR 人力资源管理 | 管理员工从入职前到离职后的完整生命周期。 | `/admin/users` | 员工档案、入转调离、合同、社保、公积金、考勤、薪酬、权限。 |
-| 经营管理 | 管理业务收入、经营成本、预算、项目和经营指标。 | `/transactions`、`/budgets`、`/reports`、`/recurring` | 经营流水、收入成本、客户项目、经营预算、经营分析。 |
-| 财务管理 | 管理资金账户、收付款、应收应付、报销、票据和现金流。 | `/accounts`、`/receipts` | 资金账户、银行流水、应收应付、报销付款、凭证归档。 |
-| 税务管理 | 用深圳初创公司轻税务模板管理税期、票据、缴款、回执和逾期风险。 | `/tax` | 轻税务工作台为主，高级发票底账、资料清单和政策版本按需展开。 |
-| 主体与政策管理 | 支持多公司、家庭主体、地区政策和主体间往来。 | 顶部主体切换器 | 主体管理、地区政策画像、公司政策覆盖、主体间往来台账。 |
-| 审批与协同 | 承接 HR 和财务的关键动作，形成责任链路。 | 暂未独立 | 入职审批、离职审批、报销审批、付款审批、预算调整审批。 |
-| 权限与审计 | 控制敏感人员和财务数据的访问边界。 | `/settings`、权限矩阵 | 角色权限、公司范围、审计日志、敏感操作追踪。 |
+```text
+com.mamoji.<module>/
+  api/             HTTP DTO、Controller、序列化契约
+  application/     用例编排、事务边界、权限入口
+  domain/          业务规则、值对象、状态机
+  infrastructure/  JDBC 仓储、外部系统适配器
+```
 
-## 2. HR 人力资源管理
+预算模块是当前模板：
 
-HR 不应只是“用户列表”。它是员工、组织、合同、社保公积金、考勤、薪酬和账号权限的中心。
+```text
+budget/
+  api/BudgetController
+  api/BudgetCreateRequest
+  api/BudgetUpdateRequest
+  application/BudgetApplicationService
+  domain/BudgetPolicy
+  infrastructure/BudgetRepository
+```
 
-### 2.1 员工主档
+拆分下一个模块时，应复制结构原则，而不是复制具体实现。
 
-- 基础信息：姓名、手机号、邮箱、证件类型、证件号、生日、性别、紧急联系人。
-- 任职信息：公司主体、部门、岗位、职级、汇报对象、成本中心、工作城市。
-- 状态信息：待入职、试用期、在职、待离职、已离职、历史留档。
-- 账号信息：系统账号、企业角色、数据范围、最后登录时间、账号启停状态。
+人力成本读模型也采用同一纵向结构：
 
-### 2.2 入转调离
+```text
+workforce/
+  api/WorkforceCostController
+  api/WorkforceCostView
+  application/WorkforceCostApplicationService
+  infrastructure/WorkforceCostReadRepository
+```
 
-- 入职：offer 信息、预计入职日、入职材料、账号开通、设备发放。
-- 转正：试用期结束日、转正结果、薪资调整、岗位调整。
-- 调岗：部门、岗位、汇报对象、成本中心和生效日期。
-- 离职：离职申请、最后工作日、交接清单、账号回收、设备归还、最终薪资结算。
+该模块不复制员工或薪酬写模型：正式口径读取 `payroll_run_items` 快照；未生成批次时读取员工成本估算，并在响应中返回明确的 `source`。
 
-### 2.3 劳动合同
+## 6. API 与命令约束
 
-- 合同主体：签约公司、员工、合同类型、合同编号。
-- 合同周期：开始日期、结束日期、试用期、续签提醒。
-- 合同文件：扫描件、电子签链接、补充协议。
-- 风险提示：合同即将到期、未签合同、试用期超期、离职未归档。
+### 6.1 DTO
 
-### 2.4 社保与公积金
+- 新写接口不得以 `Map<String, Object>` 作为长期契约。
+- 请求 DTO 使用 Bean Validation；金额、日期、状态和长度在 API 边界校验。
+- 响应 DTO 不直接泄露密码散列、内部存储密钥或无授权的公司字段。
+- 部分更新必须区分“未提交字段”和“明确清空字段”。预算用 `clearCategory` 展示了该语义。
 
-- 参保信息：社保城市、缴纳主体、参保状态、起缴月份、停缴月份。
-- 社保基数：养老、医疗、失业、工伤、生育等基数和公司/个人比例。
-- 公积金信息：缴纳城市、缴纳基数、公司比例、个人比例、补充公积金。
-- 政策关联：社保地和公积金地需要关联地区政策版本，避免深圳、广州、上海等地区规则混用。
-- 月度明细：员工个人承担、公司承担、合计成本和实际缴纳状态。
+### 6.2 重试与并发
 
-### 2.5 考勤与假勤
+- 关键创建请求接受 `Idempotency-Key`，数据库使用唯一索引保证最终防重。
+- 账户、交易、预算、票据和审批使用版本字段或行锁保护并发写入。
+- 客户端编辑预算时提交读取到的 `version`；过期版本返回 409。
+- 冲突、参数错误和约束错误由统一 `ProblemDetail` 响应处理。
 
-- 考勤记录：工作日、出勤、迟到、早退、缺卡、外勤。
-- 请假记录：年假、病假、事假、调休、婚假、产假、陪产假等。
-- 加班调休：加班时长、调休余额、加班费口径。
-- 结果联动：考勤异常影响薪资、绩效、补贴和离职结算。
+### 6.3 可观测性
 
-### 2.6 薪酬与个税
+- 每个请求接收或生成 `X-Request-Id`，响应回传并写入 MDC。
+- 审计日志记录人员、公司、对象、动作和摘要。
+- 模块事件先写 `outbox_events`，事务提交后再发送通知或外部消息。
 
-- 薪资结构：基本工资、岗位工资、绩效、奖金、补贴、扣款。
-- 月度薪资：应发、社保个人、公积金个人、个税、实发。
-- 公司成本：工资、社保公司、公积金公司、福利、招聘、设备等。
-- 个税估算：员工专项扣除、累计预扣预缴、月度个税估算。
+## 7. 工作台读模型
 
-### 2.7 HR 报表
+工作台只做查询聚合，当前在一个 `REPEATABLE_READ` 只读事务中计算：
 
-- 员工人数、在职人数、待入职、离职人数。
-- 人力成本趋势、部门人力成本、单人月成本。
-- 合同到期、试用期到期、社保公积金待处理。
-- 入离职漏斗、人员结构、地点分布。
+- 本月收入、成本和经营净额；
+- 可用资金与账户问题；
+- 预算执行和高风险预算；
+- 待审批数量；
+- 票据证据缺口；
+- 逾期周期事项；
+- 模块健康度、优先动作和日清检查。
 
-## 3. 经营管理
+工作台遵循权限裁剪：无财务读取权限时，资金与票据指标返回空值或不生成模块；部门/本人范围只聚合允许的人员数据。
 
-经营管理回答“业务是否健康”。它关注客户、项目、收入、成本、预算和经营指标，不直接承担银行对账或正式报税。
+前端不得重新并发请求这些下游接口来重算同一组指标，否则会产生快照不一致和重复规则。
 
-### 3.1 经营流水
+## 8. 数据所有权
 
-- 流水类型：客户回款、项目收入、经营成本、退款、成本调整。
-- 经营维度：客户、项目、合同、部门、成本中心、业务线。
-- 成本口径：人力、办公、云服务、市场投放、差旅、采购、行政、法务财税。
-- 业务备注：用途、归属项目、关联审批、关联附件。
+| 表或投影 | 所属模块 | 其他模块如何使用 |
+| --- | --- | --- |
+| `company_memberships` | Platform Tenant | 只通过成员仓储读取 |
+| `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
+| `budgets` | Budget | Operations 只请求匹配预算；Workspace 只读 |
+| `accounts`、`ledgers` | Finance | Operations 通过账户 ID 校验与调整 |
+| `receipt_vouchers` | Evidence | Approval 通过应用服务更新审批状态 |
+| `departments`、`employees`、`employment_events` | People Core | Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
+| `payroll_runs`、`payroll_run_items` | Workforce Cost | 报表与工作台只读已锁定或明确标识状态的快照 |
+| `approval_requests/actions` | Approvals | Workspace 只读待办数量 |
+| `audit_logs` | Platform Audit | 业务模块只追加，不修改历史 |
+| `outbox_events` | Platform Events | 消费器按事件类型分发 |
 
-### 3.2 收入与客户
+禁止通过另一个模块的公开 Map 修改对象。跨模块写入必须调用应用服务；高频聚合允许直接读取稳定投影，但不能借此写回所属表。
 
-- 客户档案：客户名称、联系人、行业、合作状态。
-- 收入合同：合同金额、周期、项目、产品线和回款计划。
-- 回款跟踪：计划回款、实际回款、逾期回款和收入确认。
-- 收入分析：按客户、项目、产品、月份统计收入贡献。
+## 9. 数据库与部署基础
 
-### 3.3 成本与供应商
+V8 迁移建立了：
 
-- 成本归集：按部门、项目、供应商、成本类型归集。
-- 供应商视图：供应商合同、付款周期、服务内容和风险。
-- 周期经营事项：工资、房租、SaaS、云服务、税费提醒等固定周期事项。
-- 异常识别：成本突增、重复支出、预算超支、大额支出。
+- 权威 `company_memberships` 表及公司、用户、部门外键；
+- 关键表 `version` 字段；
+- 交易、票据和审批的幂等键及唯一索引；
+- 金额、日期、状态和公司 ID 的基础约束；
+- 常用成员查询索引。
 
-### 3.4 经营预算
+在线服务读取已经从进程 Map 切到 PostgreSQL。两套旧 Store 的集合目前只承担演示初始化、兼容恢复和过渡同步。
 
-- 公司预算：月度、季度、年度成本上限。
-- 部门预算：按部门和成本中心控制支出。
-- 项目预算：按项目、客户或业务线看预算执行。
-- 预警规则：预算使用率、大额支出、异常增长、现金不足。
+当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
-### 3.5 经营报表
+1. 把 `@PostConstruct` 中的演示/兼容修复迁移成一次性 migration 或独立 bootstrap job；
+2. 删除 Store 中剩余兼容 Map 与 reload 钩子；
+3. 在真实 PostgreSQL 上通过双实例并发写、重复命令和故障重试测试；
+4. 确认定时任务使用抢占锁或 `SKIP LOCKED`，不会被每个实例重复执行。
 
-- 经营概览：收入、成本、毛利、净利润、预算风险。
-- 增长趋势：收入趋势、成本趋势、利润趋势。
-- 结构分析：收入来源、成本结构、部门成本、项目盈亏。
-- 经营指标：burn rate、runway、ARPU、客户集中度和现金压力。
+## 10. 后续拆分顺序
 
-## 4. 财务管理
+### P0：完成核心边界
 
-财务管理回答“钱是否真实、可控、可追溯”。它关注资金账户、应收应付、付款、报销、票据凭证和现金流。
+- 将审批、票据和账户从旧横向 Service 目录迁入纵向模块目录。
+- 给交易、账户、票据补齐 typed DTO 与客户端版本契约。
+- 将权限判断从旧整数角色进一步收口到 AccessContext。
+- 将组织人员和薪酬写用例逐步迁入 `people`、`workforce` 纵向目录；现有聚合读模型保持稳定契约。
 
-### 4.1 资金账户
+### P1：清除兼容状态
 
-- 账户类型：基本户、一般户、现金、企业信用卡、第三方收款、备用金。
-- 账户余额：当前余额、可用余额、冻结金额、更新时间。
-- 主体归属：每个账户必须归属于公司主体或家庭主体。
-- 银行流水：流水导入、手工录入、账户余额核对和对账状态。
+- 把演示数据改成显式 profile 或开发脚本，不在生产启动路径执行。
+- 删除 `InMemoryStore`、`EnterpriseStore` 的公开集合。
+- 将金额和日期从 TEXT 逐步迁为 `NUMERIC`、`DATE/TIMESTAMPTZ`。
 
-### 4.2 应收与收款
+### P2：集成宿主平台
 
-- 应收单：来源客户、合同、项目、计划收款日和应收金额。
-- 收款单：实际到账账户、到账日期、到账金额和回单。
-- 核销关系：一笔收款可以核销一笔或多笔应收。
-- 逾期管理：逾期金额、逾期天数、跟进人和回款风险。
+- 增加 OIDC/SAML 身份适配器和 JIT 成员映射。
+- 定义公司、部门和人员主数据同步契约。
+- 把通知目标接到企业消息总线，保留站内通知降级路径。
 
-### 4.3 应付与付款
+### P3：按证据决定物理拆分
 
-- 应付单：来源供应商、合同、采购或报销单。
-- 付款单：付款账户、付款日期、付款金额、审批状态。
-- 员工报销：报销单、票据、审批、付款、入账。
-- 付款风险：重复付款、大额付款、未审批付款、附件缺失。
+只有当独立发布节奏、资源隔离、合规边界或吞吐瓶颈真实存在时，才把某一模块拆成服务。拆分前要求其 API、事件、表所有权和回归测试已经稳定。
 
-### 4.4 票据与凭证
+## 11. 合并检查清单
 
-- 票据附件：发票、收据、合同、付款截图、银行回单。
-- 凭证归档：流水、应收应付、付款、报销和附件互相关联。
-- 凭证状态：待补充、待审核、已归档、异常。
-- 导出能力：按期间、主体、供应商、客户导出凭证包。
+新功能合并前至少确认：
 
-### 4.5 现金流
-
-- 现金余额：各账户余额与合计现金。
-- 未来现金流：未来应收、应付、工资、房租、税费。
-- 现金压力：burn rate、runway、最低现金阈值。
-- 多主体往来：公司与家庭、公司与公司之间的资金往来。
-
-## 5. 税务管理
-
-税务管理回答“这个税期有没有漏报、漏缴、缺票或缺回执”。对深圳初创公司，默认不做复杂规则引擎，而是做轻税务工作台；经营、财务和 HR 数据只作为税务提醒和资料归档的证据链。
-
-### 5.1 深圳轻税务默认
-
-- 政策画像：默认 `CN-GD-SZ-STARTUP-LITE`。
-- 纳税人模板：小规模纳税人优先，增值税默认季度申报；一般纳税人再开启月度增值税和进项抵扣闭环。
-- 核心税种：增值税、企业所得税、个人所得税代扣、附加税费、印花税。
-- 税期状态：待准备、待申报、已申报、待缴纳、已缴纳、逾期。
-- 首页指标：待缴税费、最近截止日、票据缺口、缴纳闭环。
-
-### 5.2 税期待办
-
-- 申报记录：税期、税种、申报金额、申报日期、申报人。
-- 缴纳记录：缴纳金额、缴纳账户、缴纳日期、税票或回单。
-- 责任人：每个税期只要求一个财务或代理记账责任人。
-- 零税款申报：没有待缴金额但未申报的税期仍进入待办。
-
-### 5.3 票据与回执
-
-- 材料关联：发票、合同、银行回单、申报表、税票和申报回执。
-- 附件存储：税务附件通过票据凭证进入对象存储。
-- 缺口识别：发票待查验、附件缺失、流水未关联、税期缺失。
-- 审计链路：申报、缴纳、回执上传和状态变更保留操作记录。
-
-### 5.4 高级口径
-
-- 发票底账：销项、进项、税期和抵扣状态。
-- 资料清单：按税种展示应归档材料。
-- 税种结构：按税种汇总应缴、已缴和待缴。
-- 资料完备度：作为内部提醒，不作为正式合规结论。
-
-### 5.5 税务风险
-
-- 逾期申报、逾期缴纳、发票缺口、税期缺失、回执缺失。
-- 税负异常和地区政策版本放入高级口径。
-- 公司资金进入家庭、家庭资金进入公司涉及借款、分红、报销和税务处理。
-- 税务事项只能做估算和提醒，正式申报口径需要财务或专业顾问确认。
-
-## 6. 数据模型方向
-
-### 6.1 HR 领域表
-
-- `employee_profiles`：员工主档扩展，保存证件、生日、紧急联系人等敏感信息。
-- `employee_jobs`：任职记录，保存部门、岗位、职级、汇报对象、成本中心和生效期。
-- `labor_contracts`：劳动合同和补充协议。
-- `employee_social_insurance`：社保城市、基数、比例、状态和月度明细。
-- `employee_housing_fund`：公积金城市、基数、比例、状态和月度明细。
-- `attendance_records`：日度考勤记录。
-- `leave_requests`：请假、调休和假期余额。
-- `payroll_runs`：月度薪资批次。
-- `payroll_items`：员工薪资明细、社保、公积金和个税。
-
-### 6.2 经营领域表
-
-- `business_transactions`：经营流水。
-- `counterparties`：客户和供应商统一档案。
-- `contracts`：客户合同和供应商合同。
-- `projects`：项目或业务线。
-- `business_budgets`：公司、部门、项目和成本类型预算。
-- `recurring_operations`：周期性经营事项。
-
-### 6.3 财务领域表
-
-- `company_accounts`：资金账户。
-- `bank_statement_lines`：银行或第三方账户流水。
-- `receivable_bills`：应收账款。
-- `payable_bills`：应付账款。
-- `reimbursement_claims`：员工报销单。
-- `payment_orders`：付款单。
-- `voucher_attachments`：票据和凭证附件。
-- `entity_transfers`：主体间资金往来。
-
-### 6.4 税务领域表
-
-- `invoices`：销项和进项发票。
-- `tax_filing_periods`：税期和申报日历。
-- `tax_filings`：税务申报记录。
-- `tax_payments`：税费缴纳记录。
-- `tax_calculation_snapshots`：税费估算快照。
-- `tax_risk_items`：税务风险事项。
-- `policy_versions`：税务、人事和地区政策版本。
-
-## 7. 页面与路由建议
-
-### 7.1 HR 管理
-
-- `/hr`：HR 工作台。
-- `/hr/employees`：员工档案。
-- `/hr/onboarding`：入职管理。
-- `/hr/offboarding`：离职管理。
-- `/hr/contracts`：劳动合同。
-- `/hr/social-insurance`：社保管理。
-- `/hr/housing-fund`：公积金管理。
-- `/hr/attendance`：考勤假勤。
-- `/hr/payroll`：薪酬个税。
-
-当前 `/admin/users` 可以作为第一阶段 HR 页面继续保留，后续迁移到 `/hr/employees`。
-
-### 7.2 经营管理
-
-- `/operations`：经营工作台。
-- `/operations/transactions`：经营流水。
-- `/operations/revenue`：收入与客户。
-- `/operations/costs`：成本与供应商。
-- `/operations/budgets`：经营预算。
-- `/operations/reports`：经营报表。
-- `/operations/recurring`：周期经营事项。
-
-当前 `/transactions`、`/budgets`、`/reports`、`/recurring` 可以先作为经营模块入口，后续再按 `/operations/*` 收敛。
-
-### 7.3 财务管理
-
-- `/finance`：财务工作台。
-- `/finance/accounts`：资金账户。
-- `/finance/receivables`：应收与收款。
-- `/finance/payables`：应付与付款。
-- `/finance/reimbursements`：报销管理。
-- `/finance/vouchers`：票据凭证。
-- `/finance/cashflow`：现金流预测。
-
-当前 `/accounts`、`/receipts` 可以先作为财务模块入口，后续再按 `/finance/*` 收敛。
-
-### 7.4 税务管理
-
-- `/tax`：深圳轻税务工作台。
-- `/tax/calendar`：税期日历，后续按需拆分。
-- `/tax/filings`：报税管理，后续按需拆分。
-- `/tax/invoices`：发票税务口径，后续按需拆分。
-- `/tax/policies`：地区政策版本，高级能力。
-- `/tax/risks`：税务风险，高级能力。
-
-当前 `/tax` 先承载轻税务待办、票据缺口和税费台账，后续只有在多主体、多地区或一般纳税人场景明确后再按 `/tax/*` 拆分。
-
-## 8. 权限边界
-
-| 权限域 | 典型角色 | 敏感数据 | 说明 |
-| --- | --- | --- | --- |
-| HR 主档 | HR、创始人 | 身份证、手机号、紧急联系人、合同 | 默认不开放给财务管理员。 |
-| HR 成本 | HR、财务、创始人 | 工资、社保、公积金、个税 | 财务可看汇总，HR 可看明细，部门负责人只看本部门汇总。 |
-| 考勤假勤 | HR、部门负责人、员工本人 | 请假、缺勤、加班 | 员工只能看本人。 |
-| 经营数据 | 创始人、财务、部门负责人 | 客户、项目、收入、成本、预算 | 部门负责人只看本部门或项目范围。 |
-| 财务资金 | 财务、创始人 | 账户、银行流水、收付款、凭证 | HR 默认不看资金明细。 |
-| 税务申报 | 财务、创始人 | 税费、申报、发票抵扣、政策版本 | HR 只参与个税和薪资相关数据。 |
-| 审批 | 场景相关角色 | 单据、附件、审批意见 | 按审批单类型决定可见范围。 |
-
-## 9. 落地优先级
-
-### 第一阶段：模块边界清晰
-
-- 导航按工作台、经营管理、财务管理、税务管理、HR 管理、系统管理分组。
-- 人员管理页继续承载员工档案、部门、角色、权限和人力成本。
-- 经营模块继续承载流水、预算、报表和周期事项。
-- 财务模块继续承载资金账户、票据凭证和后续收付款能力。
-- 税务模块先承载深圳轻税务待办、票据缺口、缴款闭环和申报风险。
-- 文档和 README 明确 HR、经营、财务、税务是核心主线。
-
-### 第二阶段：HR 深化
-
-- 员工主档扩展证件、紧急联系人、工作地、社保地、公积金地。
-- 新增劳动合同、社保、公积金、考勤假勤和薪资明细模型。
-- 人员页面从单表拆为 HR 工作台 + 员工档案 + 合同 + 社保公积金 + 考勤。
-
-### 第三阶段：经营、财务、税务深化
-
-- 经营页面从流水拆为收入客户、成本供应商、经营预算和经营分析。
-- 财务页面从账户拆为财务工作台、应收应付、报销付款、票据凭证和现金流。
-- 税务页面保持轻税务工作台优先；一般纳税人、多主体、多地区场景成熟后再拆税期、申报、发票口径和政策版本。
-- 账户、流水、发票、合同、付款和税费形成关联链路。
-
-### 第四阶段：经营闭环
-
-- HR 的薪资、社保、公积金自动进入财务人力成本。
-- 考勤结果影响薪资批次，薪资批次影响个税和现金流。
-- 发票、收入、回款、税费和报表打通。
-- 多公司、家庭主体、主体间往来进入集团级报表。
+- [ ] 归属一个明确模块，没有新增跨模块 Map 访问；
+- [ ] Actor、companyId、scope 和 permission 都经过统一校验；
+- [ ] 可选能力同时有前端和后端模块门禁；
+- [ ] 写请求有 DTO 校验，重试场景考虑幂等性；
+- [ ] 并发更新使用版本或行锁；
+- [ ] 跨模块副作用有审计和 Outbox；
+- [ ] 查询避免 N+1，并有分页或有界 limit；
+- [ ] 单元测试、类型检查、Lint 与可用的 PostgreSQL 集成测试通过。
