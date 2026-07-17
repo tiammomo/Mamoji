@@ -33,6 +33,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -1149,7 +1150,7 @@ public class EnterpriseStore {
             item.riskLevel = riskLevelFor(item);
             updated = true;
         }
-        String expectedPolicyBasis = Optional.ofNullable(companies.get(item.companyId))
+        String expectedPolicyBasis = findCompany(item.companyId)
             .map(this::defaultPolicyProfileKey)
             .orElse(DEFAULT_POLICY_PROFILE);
         if (isBlank(item.policyBasis)
@@ -1166,7 +1167,7 @@ public class EnterpriseStore {
     }
 
     private boolean applyShenzhenStartupTaxDefaults(TaxItem item) {
-        Company company = companies.get(item.companyId);
+        Company company = findCompany(item.companyId).orElse(null);
         if (company == null
             || company.city == null
             || !company.city.contains("深圳")
@@ -1337,14 +1338,15 @@ public class EnterpriseStore {
     }
 
     public List<Company> sortedCompanies() {
-        return companies.values().stream().sorted(Comparator.comparing(company -> company.id)).toList();
+        return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
     }
 
     public List<Department> sortedDepartments(long companyId) {
-        return departments.values().stream()
-            .filter(department -> department.companyId == companyId)
-            .sorted(Comparator.comparing(department -> department.id))
-            .toList();
+        return jdbc.query(
+            "SELECT * FROM departments WHERE company_id = ? ORDER BY id",
+            (rs, rowNum) -> mapDepartment(rs),
+            companyId
+        );
     }
 
     public List<Employee> sortedEmployees(long companyId) {
@@ -1352,11 +1354,17 @@ public class EnterpriseStore {
     }
 
     public List<Employee> sortedEmployees(long companyId, boolean includeProfileDetails) {
-        List<Employee> result = employees.values().stream()
-            .filter(employee -> employee.companyId == companyId)
-            .sorted(Comparator.comparing((Employee employee) -> employee.status.equals("departed")).thenComparing(employee -> employee.id))
-            .peek(this::attachDepartmentName)
-            .toList();
+        List<Employee> result = jdbc.query("""
+            SELECT employee.*, department.name AS resolved_department_name
+            FROM employees employee
+            LEFT JOIN departments department ON department.id = employee.department_id
+            WHERE employee.company_id = ?
+            ORDER BY CASE WHEN employee.status = 'departed' THEN 1 ELSE 0 END, employee.id
+            """, (rs, rowNum) -> {
+                Employee employee = mapEmployee(rs);
+                employee.departmentName = rs.getString("resolved_department_name");
+                return employee;
+            }, companyId);
         if (includeProfileDetails) {
             attachEmployeeProfileDetails(companyId, result);
         }
@@ -1364,16 +1372,29 @@ public class EnterpriseStore {
     }
 
     public List<EmploymentEvent> sortedEmploymentEvents(long companyId) {
-        return employmentEvents.values().stream()
-            .filter(event -> event.companyId == companyId)
-            .sorted(Comparator.comparing((EmploymentEvent event) -> event.effectiveDate).reversed().thenComparing(event -> event.id))
-            .toList();
+        return jdbc.query(
+            "SELECT * FROM employment_events WHERE company_id = ? ORDER BY effective_date DESC, id",
+            (rs, rowNum) -> mapEmploymentEvent(rs),
+            companyId
+        );
     }
 
     public List<TaxItem> sortedTaxItems(long companyId) {
-        return taxItems.values().stream()
-            .filter(item -> item.companyId == companyId)
-            .sorted(Comparator.comparing((TaxItem item) -> item.dueDate).thenComparing(item -> item.id))
+        return jdbc.query(
+            "SELECT * FROM tax_items WHERE company_id = ? ORDER BY due_date, id",
+            (rs, rowNum) -> mapTaxItem(rs),
+            companyId
+        ).stream().peek(item -> {
+                hydrateTaxItemDefaults(item);
+                item.paymentStatus = paymentStatusFor(item);
+                item.riskLevel = riskLevelFor(item);
+            })
+            .toList();
+    }
+
+    public List<TaxItem> allTaxItems() {
+        return jdbc.query("SELECT * FROM tax_items ORDER BY company_id, due_date, id", (rs, rowNum) -> mapTaxItem(rs))
+            .stream()
             .peek(item -> {
                 hydrateTaxItemDefaults(item);
                 item.paymentStatus = paymentStatusFor(item);
@@ -1382,39 +1403,122 @@ public class EnterpriseStore {
             .toList();
     }
 
+    public List<Employee> allEmployees() {
+        return jdbc.query(
+            "SELECT * FROM employees ORDER BY company_id, id",
+            (rs, rowNum) -> mapEmployee(rs)
+        );
+    }
+
     public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
         Set<Long> accessible = new HashSet<>(accessibleEntityIds);
-        return entityTransfers.values().stream()
+        return jdbc.query("""
+            SELECT transfer.*, source.name AS resolved_from_name, target.name AS resolved_to_name
+            FROM entity_transfers transfer
+            LEFT JOIN companies source ON source.id = transfer.from_entity_id
+            LEFT JOIN companies target ON target.id = transfer.to_entity_id
+            ORDER BY transfer.transfer_date DESC, transfer.id
+            """, (rs, rowNum) -> {
+                EntityTransfer transfer = mapEntityTransfer(rs);
+                transfer.fromEntityName = rs.getString("resolved_from_name");
+                transfer.toEntityName = rs.getString("resolved_to_name");
+                return transfer;
+            }).stream()
             .filter(transfer -> accessible.contains(transfer.fromEntityId) || accessible.contains(transfer.toEntityId))
             .filter(transfer -> entityId == null || transfer.fromEntityId == entityId || transfer.toEntityId == entityId)
-            .sorted(Comparator.comparing((EntityTransfer transfer) -> transfer.transferDate).reversed().thenComparing(transfer -> transfer.id))
-            .peek(this::attachEntityTransferNames)
             .toList();
     }
 
     public List<ReceiptVoucher> sortedReceiptVouchers(long companyId) {
-        return receiptVouchers.values().stream()
-            .filter(voucher -> voucher.companyId == companyId)
-            .sorted(Comparator.comparing((ReceiptVoucher voucher) -> voucher.issueDate).reversed().thenComparing(voucher -> voucher.id))
+        return jdbc.query(
+            "SELECT * FROM receipt_vouchers WHERE company_id = ? ORDER BY issue_date DESC, id",
+            (rs, rowNum) -> mapReceiptVoucher(rs),
+            companyId
+        ).stream()
+            .peek(this::hydrateReceiptVoucherDefaults)
+            .toList();
+    }
+
+    public List<ReceiptVoucher> allReceiptVouchers() {
+        return jdbc.query(
+            "SELECT * FROM receipt_vouchers ORDER BY company_id, issue_date DESC, id",
+            (rs, rowNum) -> mapReceiptVoucher(rs)
+        ).stream()
             .peek(this::hydrateReceiptVoucherDefaults)
             .toList();
     }
 
     public List<AuditLog> sortedAuditLogs(long companyId, String entityType, long entityId) {
-        return auditLogs.values().stream()
-            .filter(log -> log.companyId == companyId)
-            .filter(log -> log.entityType.equals(entityType))
-            .filter(log -> log.entityId == entityId)
-            .sorted(Comparator.comparing((AuditLog log) -> log.createdAt).reversed()
-                .thenComparing(Comparator.comparingLong((AuditLog log) -> log.id).reversed()))
-            .toList();
+        return jdbc.query("""
+            SELECT * FROM audit_logs
+            WHERE company_id = ? AND entity_type = ? AND entity_id = ?
+            ORDER BY created_at DESC, id DESC
+            """, (rs, rowNum) -> mapAuditLog(rs), companyId, entityType, entityId);
     }
 
     public List<AuditLog> sortedAuditLogs() {
-        return auditLogs.values().stream()
-            .sorted(Comparator.comparing((AuditLog log) -> log.createdAt).reversed()
-                .thenComparing(Comparator.comparingLong((AuditLog log) -> log.id).reversed()))
-            .toList();
+        return jdbc.query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC", (rs, rowNum) -> mapAuditLog(rs));
+    }
+
+    public Optional<Company> findCompany(long id) {
+        return jdbc.query("SELECT * FROM companies WHERE id = ?", (rs, rowNum) -> mapCompany(rs), id).stream().findFirst();
+    }
+
+    public Optional<Department> findDepartment(long id) {
+        return jdbc.query("SELECT * FROM departments WHERE id = ?", (rs, rowNum) -> mapDepartment(rs), id).stream().findFirst();
+    }
+
+    public Optional<Employee> findEmployee(long id) {
+        return jdbc.query("""
+            SELECT employee.*, department.name AS resolved_department_name
+            FROM employees employee
+            LEFT JOIN departments department ON department.id = employee.department_id
+            WHERE employee.id = ?
+            """, (rs, rowNum) -> {
+                Employee employee = mapEmployee(rs);
+                employee.departmentName = rs.getString("resolved_department_name");
+                return employee;
+            }, id).stream().findFirst();
+    }
+
+    public Optional<Employee> findActiveEmployeeByUser(long userId, long companyId) {
+        return jdbc.query("""
+            SELECT employee.*, department.name AS resolved_department_name
+            FROM employees employee
+            LEFT JOIN departments department ON department.id = employee.department_id
+            WHERE employee.user_id = ? AND employee.company_id = ? AND employee.status <> 'departed'
+            ORDER BY employee.id
+            LIMIT 1
+            """, (rs, rowNum) -> {
+                Employee employee = mapEmployee(rs);
+                employee.departmentName = rs.getString("resolved_department_name");
+                return employee;
+            }, userId, companyId).stream().findFirst();
+    }
+
+    public Optional<TaxItem> findTaxItem(long id) {
+        return jdbc.query("SELECT * FROM tax_items WHERE id = ?", (rs, rowNum) -> mapTaxItem(rs), id).stream().findFirst();
+    }
+
+    public Optional<ReceiptVoucher> findReceiptVoucher(long id) {
+        return jdbc.query("SELECT * FROM receipt_vouchers WHERE id = ?", (rs, rowNum) -> mapReceiptVoucher(rs), id)
+            .stream().findFirst().map(voucher -> {
+                hydrateReceiptVoucherDefaults(voucher);
+                return voucher;
+            });
+    }
+
+    public Optional<ReceiptVoucher> findReceiptVoucherForUpdate(long id) {
+        return jdbc.query(
+            "SELECT * FROM receipt_vouchers WHERE id = ? FOR UPDATE",
+            (rs, rowNum) -> mapReceiptVoucher(rs),
+            id
+        ).stream().findFirst();
+    }
+
+    public long countReceiptVouchers() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class);
+        return count == null ? 0 : count;
     }
 
     public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
@@ -1506,7 +1610,6 @@ public class EnterpriseStore {
             WHERE id = ?
             """, department.companyId, department.name, department.costCenter, department.managerEmployeeId,
             moneyText(department.budget), department.status, department.updatedAt, department.id);
-        attachDepartmentNames();
     }
 
     public Employee employee(
@@ -1593,7 +1696,7 @@ public class EnterpriseStore {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindEmployee(ps, employee));
         employees.put(employee.id, employee);
-        attachDepartmentNames();
+        attachDepartmentName(employee);
         return employee;
     }
 
@@ -1636,7 +1739,7 @@ public class EnterpriseStore {
             moneyText(employee.unemploymentBase), moneyText(employee.workInjuryBase), moneyText(employee.maternityBase),
             moneyText(employee.workInjuryCompanyRate), employee.socialInsurancePolicyNote, moneyText(employee.monthlyCost), employee.emergencyContact,
             employee.updatedAt, employee.id);
-        attachDepartmentNames();
+        attachDepartmentName(employee);
     }
 
     public void deleteEmployee(long id) {
@@ -1650,7 +1753,6 @@ public class EnterpriseStore {
         employees.remove(id);
         employmentEvents.entrySet().removeIf(entry -> entry.getValue().employeeId == id);
         auditLogs.entrySet().removeIf(entry -> "employee".equals(entry.getValue().entityType) && entry.getValue().entityId == id);
-        attachDepartmentNames();
     }
 
     public void replaceEmployeeCertificates(long employeeId, List<EmployeeCertificate> certificates) {
@@ -1759,7 +1861,7 @@ public class EnterpriseStore {
         item.paymentDate = item.paymentStatus.equals("paid") ? dueDate : null;
         item.responsiblePerson = "财务负责人";
         item.riskLevel = riskLevelFor(item);
-        item.policyBasis = Optional.ofNullable(companies.get(companyId))
+        item.policyBasis = findCompany(companyId)
             .map(company -> company.policyProfileKey)
             .orElse("CN-DEFAULT-DEMO-POLICY");
         item.sourceType = "demo_estimate";
@@ -1922,16 +2024,16 @@ public class EnterpriseStore {
     }
 
     public void saveReceiptVoucher(ReceiptVoucher voucher) {
-        receiptVouchers.put(voucher.id, voucher);
-        jdbc.update("""
+        int updated = jdbc.update("""
             UPDATE receipt_vouchers SET company_id = ?, transaction_id = ?, voucher_no = ?, title = ?, voucher_type = ?,
                 direction = ?, counterparty = ?, amount = ?, tax_amount = ?, tax_rate = ?, tax_period = ?,
                 invoice_check_status = ?, deduction_status = ?, reimbursement_status = ?, approval_status = ?,
                 accounting_status = ?, accounting_voucher_no = ?, accounting_entry = ?, approved_by_user_id = ?,
                 approved_at = ?, accounted_at = ?, business_purpose = ?, expense_owner = ?, issue_date = ?, due_date = ?,
                 status = ?, file_name = ?, file_size = ?, file_type = ?, file_storage_provider = ?, file_bucket = ?,
-                file_object_key = ?, file_url = ?, risk_level = ?, note = ?, operator_user_id = ?, updated_at = ?
-            WHERE id = ?
+                file_object_key = ?, file_url = ?, risk_level = ?, note = ?, operator_user_id = ?, updated_at = ?,
+                version = version + 1
+            WHERE id = ? AND version = ?
             """, voucher.companyId, voucher.transactionId, voucher.voucherNo, voucher.title, voucher.voucherType,
             voucher.direction, voucher.counterparty, moneyText(voucher.amount), moneyText(voucher.taxAmount), moneyText(voucher.taxRate),
             voucher.taxPeriod, voucher.invoiceCheckStatus, voucher.deductionStatus, voucher.reimbursementStatus, voucher.approvalStatus,
@@ -1939,7 +2041,12 @@ public class EnterpriseStore {
             voucher.approvedAt, voucher.accountedAt, voucher.businessPurpose, voucher.expenseOwner, voucher.issueDate, voucher.dueDate,
             voucher.status, voucher.fileName, voucher.fileSize, voucher.fileType, voucher.fileStorageProvider, voucher.fileBucket,
             voucher.fileObjectKey, voucher.fileUrl, voucher.riskLevel, voucher.note, voucher.operatorUserId,
-            voucher.updatedAt, voucher.id);
+            voucher.updatedAt, voucher.id, voucher.version);
+        if (updated != 1) {
+            throw new OptimisticLockingFailureException("Receipt voucher was changed by another request: " + voucher.id);
+        }
+        voucher.version++;
+        receiptVouchers.put(voucher.id, voucher);
     }
 
     public AuditLog auditLog(
@@ -1983,7 +2090,7 @@ public class EnterpriseStore {
 
     private void attachDepartmentName(Employee employee) {
         employee.departmentName = Optional.ofNullable(employee.departmentId)
-            .map(departments::get)
+            .flatMap(this::findDepartment)
             .map(department -> department.name)
             .orElse(null);
     }
@@ -2019,8 +2126,8 @@ public class EnterpriseStore {
     }
 
     private void attachEntityTransferNames(EntityTransfer transfer) {
-        transfer.fromEntityName = Optional.ofNullable(companies.get(transfer.fromEntityId)).map(company -> company.name).orElse(null);
-        transfer.toEntityName = Optional.ofNullable(companies.get(transfer.toEntityId)).map(company -> company.name).orElse(null);
+        transfer.fromEntityName = findCompany(transfer.fromEntityId).map(company -> company.name).orElse(null);
+        transfer.toEntityName = findCompany(transfer.toEntityId).map(company -> company.name).orElse(null);
     }
 
     private Company mapCompany(ResultSet rs) throws SQLException {
@@ -2440,6 +2547,7 @@ public class EnterpriseStore {
     private ReceiptVoucher mapReceiptVoucher(ResultSet rs) throws SQLException {
         ReceiptVoucher voucher = new ReceiptVoucher();
         voucher.id = rs.getLong("id");
+        voucher.version = rs.getLong("version");
         voucher.companyId = rs.getLong("company_id");
         voucher.transactionId = nullableLong(rs, "transaction_id");
         voucher.voucherNo = rs.getString("voucher_no");

@@ -11,6 +11,8 @@ import com.mamoji.domain.Models.OutboxEvent;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
+import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -41,6 +43,8 @@ public class NotificationService {
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
+    private final CompanyMembershipRepository memberships;
+    private final ProductModuleCatalog modules;
     private final NotificationDeliveryService deliveryService;
     private final WebhookUrlValidator webhookUrlValidator;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -55,6 +59,8 @@ public class NotificationService {
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
+        CompanyMembershipRepository memberships,
+        ProductModuleCatalog modules,
         NotificationDeliveryService deliveryService,
         WebhookUrlValidator webhookUrlValidator,
         @Value("${mamoji.notifications.enabled:true}") boolean enabled,
@@ -67,6 +73,8 @@ public class NotificationService {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
+        this.memberships = memberships;
+        this.modules = modules;
         this.deliveryService = deliveryService;
         this.webhookUrlValidator = webhookUrlValidator;
         this.enabled = enabled;
@@ -380,14 +388,18 @@ public class NotificationService {
             return;
         }
         LocalDate today = LocalDate.now();
-        generateTaxReminders(today);
-        generatePeopleReminders(today);
+        if (modules.isEnabled("tax")) {
+            generateTaxReminders(today);
+        }
+        if (modules.isEnabled("people-core")) {
+            generatePeopleReminders(today);
+        }
         generateReceiptReminders(today);
     }
 
     private void generateTaxReminders(LocalDate today) {
         LocalDate latest = today.plusDays(taxLookaheadDays);
-        for (TaxItem item : enterpriseStore.taxItems.values()) {
+        for (TaxItem item : enterpriseStore.allTaxItems()) {
             if (taxSettled(item)) {
                 continue;
             }
@@ -412,7 +424,7 @@ public class NotificationService {
 
     private void generatePeopleReminders(LocalDate today) {
         LocalDate latest = today.plusDays(peopleLookaheadDays);
-        for (Employee employee : enterpriseStore.employees.values()) {
+        for (Employee employee : enterpriseStore.allEmployees()) {
             if ("departed".equals(employee.status)) {
                 continue;
             }
@@ -442,7 +454,7 @@ public class NotificationService {
 
     private void generateReceiptReminders(LocalDate today) {
         LocalDate latest = today.plusDays(receiptLookaheadDays);
-        for (ReceiptVoucher voucher : enterpriseStore.receiptVouchers.values()) {
+        for (ReceiptVoucher voucher : enterpriseStore.allReceiptVouchers()) {
             if (receiptClosed(voucher)) {
                 continue;
             }
@@ -488,7 +500,7 @@ public class NotificationService {
     }
 
     private void notifyUser(long userId, NotificationDraft draft) {
-        if (!store.users.containsKey(userId)) {
+        if (store.findUser(userId).isEmpty()) {
             return;
         }
         NotificationPreference preference = preferenceFor(userId);
@@ -541,24 +553,20 @@ public class NotificationService {
             return recipients;
         }
         Set<String> roleSet = Set.of(roles);
-        Company company = enterpriseStore.companies.get(companyId);
+        Company company = enterpriseStore.findCompany(companyId).orElse(null);
         if (company != null && roleSet.contains("founder")) {
             recipients.add(company.ownerId);
         }
-        enterpriseStore.employees.values().stream()
-            .filter(employee -> employee.companyId == companyId)
-            .filter(employee -> employee.userId != null)
-            .filter(employee -> !"departed".equals(employee.status))
-            .filter(employee -> roleSet.contains(employee.accessRole))
-            .map(employee -> employee.userId)
+        memberships.findActiveByCompany(companyId).stream()
+            .filter(membership -> roleSet.contains(membership.role()))
+            .map(membership -> membership.userId())
             .forEach(recipients::add);
-        recipients.removeIf(userId -> !store.users.containsKey(userId));
         return recipients;
     }
 
     private Set<Long> adminRecipients() {
         Set<Long> recipients = new LinkedHashSet<>();
-        store.users.values().stream()
+        store.sortedUsers().stream()
             .filter(user -> user.role == Roles.ADMIN)
             .map(user -> user.id)
             .forEach(recipients::add);
@@ -567,7 +575,7 @@ public class NotificationService {
 
     private Set<Long> actorOnly(long actorUserId) {
         Set<Long> recipients = new LinkedHashSet<>();
-        if (actorUserId > 0 && store.users.containsKey(actorUserId)) {
+        if (actorUserId > 0 && store.findUser(actorUserId).isPresent()) {
             recipients.add(actorUserId);
         }
         return recipients;
@@ -575,7 +583,7 @@ public class NotificationService {
 
     private Set<Long> withActor(Set<Long> recipients, long actorUserId) {
         Set<Long> all = new LinkedHashSet<>(recipients);
-        if (actorUserId > 0 && store.users.containsKey(actorUserId)) {
+        if (actorUserId > 0 && store.findUser(actorUserId).isPresent()) {
             all.add(actorUserId);
         }
         return all;

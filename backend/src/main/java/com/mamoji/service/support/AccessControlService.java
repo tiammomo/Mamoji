@@ -6,10 +6,11 @@ import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
-import java.util.Comparator;
+import com.mamoji.platform.tenant.CompanyMembership;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
+import com.mamoji.platform.product.ProductModuleCatalog;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
@@ -20,10 +21,19 @@ import org.springframework.web.server.ResponseStatusException;
 public class AccessControlService {
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
+    private final CompanyMembershipRepository memberships;
+    private final ProductModuleCatalog productModules;
 
-    public AccessControlService(InMemoryStore store, EnterpriseStore enterpriseStore) {
+    public AccessControlService(
+        InMemoryStore store,
+        EnterpriseStore enterpriseStore,
+        CompanyMembershipRepository memberships,
+        ProductModuleCatalog productModules
+    ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
+        this.memberships = memberships;
+        this.productModules = productModules;
     }
 
     public User requireUser(String authorization) {
@@ -41,11 +51,9 @@ public class AccessControlService {
 
     public User requirePeopleManager(String authorization) {
         User user = requireUser(authorization);
-        boolean peopleRole = enterpriseStore.employees.values().stream()
-            .filter(candidate -> Objects.equals(candidate.userId, user.id))
-            .filter(this::hasActiveCompanyAccess)
-            .filter(candidate -> hasCompanyWideWriteScope(candidate.accessScope))
-            .anyMatch(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("hr_admin"));
+        boolean peopleRole = memberships.findActiveByUser(user.id).stream()
+            .filter(candidate -> hasCompanyWideWriteScope(candidate.scope()))
+            .anyMatch(candidate -> candidate.role().equals("founder") || candidate.role().equals("hr_admin"));
         if (user.role == Roles.ADMIN || peopleRole) {
             return user;
         }
@@ -54,11 +62,9 @@ public class AccessControlService {
 
     public User requireFinanceManager(String authorization) {
         User user = requireUser(authorization);
-        boolean financeRole = enterpriseStore.employees.values().stream()
-            .filter(candidate -> Objects.equals(candidate.userId, user.id))
-            .filter(this::hasActiveCompanyAccess)
-            .filter(candidate -> hasCompanyWideWriteScope(candidate.accessScope))
-            .anyMatch(candidate -> candidate.accessRole.equals("founder") || candidate.accessRole.equals("finance_admin"));
+        boolean financeRole = memberships.findActiveByUser(user.id).stream()
+            .filter(candidate -> hasCompanyWideWriteScope(candidate.scope()))
+            .anyMatch(candidate -> candidate.role().equals("founder") || candidate.role().equals("finance_admin"));
         if (user.role == Roles.ADMIN || financeRole) {
             return user;
         }
@@ -99,9 +105,9 @@ public class AccessControlService {
         if (isGlobalAdminOrOwner(user, companyId)) {
             return true;
         }
-        return employeeForUser(user, companyId)
-            .filter(employee -> Set.of("founder", "hr_admin", "finance_admin", "department_manager", "viewer").contains(employee.accessRole))
-            .filter(employee -> hasCompanyWideReadScope(employee.accessScope))
+        return membershipForUser(user, companyId)
+            .filter(membership -> Set.of("founder", "hr_admin", "finance_admin", "department_manager", "viewer").contains(membership.role()))
+            .filter(membership -> hasCompanyWideReadScope(membership.scope()))
             .isPresent();
     }
 
@@ -113,9 +119,9 @@ public class AccessControlService {
             return true;
         }
         Set<String> roleSet = Set.of(roles);
-        return employeeForUser(user, companyId)
-            .filter(employee -> roleSet.contains(employee.accessRole))
-            .filter(employee -> hasCompanyWideWriteScope(employee.accessScope))
+        return membershipForUser(user, companyId)
+            .filter(membership -> roleSet.contains(membership.role()))
+            .filter(membership -> hasCompanyWideWriteScope(membership.scope()))
             .isPresent();
     }
 
@@ -124,12 +130,12 @@ public class AccessControlService {
             return true;
         }
         Set<String> roleSet = Set.of(roles);
-        Company company = enterpriseStore.companies.get(companyId);
+        Company company = enterpriseStore.findCompany(companyId).orElse(null);
         if (company != null && company.ownerId == user.id && roleSet.contains("founder")) {
             return true;
         }
-        return employeeForUser(user, companyId)
-            .map(employee -> roleSet.contains(employee.accessRole))
+        return membershipForUser(user, companyId)
+            .map(membership -> roleSet.contains(membership.role()))
             .orElse(false);
     }
 
@@ -138,7 +144,7 @@ public class AccessControlService {
     }
 
     private boolean isCompanyOwner(User user, long companyId) {
-        Company company = enterpriseStore.companies.get(companyId);
+        Company company = enterpriseStore.findCompany(companyId).orElse(null);
         return company != null && company.ownerId == user.id;
     }
 
@@ -151,18 +157,19 @@ public class AccessControlService {
     }
 
     public Optional<Employee> employeeForUser(User user, long companyId) {
-        return enterpriseStore.employees.values().stream()
-            .filter(employee -> employee.companyId == companyId)
-            .filter(employee -> Objects.equals(employee.userId, user.id))
-            .filter(this::hasActiveCompanyAccess)
-            .min(Comparator.comparingLong(employee -> employee.id));
+        return enterpriseStore.findActiveEmployeeByUser(user.id, companyId);
+    }
+
+    public Optional<CompanyMembership> membershipForUser(User user, long companyId) {
+        return memberships.find(user.id, companyId).filter(CompanyMembership::active);
     }
 
     public Company resolveCompany(User user, Long companyId) {
         if (companyId == null || companyId == 0) {
             return defaultCompany(user);
         }
-        Company company = require(enterpriseStore.companies.get(companyId), "Company not found");
+        Company company = enterpriseStore.findCompany(companyId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Company not found"));
         if (!canAccessCompany(user, company.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No access to company");
         }
@@ -171,25 +178,22 @@ public class AccessControlService {
 
     public List<Company> accessibleCompanies(User user) {
         if (user.role == Roles.ADMIN) {
-            return enterpriseStore.sortedCompanies();
+            return enterpriseStore.sortedCompanies().stream()
+                .filter(company -> productModules.householdEnabled() || !"household".equals(company.entityType))
+                .toList();
         }
         Set<Long> employeeCompanyIds = new HashSet<>();
-        enterpriseStore.employees.values().stream()
-            .filter(employee -> Objects.equals(employee.userId, user.id))
-            .filter(this::hasActiveCompanyAccess)
-            .map(employee -> employee.companyId)
+        memberships.findActiveByUser(user.id).stream()
+            .map(CompanyMembership::companyId)
             .forEach(employeeCompanyIds::add);
         return enterpriseStore.sortedCompanies().stream()
+            .filter(company -> productModules.householdEnabled() || !"household".equals(company.entityType))
             .filter(company -> company.ownerId == user.id || employeeCompanyIds.contains(company.id))
             .toList();
     }
 
     public boolean canAccessCompany(User user, long companyId) {
-        return user.role == Roles.ADMIN || accessibleCompanies(user).stream().anyMatch(company -> company.id == companyId);
-    }
-
-    private boolean hasActiveCompanyAccess(Employee employee) {
-        return employee.status != null && !"departed".equals(employee.status);
+        return accessibleCompanies(user).stream().anyMatch(company -> company.id == companyId);
     }
 
     private Company defaultCompany(User user) {
@@ -197,12 +201,7 @@ public class AccessControlService {
         if (!companies.isEmpty()) {
             return companies.get(0);
         }
-        if (user.role != Roles.ADMIN) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No company access");
-        }
-        return enterpriseStore.sortedCompanies().stream()
-            .min(Comparator.comparing(company -> company.id))
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Company not found"));
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No enabled company access");
     }
 
     private <T> T require(T value, String message) {

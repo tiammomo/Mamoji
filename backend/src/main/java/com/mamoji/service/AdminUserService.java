@@ -6,7 +6,6 @@ import com.mamoji.domain.Models.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -32,9 +31,8 @@ public class AdminUserService {
     public PagedResponse<User> listUsers(String authorization, Map<String, String> params) {
         accessControl.requireAdmin(authorization);
         String keyword = params.getOrDefault("keyword", "").toLowerCase();
-        List<User> users = store.users.values().stream()
+        List<User> users = store.sortedUsers().stream()
             .filter(user -> keyword.isBlank() || user.email.toLowerCase().contains(keyword) || user.nickname.toLowerCase().contains(keyword))
-            .sorted(Comparator.comparing(user -> user.id))
             .toList();
         return PagedResponse.of(users, PageRequest.from(params));
     }

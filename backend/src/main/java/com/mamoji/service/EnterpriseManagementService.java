@@ -9,6 +9,8 @@ import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
+import com.mamoji.platform.product.ProductModuleCatalog;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -43,19 +45,25 @@ public class EnterpriseManagementService {
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
     private final OutboxEventService outboxEventService;
+    private final ProductModuleCatalog productModules;
+    private final CompanyMembershipRepository memberships;
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
         InMemoryStore coreStore,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
-        OutboxEventService outboxEventService
+        OutboxEventService outboxEventService,
+        ProductModuleCatalog productModules,
+        CompanyMembershipRepository memberships
     ) {
         this.enterpriseStore = enterpriseStore;
         this.coreStore = coreStore;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
         this.outboxEventService = outboxEventService;
+        this.productModules = productModules;
+        this.memberships = memberships;
     }
 
     public Map<String, Object> summary(String authorization, Long companyId) {
@@ -100,16 +108,22 @@ public class EnterpriseManagementService {
     }
 
     public List<Company> listCompanies(String authorization) {
-        return accessControl.accessibleCompanies(accessControl.requireUser(authorization));
+        return accessControl.accessibleCompanies(accessControl.requireUser(authorization)).stream()
+            .filter(company -> productModules.householdEnabled() || !"household".equals(company.entityType))
+            .toList();
     }
 
     @Transactional
     public Company createCompany(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
+        String entityType = textOr(body.get("entityType"), "company");
+        if ("household".equals(entityType) && !productModules.householdEnabled()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Household subjects are disabled in internal-module mode");
+        }
         Company company = enterpriseStore.company(
             user.id,
             textOr(body.get("name"), "新公司主体"),
-            textOr(body.get("entityType"), "company"),
+            entityType,
             nullableText(body.get("creditCode")),
             textOr(body.get("industry"), "未设置"),
             textOr(body.get("taxpayerType"), "未设置"),
@@ -118,6 +132,7 @@ public class EnterpriseManagementService {
         applyCompanyFields(company, body);
         touch(company);
         enterpriseStore.saveCompany(company);
+        memberships.ensureOwner(company);
         coreStore.ensureCompanyAccountingWorkspace(user.id, company.id, company.currency, company.name);
         audit(company.id, "company", company.id, "create", "创建公司主体: " + company.name, user);
         return company;
@@ -165,7 +180,8 @@ public class EnterpriseManagementService {
     @Transactional
     public Department updateDepartment(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
-        Department department = require(enterpriseStore.departments.get(id), "Department not found");
+        Department department = enterpriseStore.findDepartment(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Department not found"));
         if (!accessControl.canAccessCompany(user, department.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
@@ -234,6 +250,7 @@ public class EnterpriseManagementService {
         applyEmployeeFields(employee, body);
         touch(employee);
         enterpriseStore.saveEmployee(employee);
+        memberships.synchronize(employee);
         syncEmployeeProfileLists(employee, body);
         enterpriseStore.event(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
         audit(company.id, "employee", employee.id, "create", "创建员工档案: " + employee.name, operator);
@@ -243,7 +260,8 @@ public class EnterpriseManagementService {
     @Transactional
     public Employee updateEmployee(String authorization, long id, Map<String, Object> body) {
         User operator = accessControl.requireUser(authorization);
-        Employee employee = require(enterpriseStore.employees.get(id), "Employee not found");
+        Employee employee = enterpriseStore.findEmployee(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Employee not found"));
         if (!accessControl.canAccessCompany(operator, employee.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
@@ -252,6 +270,7 @@ public class EnterpriseManagementService {
         applyEmployeeFields(employee, body);
         touch(employee);
         enterpriseStore.saveEmployee(employee);
+        memberships.synchronize(employee);
         syncEmployeeProfileLists(employee, body);
         if (!oldStatus.equals(employee.status)) {
             String eventType = employee.status.equals("departed") ? "offboard" : "status_change";
@@ -300,7 +319,8 @@ public class EnterpriseManagementService {
     @Transactional
     public TaxItem updateTaxItem(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
-        TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
+        TaxItem item = enterpriseStore.findTaxItem(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tax item not found"));
         accessControl.resolveCompany(user, item.companyId);
         accessControl.requireFinanceManager(user, item.companyId);
         applyTaxItemFields(item, body);
@@ -314,7 +334,8 @@ public class EnterpriseManagementService {
     @Transactional
     public void deleteTaxItem(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
-        TaxItem item = require(enterpriseStore.taxItems.get(id), "Tax item not found");
+        TaxItem item = enterpriseStore.findTaxItem(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tax item not found"));
         accessControl.resolveCompany(user, item.companyId);
         accessControl.requireFinanceManager(user, item.companyId);
         audit(item.companyId, "tax_item", item.id, "delete", "删除税费事项: " + item.name, user);
@@ -461,9 +482,9 @@ public class EnterpriseManagementService {
             item.responsiblePerson = "财务负责人";
         }
         if (item.policyBasis == null || item.policyBasis.isBlank()) {
-            item.policyBasis = enterpriseStore.companies.containsKey(item.companyId)
-                ? enterpriseStore.companies.get(item.companyId).policyProfileKey
-                : "CN-DEFAULT-DEMO-POLICY";
+            item.policyBasis = enterpriseStore.findCompany(item.companyId)
+                .map(company -> company.policyProfileKey)
+                .orElse("CN-DEFAULT-DEMO-POLICY");
         }
         if (item.sourceType == null || item.sourceType.isBlank()) {
             item.sourceType = "manual";

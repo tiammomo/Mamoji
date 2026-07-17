@@ -1,12 +1,40 @@
 package com.mamoji.service.support;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EnterprisePermissionCatalog {
+    private static final List<String> ALL_PERMISSION_KEYS = List.of(
+        "company.switch", "company.create", "company.manage", "policy.read", "policy.manage",
+        "people.read", "people.write", "people.offboard", "workforce.cost.read", "workforce.cost.manage",
+        "operations.read", "operations.write",
+        "finance.read", "finance.write", "budget.manage", "tax.manage", "approval.manage",
+        "reports.read", "admin.permissions"
+    );
+
+    public Set<String> allPermissionKeys() {
+        return Set.copyOf(ALL_PERMISSION_KEYS);
+    }
+
+    public Set<String> permissionsForRole(String role) {
+        if (role == null) {
+            return Set.of();
+        }
+        for (Map<String, Object> row : roleMatrix()) {
+            if (role.equals(row.get("role"))) {
+                @SuppressWarnings("unchecked")
+                List<String> permissions = (List<String>) row.get("permissions");
+                return Set.copyOf(new LinkedHashSet<>(permissions));
+            }
+        }
+        return Set.of();
+    }
+
     public Map<String, Object> matrix() {
         List<Map<String, Object>> roles = List.of(
             row("key", "founder", "name", "创始人/CEO", "description", "公司所有者，负责最终经营与权限控制"),
@@ -33,6 +61,8 @@ public class EnterprisePermissionCatalog {
             row("key", "people.read", "name", "查看人员信息"),
             row("key", "people.write", "name", "维护人员信息"),
             row("key", "people.offboard", "name", "办理离职"),
+            row("key", "workforce.cost.read", "name", "查看人力成本"),
+            row("key", "workforce.cost.manage", "name", "管理薪酬月结"),
             row("key", "operations.read", "name", "查看经营数据"),
             row("key", "operations.write", "name", "维护经营流水"),
             row("key", "finance.read", "name", "查看资金与凭证"),
@@ -43,21 +73,29 @@ public class EnterprisePermissionCatalog {
             row("key", "reports.read", "name", "查看经营报表"),
             row("key", "admin.permissions", "name", "权限分配")
         );
-        List<Map<String, Object>> matrix = List.of(
+        List<Map<String, Object>> matrix = roleMatrix();
+        return Map.of("roles", roles, "scopes", scopes, "permissions", permissions, "matrix", matrix);
+    }
+
+    private List<Map<String, Object>> roleMatrix() {
+        return List.of(
             row("role", "founder", "defaultScope", "company", "permissions", List.of(
                 "company.switch", "company.create", "company.manage", "policy.read", "policy.manage",
-                "people.read", "people.write", "people.offboard", "operations.read", "operations.write", "finance.read", "finance.write",
+                "people.read", "people.write", "people.offboard", "workforce.cost.read", "workforce.cost.manage",
+                "operations.read", "operations.write", "finance.read", "finance.write",
                 "budget.manage", "tax.manage", "approval.manage", "reports.read", "admin.permissions"
             )),
             row("role", "finance_admin", "defaultScope", "company", "permissions", List.of(
-                "company.switch", "policy.read", "operations.read", "operations.write", "finance.read", "finance.write",
+                "company.switch", "policy.read", "workforce.cost.read", "workforce.cost.manage",
+                "operations.read", "operations.write", "finance.read", "finance.write",
                 "budget.manage", "tax.manage", "approval.manage", "reports.read"
             )),
             row("role", "hr_admin", "defaultScope", "company", "permissions", List.of(
-                "company.switch", "policy.read", "people.read", "people.write", "people.offboard", "approval.manage", "reports.read"
+                "company.switch", "policy.read", "people.read", "people.write", "people.offboard",
+                "workforce.cost.read", "workforce.cost.manage", "approval.manage", "reports.read"
             )),
             row("role", "department_manager", "defaultScope", "department", "permissions", List.of(
-                "people.read", "operations.read", "budget.manage", "approval.manage", "reports.read"
+                "people.read", "workforce.cost.read", "operations.read", "budget.manage", "approval.manage", "reports.read"
             )),
             row("role", "employee", "defaultScope", "self", "permissions", List.of(
                 "people.read", "approval.manage"
@@ -66,7 +104,6 @@ public class EnterprisePermissionCatalog {
                 "people.read", "operations.read", "finance.read", "reports.read"
             ))
         );
-        return Map.of("roles", roles, "scopes", scopes, "permissions", permissions, "matrix", matrix);
     }
 
     private static Map<String, Object> row(Object... values) {

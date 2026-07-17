@@ -6,7 +6,6 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.User;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,12 +37,7 @@ public class LedgerService {
     public List<Ledger> listLedgers(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        long userId = user.id;
-        return store.ledgers.values().stream()
-            .filter(ledger -> Objects.equals(ledger.companyId, company.id))
-            .filter(ledger -> ledger.ownerId == userId || isLedgerMember(ledger.id, userId))
-            .sorted(Comparator.comparing(ledger -> ledger.id))
-            .toList();
+        return store.queryAccessibleLedgers(user.id, company.id);
     }
 
     public Ledger defaultLedger(String authorization) {
@@ -54,7 +48,7 @@ public class LedgerService {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
         return defaultLedgerId(user.id, company.id)
-            .map(id -> store.ledgers.get(id))
+            .flatMap(store::findLedger)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Default ledger not found"));
     }
 
@@ -65,7 +59,7 @@ public class LedgerService {
     public Ledger getLedger(String authorization, long id, Long companyId) {
         User user = accessControl.requireUser(authorization);
         long userId = user.id;
-        Ledger ledger = require(store.ledgers.get(id), "Ledger not found");
+        Ledger ledger = require(store.findLedger(id).orElse(null), "Ledger not found");
         Company company = accessControl.resolveCompany(user, companyId == null ? ledger.companyId : companyId);
         if (!Objects.equals(ledger.companyId, company.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ledger is outside the selected company");
@@ -95,10 +89,7 @@ public class LedgerService {
 
     public List<LedgerMember> ledgerMembers(String authorization, long ledgerId) {
         getLedger(authorization, ledgerId);
-        return store.ledgerMembers.values().stream()
-            .filter(member -> member.ledgerId == ledgerId)
-            .sorted(Comparator.comparing(member -> member.id))
-            .toList();
+        return store.queryLedgerMembers(ledgerId);
     }
 
     @Transactional
@@ -111,7 +102,7 @@ public class LedgerService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can add members");
         }
         long userId = longValue(body.get("userId"), 0);
-        require(store.users.get(userId), "User not found");
+        require(store.findUser(userId).orElse(null), "User not found");
         if (!store.ledgerMemberExists(ledgerId, userId)) {
             store.member(ledgerId, userId, textOr(body.get("role"), "viewer"));
         }
@@ -131,18 +122,17 @@ public class LedgerService {
     }
 
     private Optional<Long> defaultLedgerId(long userId, long companyId) {
-        return store.ledgers.values().stream()
-            .filter(ledger -> Objects.equals(ledger.companyId, companyId))
-            .filter(ledger -> ledger.ownerId == userId && ledger.isDefault)
+        List<Ledger> ledgers = store.queryLedgers(userId, companyId);
+        return ledgers.stream()
+            .filter(ledger -> ledger.isDefault)
             .map(ledger -> ledger.id)
             .min(Long::compareTo)
-            .or(() -> store.ledgers.values().stream()
-                .filter(ledger -> ledger.ownerId == userId && Objects.equals(ledger.companyId, companyId))
+            .or(() -> ledgers.stream()
                 .map(ledger -> ledger.id)
                 .min(Long::compareTo));
     }
 
     private boolean isLedgerMember(long ledgerId, long userId) {
-        return store.ledgerMembers.values().stream().anyMatch(member -> member.ledgerId == ledgerId && member.userId == userId);
+        return store.ledgerMemberExists(ledgerId, userId);
     }
 }

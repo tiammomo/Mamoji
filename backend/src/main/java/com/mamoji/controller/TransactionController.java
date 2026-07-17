@@ -91,9 +91,12 @@ public class TransactionController {
     @PostMapping
     public Map<String, Object> create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody Map<String, Object> body
     ) {
-        return service.createTransaction(authorization, body);
+        Map<String, Object> command = new java.util.LinkedHashMap<>(body);
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) command.put("idempotencyKey", idempotencyKey);
+        return service.createTransaction(authorization, command);
     }
 
     @PutMapping("/{id}")

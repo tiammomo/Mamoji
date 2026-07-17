@@ -34,11 +34,16 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
     "mamoji.runtime.environment=local",
     "mamoji.schema.compatibility-enabled=false",
     "mamoji.bootstrap.mode=demo",
+    "mamoji.product.modules.people-core-enabled=true",
+    "mamoji.product.modules.workforce-cost-enabled=true",
+    "mamoji.product.modules.talent-suite-enabled=true",
+    "mamoji.product.modules.tax-workspace-enabled=true",
+    "mamoji.product.modules.backup-ui-enabled=true",
     "mamoji.registration.mode=invite",
     "mamoji.object-storage.enabled=false",
     "mamoji.outbox.consumer.enabled=false",

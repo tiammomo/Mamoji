@@ -8,7 +8,6 @@ import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,12 +45,7 @@ public class RecurringService {
     public List<RecurringItem> listRecurring(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        long userId = user.id;
-        return store.recurringItems.values().stream()
-            .filter(item -> item.userId == userId)
-            .filter(item -> Objects.equals(item.companyId, company.id))
-            .sorted(Comparator.comparing((RecurringItem item) -> item.nextExecution).thenComparing(item -> item.id))
-            .toList();
+        return store.queryRecurring(user.id, company.id);
     }
 
     @Transactional
@@ -245,8 +239,7 @@ public class RecurringService {
 
     private Optional<Long> defaultCategoryId(long userId, long companyId, int type) {
         String typeName = type == 1 ? "income" : "expense";
-        return store.categories.values().stream()
-            .filter(category -> category.userId == userId && Objects.equals(category.companyId, companyId) && category.type.equals(typeName))
+        return store.queryCategories(userId, companyId, typeName).stream()
             .map(category -> category.id)
             .min(Long::compareTo);
     }

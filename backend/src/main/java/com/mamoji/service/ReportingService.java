@@ -1,7 +1,7 @@
 package com.mamoji.service;
 
+import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.domain.Models.Company;
@@ -33,10 +33,16 @@ public class ReportingService {
 
     private final InMemoryStore store;
     private final AccessControlService accessControl;
+    private final BudgetApplicationService budgetService;
 
-    public ReportingService(InMemoryStore store, AccessControlService accessControl) {
+    public ReportingService(
+        InMemoryStore store,
+        AccessControlService accessControl,
+        BudgetApplicationService budgetService
+    ) {
         this.store = store;
         this.accessControl = accessControl;
+        this.budgetService = budgetService;
     }
 
     public Map<String, BigDecimal> overview(String authorization) {
@@ -50,10 +56,8 @@ public class ReportingService {
         List<TransactionRecord> txs = userTransactions(userId, scope.companyId());
         BigDecimal income = sumTransactions(txs, tx -> tx.type == 1 && sameMonth(tx.date, current));
         BigDecimal expense = netExpense(txs, tx -> sameMonth(tx.date, current));
-        store.attachBudgetData();
-        List<com.mamoji.domain.Models.Budget> matchingBudgets = store.budgets.values().stream()
-            .filter(budget -> budget.userId == userId && budget.status != 0)
-            .filter(budget -> Objects.equals(budget.companyId, scope.companyId()))
+        List<com.mamoji.domain.Models.Budget> matchingBudgets = budgetService.companyBudgets(scope.companyId()).stream()
+            .filter(budget -> budget.status != 0)
             .filter(budget -> budget.startDate.compareTo(current.atEndOfMonth().toString()) <= 0)
             .filter(budget -> budget.endDate.compareTo(current.atDay(1).toString()) >= 0)
             .toList();
@@ -97,8 +101,7 @@ public class ReportingService {
         Scope scope = scope(authorization, params);
         long userId = scope.userId();
         int type = transactionTypeParam(params.get("type"), 2);
-        List<TransactionRecord> txs = store.transactions.values().stream()
-            .filter(tx -> tx.userId == userId && Objects.equals(tx.companyId, scope.companyId()))
+        List<TransactionRecord> txs = userTransactions(userId, scope.companyId()).stream()
             .filter(tx -> type == 2 ? tx.type == 2 || tx.type == 3 : tx.type == type)
             .filter(tx -> params.get("startDate") == null || tx.date.compareTo(params.get("startDate")) >= 0)
             .filter(tx -> params.get("endDate") == null || tx.date.compareTo(params.get("endDate")) <= 0)
@@ -107,13 +110,13 @@ public class ReportingService {
         Map<Long, List<TransactionRecord>> groups = new LinkedHashMap<>();
         txs.forEach(tx -> groups.computeIfAbsent(tx.categoryId, ignored -> new ArrayList<>()).add(tx));
         return groups.entrySet().stream().map(entry -> {
-            Category category = store.categories.get(entry.getKey());
+            TransactionRecord sample = entry.getValue().getFirst();
             BigDecimal amount = entry.getValue().stream().map(tx -> signedAmount(tx, type)).reduce(BigDecimal.ZERO, BigDecimal::add).max(BigDecimal.ZERO);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("categoryId", entry.getKey());
-            row.put("categoryName", category == null ? "Unknown" : category.name);
-            row.put("categoryIcon", category == null ? "💡" : category.icon);
-            row.put("categoryColor", category == null ? "#6366f1" : category.color);
+            row.put("categoryName", sample.categoryName == null ? "Unknown" : sample.categoryName);
+            row.put("categoryIcon", sample.categoryIcon == null ? "💡" : sample.categoryIcon);
+            row.put("categoryColor", sample.categoryColor == null ? "#6366f1" : sample.categoryColor);
             row.put("amount", amount);
             row.put("percentage", total.compareTo(BigDecimal.ZERO) == 0 ? 0 : amount.multiply(BigDecimal.valueOf(100)).divide(total, 2, RoundingMode.HALF_UP));
             row.put("count", entry.getValue().size());
@@ -164,10 +167,7 @@ public class ReportingService {
         long userId = user.id;
         Map<String, BigDecimal> summary = accountSummary(userId, company.id);
         Map<String, Object> result = new LinkedHashMap<>(summary);
-        List<Map<String, Object>> accounts = store.accounts.values().stream()
-            .filter(account -> account.userId == userId)
-            .filter(account -> Objects.equals(account.companyId, company.id))
-            .sorted(Comparator.comparing(account -> account.id))
+        List<Map<String, Object>> accounts = store.queryAccounts(userId, company.id).stream()
             .map(account -> {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("type", account.type);
@@ -214,10 +214,7 @@ public class ReportingService {
             })
             .toList();
         List<Map<String, Object>> spikes = categorySpikes(txs);
-        store.attachBudgetData();
-        List<Map<String, Object>> alerts = store.budgets.values().stream()
-            .filter(budget -> budget.userId == userId)
-            .filter(budget -> Objects.equals(budget.companyId, company.id))
+        List<Map<String, Object>> alerts = budgetService.companyBudgets(company.id).stream()
             .filter(budget -> budget.riskLevel.equals("high") || budget.riskLevel.equals("critical"))
             .map(budget -> Map.<String, Object>of("name", budget.name, "usageRate", budget.usageRate, "riskLevel", budget.riskLevel))
             .toList();
@@ -225,10 +222,7 @@ public class ReportingService {
     }
 
     private Map<String, BigDecimal> accountSummary(long userId, long companyId) {
-        List<Account> accounts = store.accounts.values().stream()
-            .filter(account -> account.userId == userId)
-            .filter(account -> Objects.equals(account.companyId, companyId))
-            .toList();
+        List<Account> accounts = store.queryAccounts(userId, companyId);
         BigDecimal liabilities = accounts.stream()
             .filter(account -> account.includeInNetWorth)
             .filter(account -> account.type.equals("debt") || account.type.equals("credit"))
@@ -243,10 +237,7 @@ public class ReportingService {
     }
 
     private List<TransactionRecord> userTransactions(long userId, long companyId) {
-        return store.transactions.values().stream()
-            .filter(tx -> tx.userId == userId)
-            .filter(tx -> Objects.equals(tx.companyId, companyId))
-            .peek(store::attachTransactionRelations)
+        return store.queryAllTransactions(userId, companyId).stream()
             .sorted(TRANSACTION_ORDER)
             .toList();
     }
@@ -308,10 +299,15 @@ public class ReportingService {
             if (change.compareTo(BigDecimal.ZERO) <= 0) {
                 return;
             }
-            Category category = store.categories.get(categoryId);
+            String categoryName = transactions.stream()
+                .filter(transaction -> transaction.categoryId == categoryId)
+                .map(transaction -> transaction.categoryName)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse("Unknown");
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("categoryId", categoryId);
-            row.put("category", category == null ? "Unknown" : category.name);
+            row.put("category", categoryName);
             row.put("current", currentAmount);
             row.put("previous", previousAmount);
             row.put("change", change);

@@ -3,8 +3,8 @@ package com.mamoji.service;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.PayloadReader;
+import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Ledger;
@@ -26,7 +26,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Predicate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -42,17 +41,20 @@ public class AccountingService {
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
+    private final BudgetApplicationService budgetService;
 
     public AccountingService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
-        OutboxEventService outboxEventService
+        OutboxEventService outboxEventService,
+        BudgetApplicationService budgetService
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
+        this.budgetService = budgetService;
     }
 
     public List<Account> listAccounts(String authorization) {
@@ -62,11 +64,8 @@ public class AccountingService {
     public List<Account> listAccounts(String authorization, Long companyId) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<Account> accounts = store.accounts.values().stream()
-            .filter(account -> account.userId == user.id)
-            .filter(account -> Objects.equals(account.companyId, company.id))
+        List<Account> accounts = store.queryAccounts(user.id, company.id).stream()
             .map(this::copyAccount)
-            .sorted(Comparator.comparing(account -> account.id))
             .toList();
         attachAccountMetrics(accounts, user.id, company.id);
         return accounts;
@@ -78,7 +77,8 @@ public class AccountingService {
 
     public Account getAccount(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        Account account = copyAccount(require(store.accounts.get(id), "Account not found"));
+        Account account = copyAccount(store.findAccount(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")));
         Company company = accessControl.resolveCompany(user, companyId == null ? account.companyId : companyId);
         assertScopedOwner(account.userId, account.companyId, user.id, company.id);
         attachAccountMetrics(account);
@@ -234,12 +234,7 @@ public class AccountingService {
     public List<Category> listCategories(String authorization, String type, Long companyId) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        return store.categories.values().stream()
-            .filter(category -> category.userId == user.id)
-            .filter(category -> Objects.equals(category.companyId, company.id))
-            .filter(category -> type == null || type.isBlank() || category.type.equals(type))
-            .sorted(Comparator.comparing(category -> category.id))
-            .toList();
+        return store.queryCategories(user.id, company.id, type);
     }
 
     public Category getCategory(String authorization, long id) {
@@ -248,7 +243,8 @@ public class AccountingService {
 
     public Category getCategory(String authorization, long id, Long companyId) {
         User user = requireUser(authorization);
-        Category category = require(store.categories.get(id), "Category not found");
+        Category category = store.findCategory(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
         Company company = accessControl.resolveCompany(user, companyId == null ? category.companyId : companyId);
         assertScopedOwner(category.userId, category.companyId, user.id, company.id);
         return category;
@@ -312,135 +308,6 @@ public class AccountingService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Category is used by transactions or budgets");
         }
         store.deleteCategory(id);
-    }
-
-    public PagedResponse<Budget> listBudgets(String authorization, Map<String, String> params) {
-        User user = requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        store.attachBudgetData();
-        List<Budget> budgets = store.budgets.values().stream()
-            .filter(budget -> budget.userId == user.id)
-            .filter(budget -> Objects.equals(budget.companyId, company.id))
-            .filter(filterBudget(params))
-            .sorted(Comparator.comparing(budget -> budget.id))
-            .toList();
-        return PagedResponse.of(budgets, PageRequest.from(params));
-    }
-
-    public List<Budget> activeBudgets(String authorization) {
-        return activeBudgets(authorization, null);
-    }
-
-    public List<Budget> activeBudgets(String authorization, Long companyId) {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("status", "1");
-        params.put("size", "200");
-        if (companyId != null) {
-            params.put("companyId", String.valueOf(companyId));
-        }
-        return listBudgets(authorization, params).content;
-    }
-
-    public Budget getBudget(String authorization, long id) {
-        return getBudget(authorization, id, null);
-    }
-
-    public Budget getBudget(String authorization, long id, Long companyId) {
-        User user = requireUser(authorization);
-        store.attachBudgetData();
-        Budget budget = require(store.budgets.get(id), "Budget not found");
-        Company company = accessControl.resolveCompany(user, companyId == null ? budget.companyId : companyId);
-        assertScopedOwner(budget.userId, budget.companyId, user.id, company.id);
-        return budget;
-    }
-
-    @Transactional
-    public Budget createBudget(String authorization, Map<String, Object> body) {
-        User user = requireUser(authorization);
-        Company company = resolveCompany(user, body);
-        BigDecimal amount = positiveAmount(body.get("amount"), "amount");
-        Long categoryId = optionalLong(body.get("categoryId")).orElse(null);
-        validateBudgetCategory(user, company.id, categoryId);
-        String startDate = validDate(textOr(body.get("startDate"), LocalDate.now().withDayOfMonth(1).toString()), "startDate");
-        String endDate = validDate(textOr(body.get("endDate"), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString()), "endDate");
-        if (endDate.compareTo(startDate) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must not be before startDate");
-        }
-        Budget budget = store.budget(
-            user.id,
-            company.id,
-            defaultLedgerId(user, company),
-            categoryId,
-            textOr(body.get("name"), "预算"),
-            String.valueOf(amount),
-            startDate,
-            endDate,
-            intValue(body.get("warningThreshold"), 85)
-        );
-        store.refreshBudgetDataAfterCommit();
-        return budget;
-    }
-
-    public Budget updateBudget(String authorization, long id, Map<String, Object> body) {
-        return updateBudget(authorization, id, null, body);
-    }
-
-    @Transactional
-    public Budget updateBudget(String authorization, long id, Long companyId, Map<String, Object> body) {
-        User user = requireUser(authorization);
-        Budget existing = store.budgetForUpdate(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Budget not found"));
-        Company company = accessControl.resolveCompany(user, companyId == null ? existing.companyId : companyId);
-        assertScopedOwner(existing.userId, existing.companyId, user.id, company.id);
-        Budget budget = copyBudget(existing);
-        if (body.containsKey("name")) {
-            budget.name = text(body.get("name"));
-        }
-        if (body.containsKey("amount")) {
-            budget.amount = positiveAmount(body.get("amount"), "amount");
-        }
-        if (body.containsKey("startDate")) {
-            budget.startDate = text(body.get("startDate"));
-        }
-        if (body.containsKey("endDate")) {
-            budget.endDate = text(body.get("endDate"));
-        }
-        if (body.containsKey("warningThreshold")) {
-            budget.warningThreshold = intValue(body.get("warningThreshold"), budget.warningThreshold);
-        }
-        if (body.containsKey("categoryId")) {
-            budget.categoryId = optionalLong(body.get("categoryId")).orElse(null);
-        }
-        validateBudgetCategory(user, budget.companyId, budget.categoryId);
-        budget.startDate = validDate(budget.startDate, "startDate");
-        budget.endDate = validDate(budget.endDate, "endDate");
-        if (budget.endDate.compareTo(budget.startDate) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must not be before startDate");
-        }
-        if (body.containsKey("status")) {
-            budget.status = intValue(body.get("status"), budget.status);
-        }
-        touch(budget);
-        store.saveBudget(budget);
-        store.refreshBudgetDataAfterCommit();
-        return budget;
-    }
-
-    public void deleteBudget(String authorization, long id) {
-        deleteBudget(authorization, id, null);
-    }
-
-    @Transactional
-    public void deleteBudget(String authorization, long id, Long companyId) {
-        User user = requireUser(authorization);
-        Budget budget = store.budgetForUpdate(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Budget not found"));
-        Company company = accessControl.resolveCompany(user, companyId == null ? budget.companyId : companyId);
-        assertScopedOwner(budget.userId, budget.companyId, user.id, company.id);
-        if (store.budgetHasTransactions(budget.id)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Budget has transactions");
-        }
-        store.deleteBudget(budget.id);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -514,6 +381,16 @@ public class AccountingService {
     public Map<String, Object> createTransaction(String authorization, Map<String, Object> body) {
         User user = requireUser(authorization);
         Company company = resolveCompany(user, body);
+        String idempotencyKey = idempotencyKey(body.get("idempotencyKey"));
+        if (idempotencyKey != null) {
+            store.lockTransactionIdempotency(company.id, idempotencyKey);
+            Optional<TransactionRecord> replay = store.findTransactionByIdempotency(company.id, idempotencyKey);
+            if (replay.isPresent()) {
+                TransactionRecord existing = replay.get();
+                store.attachTransactionRelations(existing);
+                return Map.of("transaction", existing, "risk", riskFor(existing), "replayed", true);
+            }
+        }
         int type = intValue(body.get("type"), 2);
         if (type != 1 && type != 2) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be income(1) or expense(2)");
@@ -535,12 +412,13 @@ public class AccountingService {
             categoryId,
             accountId,
             date,
-            textOr(body.get("note"), "")
+            textOr(body.get("note"), ""),
+            idempotencyKey
         );
-        tx.budgetId = matchingBudgetId(tx).orElse(null);
+        tx.budgetId = budgetService.matchingBudgetId(tx).orElse(null);
         store.saveTransaction(tx);
         saveAdjustedAccount(relations.account(), tx, 1);
-        store.refreshBudgetDataAfterCommit();
+        budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", tx.id, "create", "创建交易: " + tx.note, user);
         return Map.of("transaction", tx, "risk", riskFor(tx));
     }
@@ -587,7 +465,7 @@ public class AccountingService {
         validateRelationOwnership(user, company.id, tx.accountId, tx.categoryId, newAccount, tx.type);
         store.attachTransactionRelations(tx);
         tx.familyId = resolveLedgerId(user, company, newAccount);
-        tx.budgetId = matchingBudgetId(tx).orElse(null);
+        tx.budgetId = budgetService.matchingBudgetId(tx).orElse(null);
         tx.isRefundable = tx.type == 2 && tx.refundedAmount.compareTo(tx.amount) < 0;
         touch(tx);
         store.saveTransaction(tx);
@@ -600,7 +478,7 @@ public class AccountingService {
             saveAdjustedAccount(oldAccount, current, -1);
             saveAdjustedAccount(newAccount, tx, 1);
         }
-        store.refreshBudgetDataAfterCommit();
+        budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", tx.id, "update", "更新交易: " + tx.note, user);
         return tx;
     }
@@ -634,7 +512,7 @@ public class AccountingService {
             store.saveTransaction(updatedOriginal);
         }
         store.deleteTransaction(id);
-        store.refreshBudgetDataAfterCommit();
+        budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", tx.id, "delete", "删除交易: " + tx.note, user);
     }
 
@@ -645,11 +523,8 @@ public class AccountingService {
     public List<TransactionRecord> refundableTransactions(String authorization, Long companyId) {
         User user = requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        return store.transactions.values().stream()
-            .filter(tx -> tx.userId == user.id)
-            .filter(tx -> Objects.equals(tx.companyId, company.id))
+        return store.queryAllTransactions(user.id, company.id).stream()
             .filter(tx -> tx.type == 2 && tx.isRefundable)
-            .peek(store::attachTransactionRelations)
             .sorted(TRANSACTION_ORDER)
             .toList();
     }
@@ -692,7 +567,7 @@ public class AccountingService {
         store.saveTransaction(refund);
         store.saveTransaction(updatedOriginal);
         saveAdjustedAccount(account, refund, 1);
-        store.refreshBudgetDataAfterCommit();
+        budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", refund.id, "refund", "退款交易 #" + original.id, user);
         return Map.of("transaction", refund, "risk", riskFor(refund));
     }
@@ -757,7 +632,7 @@ public class AccountingService {
         BigDecimal monthlyExpense = BigDecimal.ZERO;
         long transactionCount = 0;
         String lastTransactionDate = null;
-        for (TransactionRecord tx : store.transactions.values()) {
+        for (TransactionRecord tx : store.queryAllTransactions(account.userId, account.companyId)) {
             if (tx.accountId != account.id || tx.userId != account.userId || !Objects.equals(tx.companyId, account.companyId)) {
                 continue;
             }
@@ -795,7 +670,7 @@ public class AccountingService {
     private void attachAccountMetrics(List<Account> accounts, long userId, long companyId) {
         Map<Long, AccountMetrics> metricsByAccount = new HashMap<>();
         YearMonth current = YearMonth.now();
-        for (TransactionRecord tx : store.transactions.values()) {
+        for (TransactionRecord tx : store.queryAllTransactions(userId, companyId)) {
             if (tx.userId != userId || !Objects.equals(tx.companyId, companyId)) {
                 continue;
             }
@@ -894,7 +769,8 @@ public class AccountingService {
     }
 
     private TransactionRecord requireTransaction(User user, long id, Long companyId) {
-        TransactionRecord tx = require(store.transactions.get(id), "Transaction not found");
+        TransactionRecord tx = store.findTransaction(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
         Company company = accessControl.resolveCompany(user, companyId == null ? tx.companyId : companyId);
         assertScopedOwner(tx.userId, tx.companyId, user.id, company.id);
         return tx;
@@ -968,19 +844,6 @@ public class AccountingService {
         touch(account);
     }
 
-    private Optional<Long> matchingBudgetId(TransactionRecord tx) {
-        return store.budgets.values().stream()
-            .filter(budget -> budget.userId == tx.userId)
-            .filter(budget -> Objects.equals(budget.companyId, tx.companyId))
-            .filter(budget -> budget.ledgerId == null || Objects.equals(budget.ledgerId, tx.familyId))
-            .filter(budget -> budget.status != 0)
-            .filter(budget -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
-            .filter(budget -> tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0)
-            .sorted(Comparator.comparing(budget -> budget.id))
-            .map(budget -> budget.id)
-            .findFirst();
-    }
-
     private Map<String, Object> riskFor(TransactionRecord tx) {
         YearMonth month = YearMonth.from(LocalDate.parse(tx.date));
         YearMonth previousMonth = month.minusMonths(1);
@@ -990,14 +853,13 @@ public class AccountingService {
         BigDecimal categoryLast = BigDecimal.ZERO;
         long dailyExpenseCount = 0;
         long duplicateCount = 0;
-        List<TransactionRecord> riskTransactions = new ArrayList<>(store.transactions.values());
+        List<TransactionRecord> riskTransactions = new ArrayList<>(store.queryAllTransactions(tx.userId, tx.companyId));
         riskTransactions.removeIf(item -> item.id == tx.id);
         riskTransactions.add(tx);
         for (TransactionRecord item : riskTransactions) {
             if (item.userId != tx.userId || !Objects.equals(item.companyId, tx.companyId)) {
                 continue;
             }
-            store.attachTransactionRelations(item);
             boolean currentMonth = sameMonth(item.date, month);
             if (currentMonth && item.type == 1) {
                 income = income.add(item.amount);
@@ -1072,27 +934,8 @@ public class AccountingService {
         return false;
     }
 
-    private Predicate<Budget> filterBudget(Map<String, String> params) {
-        return budget -> {
-            if (params.get("status") != null && budget.status != intParam(params, "status", budget.status)) {
-                return false;
-            }
-            if (params.get("startDate") != null && budget.endDate.compareTo(params.get("startDate")) < 0) {
-                return false;
-            }
-            if (params.get("endDate") != null && budget.startDate.compareTo(params.get("endDate")) > 0) {
-                return false;
-            }
-            String keyword = params.getOrDefault("keyword", "").toLowerCase();
-            return keyword.isBlank() || budget.name.toLowerCase().contains(keyword);
-        };
-    }
-
     private long defaultLedgerId(User user, Company company) {
-        return store.ledgers.values().stream()
-            .filter(ledger -> ledger.ownerId == user.id)
-            .filter(ledger -> Objects.equals(ledger.companyId, company.id))
-            .sorted(Comparator.comparing((Ledger ledger) -> !ledger.isDefault).thenComparing(ledger -> ledger.id))
+        return store.queryLedgers(user.id, company.id).stream()
             .map(ledger -> ledger.id)
             .findFirst()
             .orElseGet(() -> store.ensureCompanyAccountingWorkspace(user.id, company.id, company.currency, company.name).id);
@@ -1100,7 +943,7 @@ public class AccountingService {
 
     private Long resolveLedgerId(User user, Company company, Account account) {
         if (account.ledgerId != null) {
-            Ledger ledger = store.ledgers.get(account.ledgerId);
+            Ledger ledger = store.findLedger(account.ledgerId).orElse(null);
             if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Account ledger is outside the selected company");
             }
@@ -1119,18 +962,6 @@ public class AccountingService {
         }
     }
 
-    private void validateBudgetCategory(User user, long companyId, Long categoryId) {
-        if (categoryId == null) {
-            return;
-        }
-        Category category = store.categoryForUpdate(categoryId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
-        assertScopedOwner(category.userId, category.companyId, user.id, companyId);
-        if (!"expense".equals(category.type)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Budget category must be an expense category");
-        }
-    }
-
     private BigDecimal positiveAmount(Object value, String field) {
         final BigDecimal amount;
         try {
@@ -1142,6 +973,17 @@ public class AccountingService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be positive");
         }
         return amount;
+    }
+
+    private String idempotencyKey(Object value) {
+        String key = nullableText(value);
+        if (key == null) return null;
+        key = key.trim();
+        if (key.isEmpty()) return null;
+        if (key.length() > 128 || !key.matches("[A-Za-z0-9._:-]+")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
+        }
+        return key;
     }
 
     private long requiredId(Object value, String field) {
@@ -1171,10 +1013,6 @@ public class AccountingService {
 
     private Category copyCategory(Category source) {
         return copyModel(source, new Category());
-    }
-
-    private Budget copyBudget(Budget source) {
-        return copyModel(source, new Budget());
     }
 
     private TransactionRecord copyTransaction(TransactionRecord source) {
@@ -1258,10 +1096,6 @@ public class AccountingService {
 
     private static boolean bool(Object value, boolean fallback) {
         return PayloadReader.bool(value, fallback);
-    }
-
-    private static int intParam(Map<String, String> params, String key, int fallback) {
-        return PayloadReader.intParam(params, key, fallback);
     }
 
     private static long longParam(Map<String, String> params, String key, long fallback) {

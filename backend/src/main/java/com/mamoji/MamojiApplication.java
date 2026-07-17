@@ -35,8 +35,8 @@ public class MamojiApplication {
                 registry.addMapping("/api/v1/**")
                     .allowedOrigins(origins)
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Authorization", "Content-Type", "X-Requested-With")
-                    .exposedHeaders("Content-Disposition")
+                    .allowedHeaders("Authorization", "Content-Type", "X-Requested-With", "Idempotency-Key", "X-Company-Id", "X-Request-Id")
+                    .exposedHeaders("Content-Disposition", "X-Request-Id")
                     .maxAge(3600);
             }
         };

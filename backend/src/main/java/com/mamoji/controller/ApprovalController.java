@@ -48,9 +48,12 @@ public class ApprovalController {
     @PostMapping
     public ApprovalService.ApprovalDetail create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
+        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @RequestBody Map<String, Object> body
     ) {
-        return service.create(authorization, body);
+        Map<String, Object> command = new java.util.LinkedHashMap<>(body);
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) command.put("idempotencyKey", idempotencyKey);
+        return service.create(authorization, command);
     }
 
     @PostMapping("/{id}/approve")

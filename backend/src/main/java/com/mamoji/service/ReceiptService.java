@@ -222,7 +222,7 @@ public class ReceiptService {
     @Transactional
     public ReceiptVoucher update(String authorization, long id, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
-        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
         requireReceiptWritePermission(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
@@ -242,7 +242,7 @@ public class ReceiptService {
     @Transactional
     public ReceiptVoucher updateApprovalStatus(String authorization, long id, String approvalStatus) {
         User user = accessControl.requireUser(authorization);
-        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
         applyVoucherFields(user, voucher, Map.of("approvalStatus", approvalStatus));
@@ -369,7 +369,7 @@ public class ReceiptService {
 
     public List<AuditLog> auditLogs(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
-        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        ReceiptVoucher voucher = requireReceiptVoucher(id);
         if (!accessControl.canAccessCompany(user, voucher.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
@@ -378,7 +378,7 @@ public class ReceiptService {
 
     public Map<String, Object> fileLink(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
-        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        ReceiptVoucher voucher = requireReceiptVoucher(id);
         if (!accessControl.canAccessCompany(user, voucher.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
@@ -405,7 +405,7 @@ public class ReceiptService {
 
     public FileDownload fileDownload(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
-        ReceiptVoucher voucher = require(enterpriseStore.receiptVouchers.get(id), "Receipt voucher not found");
+        ReceiptVoucher voucher = requireReceiptVoucher(id);
         if (!accessControl.canAccessCompany(user, voucher.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
@@ -592,7 +592,7 @@ public class ReceiptService {
         if (transactionId == null || transactionId == 0) {
             return Optional.empty();
         }
-        TransactionRecord transaction = require(coreStore.transactions.get(transactionId), "Transaction not found");
+        TransactionRecord transaction = require(coreStore.findTransaction(transactionId).orElse(null), "Transaction not found");
         if (transaction.userId != user.id || !Objects.equals(transaction.companyId, companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden transaction");
         }
@@ -636,7 +636,17 @@ public class ReceiptService {
     }
 
     private String nextVoucherNo() {
-        return "RC-" + LocalDate.now().toString().replace("-", "") + "-" + (enterpriseStore.receiptVouchers.size() + 1);
+        return "RC-" + LocalDate.now().toString().replace("-", "") + "-" + (enterpriseStore.countReceiptVouchers() + 1);
+    }
+
+    private ReceiptVoucher requireReceiptVoucher(long id) {
+        return enterpriseStore.findReceiptVoucher(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt voucher not found"));
+    }
+
+    private ReceiptVoucher requireReceiptVoucherForUpdate(long id) {
+        return enterpriseStore.findReceiptVoucherForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt voucher not found"));
     }
 
     private String validateDate(String field, String value) {

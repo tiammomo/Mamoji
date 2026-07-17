@@ -1,5 +1,6 @@
 package com.mamoji.controller;
 
+import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.service.PayrollService;
 import java.util.List;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/payroll-runs")
+@RequiresProductModule("workforce-cost")
 public class PayrollController {
     private final PayrollService service;
 

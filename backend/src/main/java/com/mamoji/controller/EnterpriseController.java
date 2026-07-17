@@ -6,6 +6,7 @@ import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
+import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.service.EnterpriseManagementService;
 import com.mamoji.service.TaxComplianceService;
 import java.util.List;
@@ -33,6 +34,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/summary")
+    @RequiresProductModule("people-core")
     public Map<String, Object> summary(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -76,6 +78,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/departments")
+    @RequiresProductModule("people-core")
     public List<Department> departments(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -84,6 +87,7 @@ public class EnterpriseController {
     }
 
     @PostMapping("/departments")
+    @RequiresProductModule("people-core")
     public Department createDepartment(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestBody Map<String, Object> body
@@ -92,6 +96,7 @@ public class EnterpriseController {
     }
 
     @PutMapping("/departments/{id}")
+    @RequiresProductModule("people-core")
     public Department updateDepartment(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
@@ -101,6 +106,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/employees")
+    @RequiresProductModule("people-core")
     public List<Employee> employees(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam Map<String, String> params
@@ -109,6 +115,7 @@ public class EnterpriseController {
     }
 
     @PostMapping("/employees")
+    @RequiresProductModule("people-core")
     public Employee createEmployee(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestBody Map<String, Object> body
@@ -117,6 +124,7 @@ public class EnterpriseController {
     }
 
     @PutMapping("/employees/{id}")
+    @RequiresProductModule("people-core")
     public Employee updateEmployee(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
@@ -126,6 +134,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/employment-events")
+    @RequiresProductModule("people-core")
     public List<EmploymentEvent> employmentEvents(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -134,6 +143,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/tax-items")
+    @RequiresProductModule("tax")
     public List<TaxItem> taxItems(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -142,6 +152,7 @@ public class EnterpriseController {
     }
 
     @GetMapping("/tax-compliance")
+    @RequiresProductModule("tax")
     public Map<String, Object> taxCompliance(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -150,6 +161,7 @@ public class EnterpriseController {
     }
 
     @PostMapping("/tax-items")
+    @RequiresProductModule("tax")
     public TaxItem createTaxItem(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestBody Map<String, Object> body
@@ -158,6 +170,7 @@ public class EnterpriseController {
     }
 
     @PutMapping("/tax-items/{id}")
+    @RequiresProductModule("tax")
     public TaxItem updateTaxItem(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
@@ -167,6 +180,7 @@ public class EnterpriseController {
     }
 
     @DeleteMapping("/tax-items/{id}")
+    @RequiresProductModule("tax")
     public void deleteTaxItem(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id

@@ -1,5 +1,6 @@
 package com.mamoji.controller;
 
+import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.service.BackupService;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/backup")
+@RequiresProductModule("backup")
 public class BackupController {
     private final BackupService service;
 

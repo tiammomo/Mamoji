@@ -140,6 +140,21 @@ public class ApprovalService {
     public ApprovalDetail create(String authorization, Map<String, Object> body) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        String idempotencyKey = idempotencyKey(body.get("idempotencyKey"));
+        if (idempotencyKey != null) {
+            jdbc.query(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
+                "approval:" + company.id + ":" + idempotencyKey
+            );
+            List<ApprovalRequest> replay = jdbc.query(
+                "SELECT * FROM approval_requests WHERE company_id = ? AND idempotency_key = ?",
+                this::mapRequest,
+                company.id,
+                idempotencyKey
+            );
+            if (!replay.isEmpty()) return get(authorization, replay.getFirst().id);
+        }
         String requestType = allowed(textOr(body.get("requestType"), "other"), REQUEST_TYPES, "requestType");
         String entityType = allowed(textOr(body.get("entityType"), "other"), ENTITY_TYPES, "entityType");
         Long entityId = optionalLong(body.get("entityId")).orElse(null);
@@ -171,11 +186,12 @@ public class ApprovalService {
         ApprovalRequest request = jdbc.queryForObject("""
             INSERT INTO approval_requests (
                 company_id, request_type, entity_type, entity_id, title, amount, applicant_user_id,
-                assignee_user_id, status, current_step, description, decided_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'review', ?, NULL, ?, ?)
+                assignee_user_id, status, current_step, description, decided_at, created_at, updated_at,
+                idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'review', ?, NULL, ?, ?, ?)
             RETURNING *
             """, this::mapRequest, company.id, requestType, entityType, entityId, title, amount.toPlainString(),
-            user.id, assigneeId, description, now, now);
+            user.id, assigneeId, description, now, now, idempotencyKey);
         addAction(request.id, user.id, "submit", limitedNullable(nullableText(body.get("comment")), 500, "comment"));
         syncEntity(authorization, request, "pending");
         enterpriseStore.auditLog(company.id, "approval_request", request.id, "submit", "提交审批: " + title, user.id, user.nickname);
@@ -203,7 +219,7 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection comment is required");
         }
         String now = com.mamoji.repository.InMemoryStore.now();
-        jdbc.update("UPDATE approval_requests SET status = ?, current_step = 'completed', decided_at = ?, updated_at = ? WHERE id = ?",
+        jdbc.update("UPDATE approval_requests SET status = ?, current_step = 'completed', decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
             status, now, now, id);
         addAction(id, user.id, action, comment);
         syncEntity(authorization, request, status);
@@ -220,7 +236,7 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the applicant can withdraw a pending request");
         }
         String now = com.mamoji.repository.InMemoryStore.now();
-        jdbc.update("UPDATE approval_requests SET status = 'withdrawn', current_step = 'completed', decided_at = ?, updated_at = ? WHERE id = ?", now, now, id);
+        jdbc.update("UPDATE approval_requests SET status = 'withdrawn', current_step = 'completed', decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?", now, now, id);
         addAction(id, user.id, "withdraw", limitedNullable(nullableText(body.get("comment")), 500, "comment"));
         syncEntity(authorization, request, "not_submitted");
         enterpriseStore.auditLog(request.companyId, "approval_request", id, "withdraw", "撤回审批: " + request.title, user.id, user.nickname);
@@ -236,7 +252,7 @@ public class ApprovalService {
     private void validateEntity(User user, long companyId, String entityType, Long entityId) {
         if (entityId == null) return;
         if ("receipt_voucher".equals(entityType)) {
-            ReceiptVoucher voucher = enterpriseStore.receiptVouchers.get(entityId);
+            ReceiptVoucher voucher = enterpriseStore.findReceiptVoucher(entityId).orElse(null);
             if (voucher == null || voucher.companyId != companyId) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt voucher is outside the selected company");
             }
@@ -306,11 +322,23 @@ public class ApprovalService {
         return value;
     }
 
+    private String idempotencyKey(Object value) {
+        String key = nullableText(value);
+        if (key == null) return null;
+        key = key.trim();
+        if (key.isEmpty()) return null;
+        if (key.length() > 128 || !key.matches("[A-Za-z0-9._:-]+")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
+        }
+        return key;
+    }
+
     private ApprovalRequest mapRequest(ResultSet rs, int rowNum) throws SQLException {
         long assignee = rs.getLong("assignee_user_id");
         Long assigneeUserId = rs.wasNull() ? null : assignee;
         return new ApprovalRequest(
-            rs.getLong("id"), rs.getLong("company_id"), rs.getString("request_type"), rs.getString("entity_type"),
+            rs.getLong("id"), rs.getLong("version"), rs.getString("idempotency_key"),
+            rs.getLong("company_id"), rs.getString("request_type"), rs.getString("entity_type"),
             nullableLong(rs, "entity_id"), rs.getString("title"), new BigDecimal(rs.getString("amount")),
             rs.getLong("applicant_user_id"), assigneeUserId, rs.getString("status"),
             rs.getString("current_step"), rs.getString("description"), rs.getString("decided_at"),
@@ -329,7 +357,7 @@ public class ApprovalService {
     }
 
     public record ApprovalRequest(
-        long id, long companyId, String requestType, String entityType, Long entityId, String title,
+        long id, long version, String idempotencyKey, long companyId, String requestType, String entityType, Long entityId, String title,
         BigDecimal amount, long applicantUserId, Long assigneeUserId, String status, String currentStep,
         String description, String decidedAt, String createdAt, String updatedAt
     ) {}

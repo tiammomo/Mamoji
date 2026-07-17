@@ -39,6 +39,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -398,11 +399,12 @@ public class InMemoryStore {
         pageArguments.add(pageRequest.size());
         pageArguments.add((long) pageRequest.page() * pageRequest.size());
         List<TransactionRecord> content = jdbc.query(
-            "SELECT t.* " + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
-            (rs, rowNum) -> mapTransaction(rs),
+            "SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon, "
+                + "c.color AS resolved_category_color, a.name AS resolved_account_name "
+                + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
+            (rs, rowNum) -> mapTransactionWithRelations(rs),
             pageArguments.toArray()
         );
-        content.forEach(this::attachTransactionRelations);
         long totalElements = total == null ? 0 : total;
         int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
         return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
@@ -623,7 +625,7 @@ public class InMemoryStore {
     }
 
     public Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
-        Long companyId = ledgerId == null ? null : Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+        Long companyId = ledgerId == null ? null : findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
         return account(userId, companyId, ledgerId, name, type, subType, bank, balance);
     }
 
@@ -686,9 +688,9 @@ public class InMemoryStore {
     }
 
     public Budget budget(long userId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
-        Long companyId = ledgerId == null ? null : Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+        Long companyId = ledgerId == null ? null : findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
         if (companyId == null && categoryId != null) {
-            companyId = Optional.ofNullable(categories.get(categoryId)).map(category -> category.companyId).orElse(null);
+            companyId = findCategory(categoryId).map(category -> category.companyId).orElse(null);
         }
         return budget(userId, companyId, ledgerId, categoryId, name, amount, startDate, endDate, warningThreshold);
     }
@@ -720,17 +722,32 @@ public class InMemoryStore {
     }
 
     public TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
-        Long companyId = Optional.ofNullable(accounts.get(accountId)).map(account -> account.companyId).orElse(null);
+        Long companyId = findAccount(accountId).map(account -> account.companyId).orElse(null);
         if (companyId == null) {
-            companyId = Optional.ofNullable(categories.get(categoryId)).map(category -> category.companyId).orElse(null);
+            companyId = findCategory(categoryId).map(category -> category.companyId).orElse(null);
         }
         if (companyId == null && ledgerId != null) {
-            companyId = Optional.ofNullable(ledgers.get(ledgerId)).map(ledger -> ledger.companyId).orElse(null);
+            companyId = findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
         }
         return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note);
     }
 
     public TransactionRecord transaction(long userId, Long companyId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
+        return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note, null);
+    }
+
+    public TransactionRecord transaction(
+        long userId,
+        Long companyId,
+        Long ledgerId,
+        int type,
+        String amount,
+        long categoryId,
+        long accountId,
+        String date,
+        String note,
+        String idempotencyKey
+    ) {
         TransactionRecord tx = new TransactionRecord();
         tx.userId = userId;
         tx.companyId = companyId;
@@ -741,6 +758,7 @@ public class InMemoryStore {
         tx.accountId = accountId;
         tx.date = date;
         tx.note = note == null ? "" : note;
+        tx.idempotencyKey = idempotencyKey;
         tx.refundedAmount = BigDecimal.ZERO;
         tx.isRefundable = type == 2;
         attachTransactionRelations(tx);
@@ -748,8 +766,9 @@ public class InMemoryStore {
         tx.id = insert("""
             INSERT INTO transactions (
                 user_id, family_id, type, amount, category_id, account_id, date, note,
-                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at, company_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at, company_id,
+                idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, ps -> bindTransactionInsert(ps, tx));
         afterCommit(() -> transactions.put(tx.id, tx));
         return tx;
@@ -782,12 +801,7 @@ public class InMemoryStore {
         member.ledgerId = ledgerId;
         member.userId = userId;
         member.role = role;
-        User memberUser = Optional.ofNullable(users.get(userId))
-            .orElseGet(() -> jdbc.query(
-                "SELECT * FROM users WHERE id = ?",
-                (rs, rowNum) -> mapUser(rs),
-                userId
-            ).stream().findFirst().orElse(null));
+        User memberUser = findUser(userId).orElse(null);
         if (memberUser != null) {
             member.nickname = memberUser.nickname;
             member.avatar = memberUser.avatar;
@@ -802,9 +816,7 @@ public class InMemoryStore {
     }
 
     public Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName) {
-        Ledger ledger = ledgers.values().stream()
-            .filter(candidate -> candidate.ownerId == ownerId)
-            .filter(candidate -> Objects.equals(candidate.companyId, companyId))
+        Ledger ledger = queryLedgers(ownerId, companyId).stream()
             .filter(candidate -> candidate.isDefault)
             .min(Comparator.comparing(candidate -> candidate.id))
             .orElseGet(() -> ledger(
@@ -815,19 +827,13 @@ public class InMemoryStore {
                 textOr(currency, "CNY"),
                 true
             ));
-        boolean hasOwnerMember = ledgerMembers.values().stream()
-            .anyMatch(candidate -> candidate.ledgerId == ledger.id && candidate.userId == ownerId);
-        if (!hasOwnerMember) {
+        if (!ledgerMemberExists(ledger.id, ownerId)) {
             member(ledger.id, ownerId, "owner");
         }
-        boolean hasIncome = categories.values().stream()
-            .anyMatch(category -> category.userId == ownerId && Objects.equals(category.companyId, companyId) && "income".equals(category.type));
-        if (!hasIncome) {
+        if (queryCategories(ownerId, companyId, "income").isEmpty()) {
             category(ownerId, companyId, "经营收入", "💼", "#22c55e", "income");
         }
-        boolean hasExpense = categories.values().stream()
-            .anyMatch(category -> category.userId == ownerId && Objects.equals(category.companyId, companyId) && "expense".equals(category.type));
-        if (!hasExpense) {
+        if (queryCategories(ownerId, companyId, "expense").isEmpty()) {
             category(ownerId, companyId, "经营支出", "🧾", "#ef4444", "expense");
         }
         return ledger;
@@ -863,16 +869,18 @@ public class InMemoryStore {
         if (token == null || token.isBlank()) {
             return Optional.empty();
         }
-        return registrationInvites.values().stream()
-            .filter(invite -> invite.token.equals(token))
-            .findFirst();
+        return jdbc.query(
+            "SELECT * FROM registration_invites WHERE token = ?",
+            (rs, rowNum) -> mapRegistrationInvite(rs),
+            token
+        ).stream().findFirst();
     }
 
     public List<RegistrationInvite> sortedRegistrationInvites() {
-        return registrationInvites.values().stream()
-            .sorted(Comparator.comparing((RegistrationInvite invite) -> invite.createdAt).reversed()
-                .thenComparing(Comparator.comparingLong((RegistrationInvite invite) -> invite.id).reversed()))
-            .toList();
+        return jdbc.query(
+            "SELECT * FROM registration_invites ORDER BY created_at DESC, id DESC",
+            (rs, rowNum) -> mapRegistrationInvite(rs)
+        );
     }
 
     public void saveRegistrationInvite(RegistrationInvite invite) {
@@ -908,16 +916,22 @@ public class InMemoryStore {
     }
 
     public void saveAccount(Account account) {
-        jdbc.update("""
+        int updated = jdbc.update("""
             UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, account_no = ?, opening_bank = ?, currency = ?,
                 balance = ?, available_balance = ?, credit_limit = ?, frozen_amount = ?, include_in_net_worth = ?,
                 user_id = ?, ledger_id = ?, status = ?, opened_at = ?, last_reconciled_at = ?, owner_name = ?,
-                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ?, company_id = ? WHERE id = ?
+                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ?, company_id = ?,
+                version = version + 1 WHERE id = ? AND version = ?
             """, account.name, account.type, account.subType, account.bank, account.accountNo, account.openingBank,
             account.currency, moneyText(account.balance), moneyText(account.availableBalance), moneyText(account.creditLimit),
             moneyText(account.frozenAmount), intBool(account.includeInNetWorth), account.userId, account.ledgerId,
             account.status, account.openedAt, account.lastReconciledAt, account.ownerName, account.purpose,
-            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.companyId, account.id);
+            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.companyId,
+            account.id, account.version);
+        if (updated != 1) {
+            throw new OptimisticLockingFailureException("Account was changed by another request: " + account.id);
+        }
+        account.version++;
         afterCommit(() -> accounts.put(account.id, account));
     }
 
@@ -931,25 +945,35 @@ public class InMemoryStore {
     }
 
     public void saveBudget(Budget budget) {
-        jdbc.update("""
+        int updated = jdbc.update("""
             UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
                 spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?, risk_level = ?, risk_message = ?,
-                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ?, company_id = ? WHERE id = ?
+                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ?, company_id = ?,
+                version = version + 1 WHERE id = ? AND version = ?
             """, budget.name, moneyText(budget.amount), budget.startDate, budget.endDate, budget.warningThreshold, budget.status,
             moneyText(budget.spent), moneyText(budget.remainingAmount), budget.usageRate, intBool(budget.warningReached),
             budget.riskLevel, budget.riskMessage, budget.userId, budget.ledgerId, budget.categoryId, budget.createdAt, budget.updatedAt,
-            budget.companyId, budget.id);
+            budget.companyId, budget.id, budget.version);
+        if (updated != 1) {
+            throw new OptimisticLockingFailureException("Budget was changed by another request: " + budget.id);
+        }
+        budget.version++;
         afterCommit(() -> budgets.put(budget.id, budget));
     }
 
     public void saveTransaction(TransactionRecord tx) {
-        jdbc.update("""
+        int updated = jdbc.update("""
             UPDATE transactions SET user_id = ?, family_id = ?, type = ?, amount = ?, category_id = ?, account_id = ?, date = ?,
-                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?, company_id = ?
-            WHERE id = ?
+                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?, company_id = ?,
+                idempotency_key = ?, version = version + 1
+            WHERE id = ? AND version = ?
             """, tx.userId, tx.familyId, tx.type, moneyText(tx.amount), tx.categoryId, tx.accountId, tx.date, tx.note,
             tx.originalTransactionId, moneyText(tx.refundedAmount), intBool(tx.isRefundable), tx.budgetId, tx.createdAt, tx.updatedAt,
-            tx.companyId, tx.id);
+            tx.companyId, tx.idempotencyKey, tx.id, tx.version);
+        if (updated != 1) {
+            throw new OptimisticLockingFailureException("Transaction was changed by another request: " + tx.id);
+        }
+        tx.version++;
         afterCommit(() -> transactions.put(tx.id, tx));
     }
 
@@ -1035,18 +1059,19 @@ public class InMemoryStore {
         }
         String token = authorizationHeader.substring(7);
         String tokenKey = tokenStorageKey(token);
-        String storedTokenKey = tokenKey;
-        AuthSession session = tokens.get(tokenKey);
-        if (session == null) {
-            storedTokenKey = token;
-            session = tokens.get(token);
-        }
-        if (session == null || session.expired()) {
-            tokens.remove(storedTokenKey);
-            jdbc.update("DELETE FROM auth_tokens WHERE token = ?", storedTokenKey);
+        List<User> matches = jdbc.query("""
+            SELECT users.*
+            FROM auth_tokens token
+            JOIN users ON users.id = token.user_id
+            WHERE token.token IN (?, ?) AND token.expires_at > ?
+            ORDER BY CASE WHEN token.token = ? THEN 0 ELSE 1 END
+            LIMIT 1
+            """, (rs, rowNum) -> mapUser(rs), tokenKey, token, now(), tokenKey);
+        if (matches.isEmpty()) {
+            jdbc.update("DELETE FROM auth_tokens WHERE token IN (?, ?) AND expires_at <= ?", tokenKey, token, now());
             return Optional.empty();
         }
-        return Optional.ofNullable(users.get(session.userId()));
+        return Optional.of(matches.getFirst());
     }
 
     private String tokenStorageKey(String token) {
@@ -1075,7 +1100,105 @@ public class InMemoryStore {
     }
 
     public Optional<User> findUserByEmail(String email) {
-        return users.values().stream().filter(user -> user.email.equalsIgnoreCase(email)).findFirst();
+        return jdbc.query(
+            "SELECT * FROM users WHERE LOWER(email) = LOWER(?)",
+            (rs, rowNum) -> mapUser(rs),
+            email
+        ).stream().findFirst();
+    }
+
+    public Optional<User> findUser(long id) {
+        return jdbc.query("SELECT * FROM users WHERE id = ?", (rs, rowNum) -> mapUser(rs), id).stream().findFirst();
+    }
+
+    public List<User> sortedUsers() {
+        return jdbc.query("SELECT * FROM users ORDER BY id", (rs, rowNum) -> mapUser(rs));
+    }
+
+    public Optional<Account> findAccount(long id) {
+        return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
+    }
+
+    public List<Account> queryAccounts(long userId, long companyId) {
+        return jdbc.query(
+            "SELECT * FROM accounts WHERE user_id = ? AND company_id = ? ORDER BY id",
+            (rs, rowNum) -> mapAccount(rs), userId, companyId
+        );
+    }
+
+    public Optional<Category> findCategory(long id) {
+        return jdbc.query("SELECT * FROM categories WHERE id = ?", (rs, rowNum) -> mapCategory(rs), id).stream().findFirst();
+    }
+
+    public List<Category> queryCategories(long userId, long companyId, String type) {
+        if (type == null || type.isBlank()) {
+            return jdbc.query(
+                "SELECT * FROM categories WHERE user_id = ? AND company_id = ? ORDER BY id",
+                (rs, rowNum) -> mapCategory(rs), userId, companyId
+            );
+        }
+        return jdbc.query(
+            "SELECT * FROM categories WHERE user_id = ? AND company_id = ? AND type = ? ORDER BY id",
+            (rs, rowNum) -> mapCategory(rs), userId, companyId, type
+        );
+    }
+
+    public Optional<TransactionRecord> findTransaction(long id) {
+        return jdbc.query("""
+            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
+                   c.color AS resolved_category_color, a.name AS resolved_account_name
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            WHERE t.id = ?
+            """, (rs, rowNum) -> mapTransactionWithRelations(rs), id).stream().findFirst();
+    }
+
+    public List<TransactionRecord> queryAllTransactions(long userId, long companyId) {
+        return jdbc.query("""
+            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
+                   c.color AS resolved_category_color, a.name AS resolved_account_name
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            WHERE t.user_id = ? AND t.company_id = ?
+            ORDER BY t.date DESC, t.id DESC
+            """, (rs, rowNum) -> mapTransactionWithRelations(rs), userId, companyId);
+    }
+
+    public Optional<Ledger> findLedger(long id) {
+        return jdbc.query("SELECT * FROM ledgers WHERE id = ?", (rs, rowNum) -> mapLedger(rs), id).stream().findFirst();
+    }
+
+    public List<Ledger> queryLedgers(long ownerId, long companyId) {
+        return jdbc.query(
+            "SELECT * FROM ledgers WHERE owner_id = ? AND company_id = ? ORDER BY is_default DESC, id",
+            (rs, rowNum) -> mapLedger(rs), ownerId, companyId
+        );
+    }
+
+    public List<Ledger> queryAccessibleLedgers(long userId, long companyId) {
+        return jdbc.query("""
+            SELECT DISTINCT ledger.*
+            FROM ledgers ledger
+            LEFT JOIN ledger_members member ON member.ledger_id = ledger.id AND member.user_id = ?
+            WHERE ledger.company_id = ? AND (ledger.owner_id = ? OR member.user_id IS NOT NULL)
+            ORDER BY ledger.id
+            """, (rs, rowNum) -> mapLedger(rs), userId, companyId, userId);
+    }
+
+    public List<LedgerMember> queryLedgerMembers(long ledgerId) {
+        return jdbc.query(
+            "SELECT * FROM ledger_members WHERE ledger_id = ? ORDER BY id",
+            (rs, rowNum) -> mapLedgerMember(rs), ledgerId
+        );
+    }
+
+    public List<RecurringItem> queryRecurring(long userId, long companyId) {
+        return jdbc.query(
+            "SELECT * FROM recurring_items WHERE user_id = ? AND company_id = ? ORDER BY next_execution, id",
+            (rs, rowNum) -> mapRecurringItem(rs), userId, companyId
+        );
     }
 
     public Optional<User> userForUpdate(long id) {
@@ -1090,6 +1213,24 @@ public class InMemoryStore {
             token
         );
         return matches.stream().findFirst();
+    }
+
+    public void lockTransactionIdempotency(long companyId, String idempotencyKey) {
+        jdbc.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+            (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
+            "transaction:" + companyId + ":" + idempotencyKey
+        );
+    }
+
+    public Optional<TransactionRecord> findTransactionByIdempotency(long companyId, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) return Optional.empty();
+        return jdbc.query(
+            "SELECT * FROM transactions WHERE company_id = ? AND idempotency_key = ?",
+            (rs, rowNum) -> mapTransaction(rs),
+            companyId,
+            idempotencyKey
+        ).stream().findFirst();
     }
 
     public long lockAndCountUsers() {
@@ -1185,21 +1326,36 @@ public class InMemoryStore {
     }
 
     public List<TransactionRecord> sortedTransactions() {
-        return transactions.values().stream()
-            .sorted(Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id))
-            .toList();
+        return jdbc.query("""
+            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
+                   c.color AS resolved_category_color, a.name AS resolved_account_name
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            ORDER BY t.date DESC, t.id DESC
+            """, (rs, rowNum) -> mapTransactionWithRelations(rs));
     }
 
     public List<Account> sortedAccounts() {
-        return accounts.values().stream().sorted(Comparator.comparing(account -> account.id)).toList();
+        return jdbc.query("SELECT * FROM accounts ORDER BY id", (rs, rowNum) -> mapAccount(rs));
     }
 
     public List<Category> sortedCategories() {
-        return categories.values().stream().sorted(Comparator.comparing(category -> category.id)).toList();
+        return jdbc.query("SELECT * FROM categories ORDER BY id", (rs, rowNum) -> mapCategory(rs));
     }
 
     public List<Budget> sortedBudgets() {
-        return budgets.values().stream().sorted(Comparator.comparing(budget -> budget.id)).toList();
+        return jdbc.query("""
+            SELECT budget.*, category.name AS resolved_category_name, category.icon AS resolved_category_icon
+            FROM budgets budget
+            LEFT JOIN categories category ON category.id = budget.category_id
+            ORDER BY budget.id
+            """, (rs, rowNum) -> {
+                Budget budget = mapBudget(rs);
+                budget.categoryName = rs.getString("resolved_category_name");
+                budget.categoryIcon = rs.getString("resolved_category_icon");
+                return budget;
+            });
     }
 
     /**
@@ -1287,10 +1443,10 @@ public class InMemoryStore {
     }
 
     private void attachBudgetData(boolean persist) {
-        List<TransactionRecord> expenseTransactions = transactions.values().stream()
+        List<TransactionRecord> expenseTransactions = sortedTransactions().stream()
             .filter(tx -> tx.type == 2 || tx.type == 3)
             .toList();
-        budgets.values().forEach(budget -> {
+        sortedBudgets().forEach(budget -> {
             BigDecimal previousSpent = budget.spent;
             BigDecimal previousRemaining = budget.remainingAmount;
             double previousUsageRate = budget.usageRate;
@@ -1331,12 +1487,19 @@ public class InMemoryStore {
     }
 
     public void attachTransactionRelations(TransactionRecord tx) {
-        Optional.ofNullable(categories.get(tx.categoryId)).ifPresent(category -> {
-            tx.categoryName = category.name;
-            tx.categoryIcon = category.icon;
-            tx.categoryColor = category.color;
-        });
-        Optional.ofNullable(accounts.get(tx.accountId)).ifPresent(account -> tx.accountName = account.name);
+        jdbc.query("""
+            SELECT c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+                   a.name AS account_name
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            WHERE t.id = ?
+            """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+                tx.categoryName = rs.getString("category_name");
+                tx.categoryIcon = rs.getString("category_icon");
+                tx.categoryColor = rs.getString("category_color");
+                tx.accountName = rs.getString("account_name");
+            }, tx.id);
     }
 
     public void attachCategory(Budget budget) {
@@ -1345,7 +1508,7 @@ public class InMemoryStore {
             budget.categoryIcon = null;
             return;
         }
-        Optional.ofNullable(categories.get(budget.categoryId)).ifPresent(category -> {
+        findCategory(budget.categoryId).ifPresent(category -> {
             budget.categoryName = category.name;
             budget.categoryIcon = category.icon;
         });
@@ -1414,13 +1577,13 @@ public class InMemoryStore {
 
     public Map<String, Object> snapshot() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("users", new ArrayList<>(users.values()));
+        data.put("users", sortedUsers());
         data.put("accounts", sortedAccounts());
         data.put("categories", sortedCategories());
         data.put("transactions", sortedTransactions());
         data.put("budgets", sortedBudgets());
-        data.put("ledgers", new ArrayList<>(ledgers.values()));
-        data.put("recurring", new ArrayList<>(recurringItems.values()));
+        data.put("ledgers", jdbc.query("SELECT * FROM ledgers ORDER BY id", (rs, rowNum) -> mapLedger(rs)));
+        data.put("recurring", jdbc.query("SELECT * FROM recurring_items ORDER BY id", (rs, rowNum) -> mapRecurringItem(rs)));
         return data;
     }
 
@@ -1442,6 +1605,7 @@ public class InMemoryStore {
     private Account mapAccount(ResultSet rs) throws SQLException {
         Account account = new Account();
         account.id = rs.getLong("id");
+        account.version = rs.getLong("version");
         account.companyId = nullableLong(rs, "company_id");
         account.name = rs.getString("name");
         account.type = rs.getString("type");
@@ -1488,6 +1652,7 @@ public class InMemoryStore {
     private Budget mapBudget(ResultSet rs) throws SQLException {
         Budget budget = new Budget();
         budget.id = rs.getLong("id");
+        budget.version = rs.getLong("version");
         budget.companyId = nullableLong(rs, "company_id");
         budget.name = rs.getString("name");
         budget.amount = money(rs.getString("amount"));
@@ -1512,6 +1677,8 @@ public class InMemoryStore {
     private TransactionRecord mapTransaction(ResultSet rs) throws SQLException {
         TransactionRecord tx = new TransactionRecord();
         tx.id = rs.getLong("id");
+        tx.version = rs.getLong("version");
+        tx.idempotencyKey = rs.getString("idempotency_key");
         tx.companyId = nullableLong(rs, "company_id");
         tx.userId = rs.getLong("user_id");
         tx.familyId = nullableLong(rs, "family_id");
@@ -1527,6 +1694,15 @@ public class InMemoryStore {
         tx.budgetId = nullableLong(rs, "budget_id");
         tx.createdAt = rs.getString("created_at");
         tx.updatedAt = rs.getString("updated_at");
+        return tx;
+    }
+
+    private TransactionRecord mapTransactionWithRelations(ResultSet rs) throws SQLException {
+        TransactionRecord tx = mapTransaction(rs);
+        tx.categoryName = rs.getString("resolved_category_name");
+        tx.categoryIcon = rs.getString("resolved_category_icon");
+        tx.categoryColor = rs.getString("resolved_category_color");
+        tx.accountName = rs.getString("resolved_account_name");
         return tx;
     }
 
@@ -1720,6 +1896,7 @@ public class InMemoryStore {
         ps.setString(13, tx.createdAt);
         ps.setString(14, tx.updatedAt);
         setLongOrNull(ps, 15, tx.companyId);
+        ps.setString(16, tx.idempotencyKey);
     }
 
     private void bindLedgerInsert(PreparedStatement ps, Ledger ledger) throws SQLException {

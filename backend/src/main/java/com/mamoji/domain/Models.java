@@ -39,6 +39,7 @@ public final class Models {
 
     public static class Account {
         public long id;
+        public long version;
         public Long companyId;
         public String name;
         public String type;
@@ -85,6 +86,7 @@ public final class Models {
 
     public static class Budget {
         public long id;
+        public long version;
         public Long companyId;
         public String name;
         public BigDecimal amount;
@@ -109,6 +111,8 @@ public final class Models {
 
     public static class TransactionRecord {
         public long id;
+        public long version;
+        public String idempotencyKey;
         public Long companyId;
         public long userId;
         public Long familyId;
@@ -396,6 +400,7 @@ public final class Models {
 
     public static class ReceiptVoucher {
         public long id;
+        public long version;
         public long companyId;
         public Long transactionId;
         public String voucherNo;

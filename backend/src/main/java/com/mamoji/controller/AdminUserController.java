@@ -1,5 +1,6 @@
 package com.mamoji.controller;
 
+import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.User;
 import com.mamoji.service.AdminUserService;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
+@RequiresProductModule("people-core")
 public class AdminUserController {
     private final AdminUserService service;
 

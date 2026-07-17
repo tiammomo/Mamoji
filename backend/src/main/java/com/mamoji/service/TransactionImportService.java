@@ -123,12 +123,8 @@ public class TransactionImportService {
     private ImportContext context(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<Account> accounts = store.accounts.values().stream()
-            .filter(account -> account.userId == user.id && Objects.equals(account.companyId, company.id))
-            .toList();
-        List<Category> categories = store.categories.values().stream()
-            .filter(category -> category.userId == user.id && Objects.equals(category.companyId, company.id))
-            .toList();
+        List<Account> accounts = store.queryAccounts(user.id, company.id);
+        List<Category> categories = store.queryCategories(user.id, company.id, null);
         if (accounts.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before importing transactions");
         }
@@ -216,9 +212,7 @@ public class TransactionImportService {
 
     private Set<String> existingKeys(ImportContext context) {
         Set<String> keys = new HashSet<>();
-        store.transactions.values().stream()
-            .filter(transaction -> transaction.userId == context.user().id)
-            .filter(transaction -> Objects.equals(transaction.companyId, context.company().id))
+        store.queryAllTransactions(context.user().id, context.company().id).stream()
             .forEach(transaction -> keys.add(transactionKey(
                 transaction.type,
                 transaction.amount,

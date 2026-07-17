@@ -68,6 +68,16 @@ management:
         include: health,info,prometheus
 
 mamoji:
+  product:
+    mode: ${MAMOJI_PRODUCT_MODE:internal-module}
+    modules:
+      household-enabled: ${MAMOJI_MODULE_HOUSEHOLD_ENABLED:false}
+      people-core-enabled: ${MAMOJI_MODULE_PEOPLE_CORE_ENABLED:true}
+      workforce-cost-enabled: ${MAMOJI_MODULE_WORKFORCE_COST_ENABLED:true}
+      talent-suite-enabled: ${MAMOJI_MODULE_TALENT_SUITE_ENABLED:false}
+      tax-workspace-enabled: ${MAMOJI_MODULE_TAX_WORKSPACE_ENABLED:false}
+      policy-center-enabled: ${MAMOJI_MODULE_POLICY_CENTER_ENABLED:false}
+      backup-ui-enabled: ${MAMOJI_MODULE_BACKUP_UI_ENABLED:false}
   runtime:
     environment: ${MAMOJI_RUNTIME_ENVIRONMENT:local}
     single-instance-guard-enabled: ${MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED:true}
