@@ -1,10 +1,10 @@
 package com.mamoji.finance.infrastructure;
 
-import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Ledger;
-import com.mamoji.domain.Models.LedgerMember;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.AccountReconciliation;
+import com.mamoji.finance.domain.Ledger;
+import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;

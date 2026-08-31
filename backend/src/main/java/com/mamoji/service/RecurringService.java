@@ -1,10 +1,10 @@
 package com.mamoji.service;
 
-import com.mamoji.domain.Models.Account;
+import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.User;
-import com.mamoji.domain.Models.Company;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
@@ -15,8 +15,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;

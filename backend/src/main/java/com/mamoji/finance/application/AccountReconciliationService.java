@@ -4,8 +4,8 @@ import static com.mamoji.common.PayloadReader.nullableText;
 import static com.mamoji.common.PayloadReader.number;
 import static com.mamoji.common.PayloadReader.textOr;
 
-import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.User;
+import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.AccountReconciliation;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;

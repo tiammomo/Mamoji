@@ -1,9 +1,9 @@
 package com.mamoji.finance.application;
 
-import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Ledger;
-import com.mamoji.domain.Models.LedgerMember;
+import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.AccountReconciliation;
+import com.mamoji.finance.domain.Ledger;
+import com.mamoji.finance.domain.LedgerMember;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
