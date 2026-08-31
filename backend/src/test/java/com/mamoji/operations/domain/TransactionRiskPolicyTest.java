@@ -3,7 +3,6 @@ package com.mamoji.operations.domain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mamoji.domain.Models.TransactionRecord;
 import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;

@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mamoji.domain.Models.TransactionRecord;
+import com.mamoji.operations.domain.TransactionRecord;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.time.LocalDate;

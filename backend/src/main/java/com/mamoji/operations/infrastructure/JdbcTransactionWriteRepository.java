@@ -1,8 +1,8 @@
 package com.mamoji.operations.infrastructure;
 
-import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.application.TransactionWriteRepository;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;

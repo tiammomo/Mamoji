@@ -1,8 +1,8 @@
 package com.mamoji.budget.api;
 
 import com.mamoji.budget.application.BudgetApplicationService;
+import com.mamoji.budget.domain.Budget;
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.Budget;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.CurrentActor;
 import jakarta.validation.Valid;
