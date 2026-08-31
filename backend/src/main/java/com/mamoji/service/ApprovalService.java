@@ -1,5 +1,8 @@
 package com.mamoji.service;
 
+import com.mamoji.approval.domain.ApprovalWorkflow;
+import com.mamoji.approval.domain.ApprovalWorkflow.Action;
+import com.mamoji.approval.domain.ApprovalWorkflow.Transition;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
@@ -187,18 +190,33 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must not be negative");
         }
         String now = com.mamoji.repository.InMemoryStore.now();
+        Transition submission = ApprovalWorkflow.submission();
         ApprovalRequest request = jdbc.queryForObject("""
             INSERT INTO approval_requests (
                 company_id, request_type, entity_type, entity_id, title, amount, applicant_user_id,
                 assignee_user_id, status, current_step, description, decided_at, created_at, updated_at,
                 idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'review', ?, NULL, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             RETURNING *
             """, this::mapRequest, company.id, requestType, entityType, entityId, title, amount.toPlainString(),
-            user.id, assigneeId, description, now, now, idempotencyKey);
-        addAction(request.id, user.id, "submit", limitedNullable(nullableText(body.get("comment")), 500, "comment"));
-        syncEntity(authorization, request, "pending");
-        enterpriseStore.auditLog(company.id, "approval_request", request.id, "submit", "提交审批: " + title, user.id, user.nickname);
+            user.id, assigneeId, submission.targetStatus().value(), submission.currentStep(), description, now, now,
+            idempotencyKey);
+        addAction(
+            request.id,
+            user.id,
+            submission.action().value(),
+            limitedNullable(nullableText(body.get("comment")), 500, "comment")
+        );
+        syncEntity(authorization, request, submission.entityStatus());
+        enterpriseStore.auditLog(
+            company.id,
+            "approval_request",
+            request.id,
+            submission.action().value(),
+            auditSummary(submission.action(), title),
+            user.id,
+            user.nickname
+        );
         return get(authorization, request.id);
     }
 
@@ -207,27 +225,29 @@ public class ApprovalService {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
         accessControl.resolveCompany(user, request.companyId);
-        if (!"pending".equals(request.status)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only pending requests can be decided");
-        }
+        Action workflowAction = parseDecisionAction(action);
+        Transition transition = requireTransition(request, workflowAction);
         if (user.role != Roles.ADMIN && !Objects.equals(request.assigneeUserId, user.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the assignee or an administrator can decide this request");
         }
-        String status = switch (action) {
-            case "approve" -> "approved";
-            case "reject" -> "rejected";
-            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported approval action");
-        };
         String comment = limitedNullable(nullableText(body.get("comment")), 500, "comment");
-        if ("rejected".equals(status) && (comment == null || comment.isBlank())) {
+        if (transition.commentRequired() && (comment == null || comment.isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection comment is required");
         }
         String now = com.mamoji.repository.InMemoryStore.now();
-        jdbc.update("UPDATE approval_requests SET status = ?, current_step = 'completed', decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
-            status, now, now, id);
-        addAction(id, user.id, action, comment);
-        syncEntity(authorization, request, status);
-        enterpriseStore.auditLog(request.companyId, "approval_request", id, action, ("approved".equals(status) ? "审批通过: " : "审批驳回: ") + request.title, user.id, user.nickname);
+        jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+            transition.targetStatus().value(), transition.currentStep(), now, now, id);
+        addAction(id, user.id, transition.action().value(), comment);
+        syncEntity(authorization, request, transition.entityStatus());
+        enterpriseStore.auditLog(
+            request.companyId,
+            "approval_request",
+            id,
+            transition.action().value(),
+            auditSummary(transition.action(), request.title),
+            user.id,
+            user.nickname
+        );
         return get(authorization, id);
     }
 
@@ -236,15 +256,62 @@ public class ApprovalService {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
         accessControl.resolveCompany(user, request.companyId);
-        if (request.applicantUserId != user.id || !"pending".equals(request.status)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the applicant can withdraw a pending request");
+        if (request.applicantUserId != user.id) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the applicant can withdraw this request");
         }
+        Transition transition = requireTransition(request, Action.WITHDRAW);
         String now = com.mamoji.repository.InMemoryStore.now();
-        jdbc.update("UPDATE approval_requests SET status = 'withdrawn', current_step = 'completed', decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?", now, now, id);
-        addAction(id, user.id, "withdraw", limitedNullable(nullableText(body.get("comment")), 500, "comment"));
-        syncEntity(authorization, request, "not_submitted");
-        enterpriseStore.auditLog(request.companyId, "approval_request", id, "withdraw", "撤回审批: " + request.title, user.id, user.nickname);
+        jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+            transition.targetStatus().value(), transition.currentStep(), now, now, id);
+        addAction(
+            id,
+            user.id,
+            transition.action().value(),
+            limitedNullable(nullableText(body.get("comment")), 500, "comment")
+        );
+        syncEntity(authorization, request, transition.entityStatus());
+        enterpriseStore.auditLog(
+            request.companyId,
+            "approval_request",
+            id,
+            transition.action().value(),
+            auditSummary(transition.action(), request.title),
+            user.id,
+            user.nickname
+        );
         return get(authorization, id);
+    }
+
+    private Action parseDecisionAction(String action) {
+        try {
+            Action parsed = Action.fromExternal(action);
+            if (parsed == Action.WITHDRAW) {
+                throw new IllegalArgumentException("Withdraw uses the applicant workflow");
+            }
+            return parsed;
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported approval action");
+        }
+    }
+
+    private Transition requireTransition(ApprovalRequest request, Action action) {
+        try {
+            return ApprovalWorkflow.transition(ApprovalWorkflow.Status.fromStored(request.status), action);
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Approval request cannot transition from " + request.status + " using " + action.value()
+            );
+        }
+    }
+
+    private String auditSummary(Action action, String title) {
+        return switch (action) {
+            case SUBMIT -> "提交审批: " + title;
+            case APPROVE -> "审批通过: " + title;
+            case REJECT -> "审批驳回: " + title;
+            case WITHDRAW -> "撤回审批: " + title;
+        };
     }
 
     private void syncEntity(String authorization, ApprovalRequest request, String status) {
