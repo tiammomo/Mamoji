@@ -1368,6 +1368,7 @@ class AuthAndPermissionIntegrationTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
         long transactionId = ((Number) transaction.get("id")).longValue();
+        assertEquals(1, coreStore.transactions.get(transactionId).version);
         assertEquals(1, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ? AND status = 'confirmed'",
             Integer.class,
@@ -1394,6 +1395,8 @@ class AuthAndPermissionIntegrationTest {
             token
         );
         assertEquals(200, updated.status(), updated.body());
+        assertEquals(2, coreStore.transactions.get(transactionId).version);
+        assertEquals(0, new BigDecimal("80").compareTo(coreStore.transactions.get(transactionId).amount));
         assertEquals(1, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'released'",
             Integer.class,
@@ -1412,6 +1415,7 @@ class AuthAndPermissionIntegrationTest {
             token
         );
         assertEquals(200, deleted.status(), deleted.body());
+        assertFalse(coreStore.transactions.containsKey(transactionId));
         assertEquals(0, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ?",
             Integer.class,

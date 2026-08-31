@@ -5,6 +5,7 @@ import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.domain.TransactionSearchCriteria;
 import com.mamoji.operations.domain.TransactionSummary;
+import java.util.List;
 import java.util.Optional;
 
 /** Persistence port owned by the transaction query use cases. */
@@ -17,6 +18,8 @@ public interface TransactionQueryRepository {
     );
 
     TransactionSummary summarize(long userId, long companyId, TransactionSearchCriteria criteria);
+
+    List<TransactionRecord> findAll(long userId, long companyId);
 
     Optional<TransactionRecord> findById(long id);
 }

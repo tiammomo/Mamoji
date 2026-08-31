@@ -13,11 +13,11 @@ import com.mamoji.domain.Models.User;
 import com.mamoji.operations.domain.UpdateTransactionCommand;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -30,20 +30,23 @@ import org.springframework.web.server.ResponseStatusException;
 /** Transactional application boundary for modifying and deleting accounting transactions. */
 @Service
 public class TransactionMutationService {
-    private final InMemoryStore store;
+    private final TransactionWriteRepository transactions;
+    private final TransactionAccountingGateway accounting;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
 
     public TransactionMutationService(
-        InMemoryStore store,
+        TransactionWriteRepository transactions,
+        TransactionAccountingGateway accounting,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
     ) {
-        this.store = store;
+        this.transactions = transactions;
+        this.accounting = accounting;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
@@ -72,23 +75,33 @@ public class TransactionMutationService {
         Map<Long, Account> lockedAccounts = lockAccounts(current.accountId, updated.accountId);
         Account oldAccount = lockedAccounts.get(current.accountId);
         Account newAccount = lockedAccounts.get(updated.accountId);
-        validateRelationOwnership(user, company.id, updated.accountId, updated.categoryId, newAccount, updated.type);
-        store.attachTransactionRelations(updated);
+        Category category = validateRelationOwnership(
+            user,
+            company.id,
+            updated.accountId,
+            updated.categoryId,
+            newAccount,
+            updated.type
+        );
+        updated.categoryName = category.name;
+        updated.categoryIcon = category.icon;
+        updated.categoryColor = category.color;
+        updated.accountName = newAccount.name;
         updated.familyId = resolveLedgerId(user, company, newAccount);
 
         budgetService.releaseTransactionReservation(current.id, "transaction updated");
         Optional<BudgetReservation> reservation = reserveUpdatedExpense(company.id, user.id, updated);
         updated.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
         updated.isRefundable = updated.type == 2 && updated.refundedAmount.compareTo(updated.amount) < 0;
-        updated.updatedAt = InMemoryStore.now();
-        store.saveTransaction(updated);
+        updated.updatedAt = OffsetDateTime.now().toString();
+        transactions.update(updated);
         reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), updated.id));
 
         if (oldAccount.id == newAccount.id) {
             Account adjusted = copyAccount(oldAccount);
             adjustAccount(adjusted, current, -1);
             adjustAccount(adjusted, updated, 1);
-            store.saveAccount(adjusted);
+            accounting.updateAccount(adjusted);
         } else {
             saveAdjustedAccount(oldAccount, current, -1);
             saveAdjustedAccount(newAccount, updated, 1);
@@ -122,19 +135,19 @@ public class TransactionMutationService {
         ScopedTransaction scoped = requireScopedTransactionForUpdate(user, id, companyId);
         TransactionRecord transaction = scoped.transaction();
         Company company = scoped.company();
-        if (transaction.type != 3 && store.transactionHasRefunds(transaction.id)) {
+        if (transaction.type != 3 && transactions.hasRefunds(transaction.id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction has refunds and cannot be deleted");
         }
 
         TransactionRecord original = null;
         if (transaction.type == 3 && transaction.originalTransactionId != null) {
-            original = store.transactionForUpdate(transaction.originalTransactionId)
+            original = transactions.findForUpdate(transaction.originalTransactionId)
                 .orElseThrow(() -> new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Original transaction no longer exists"
                 ));
         }
-        Account account = store.accountForUpdate(transaction.accountId)
+        Account account = accounting.findAccountForUpdate(transaction.accountId)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.CONFLICT,
                 "Transaction account no longer exists"
@@ -146,17 +159,17 @@ public class TransactionMutationService {
                 .subtract(transaction.amount)
                 .max(BigDecimal.ZERO);
             updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
-            updatedOriginal.updatedAt = InMemoryStore.now();
-            store.saveTransaction(updatedOriginal);
+            updatedOriginal.updatedAt = OffsetDateTime.now().toString();
+            transactions.update(updatedOriginal);
         }
         budgetService.releaseTransactionReservation(transaction.id, "transaction deleted");
-        store.deleteTransaction(id);
+        transactions.delete(transaction);
         budgetService.refreshCompany(company.id);
         audit(company.id, transaction.id, "delete", "删除交易: " + transaction.note, user);
     }
 
     private ScopedTransaction requireScopedTransactionForUpdate(User user, long id, Long companyId) {
-        TransactionRecord transaction = store.transactionForUpdate(id)
+        TransactionRecord transaction = transactions.findForUpdate(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
         Company company = accessControl.resolveCompany(
             user,
@@ -187,19 +200,19 @@ public class TransactionMutationService {
     private Map<Long, Account> lockAccounts(long firstId, long secondId) {
         long low = Math.min(firstId, secondId);
         long high = Math.max(firstId, secondId);
-        Account first = store.accountForUpdate(low)
+        Account first = accounting.findAccountForUpdate(low)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
         Map<Long, Account> result = new LinkedHashMap<>();
         result.put(first.id, first);
         if (high != low) {
-            Account second = store.accountForUpdate(high)
+            Account second = accounting.findAccountForUpdate(high)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
             result.put(second.id, second);
         }
         return result;
     }
 
-    private void validateRelationOwnership(
+    private Category validateRelationOwnership(
         User user,
         long companyId,
         long accountId,
@@ -210,7 +223,7 @@ public class TransactionMutationService {
         if (account == null || account.id != accountId) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required");
         }
-        Category category = store.categoryForUpdate(categoryId)
+        Category category = accounting.findCategoryForUpdate(categoryId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
         assertScopedOwner(account.userId, account.companyId, user.id, companyId);
         assertScopedOwner(category.userId, category.companyId, user.id, companyId);
@@ -218,11 +231,12 @@ public class TransactionMutationService {
         if (!expectedCategoryType.equals(category.type)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Category type does not match transaction type");
         }
+        return category;
     }
 
     private Long resolveLedgerId(User user, Company company, Account account) {
         if (account.ledgerId != null) {
-            Ledger ledger = store.findLedger(account.ledgerId).orElse(null);
+            Ledger ledger = accounting.findLedger(account.ledgerId).orElse(null);
             if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
                 throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -231,10 +245,10 @@ public class TransactionMutationService {
             }
             return ledger.id;
         }
-        return store.queryLedgers(user.id, company.id).stream()
+        return accounting.findLedgers(user.id, company.id).stream()
             .map(ledger -> ledger.id)
             .findFirst()
-            .orElseGet(() -> store.ensureCompanyAccountingWorkspace(
+            .orElseGet(() -> accounting.ensureCompanyAccountingWorkspace(
                 user.id,
                 company.id,
                 company.currency,
@@ -273,7 +287,7 @@ public class TransactionMutationService {
     private void saveAdjustedAccount(Account source, TransactionRecord transaction, int direction) {
         Account adjusted = copyAccount(source);
         adjustAccount(adjusted, transaction, direction);
-        store.saveAccount(adjusted);
+        accounting.updateAccount(adjusted);
     }
 
     private void adjustAccount(Account account, TransactionRecord transaction, int direction) {
@@ -286,7 +300,7 @@ public class TransactionMutationService {
             account.availableBalance = nullToZero(account.availableBalance).subtract(delta);
         }
         account.riskLevel = accountRisk(account);
-        account.updatedAt = InMemoryStore.now();
+        account.updatedAt = OffsetDateTime.now().toString();
     }
 
     private String accountRisk(Account account) {
