@@ -781,6 +781,119 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void transactionQueriesValidateFiltersAndAggregateInPostgres() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Typed Transaction Query " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Query projection account", "20000");
+        Map<String, Object> incomeCategory = createCategory(token, companyId, "Query income", "income");
+        Map<String, Object> refundCategory = createCategory(token, companyId, "客户退款", "expense");
+        Map<String, Object> severanceCategory = createCategory(token, companyId, "离职补偿", "expense");
+
+        ApiResponse incomeResponse = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 1,
+            "amount", 500,
+            "accountId", account.get("id"),
+            "categoryId", incomeCategory.get("id"),
+            "date", "2026-07-12",
+            "note", "pending-project 尾款待回款"
+        ), token);
+        assertEquals(200, incomeResponse.status(), incomeResponse.body());
+        ApiResponse customerRefundResponse = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 50,
+            "accountId", account.get("id"),
+            "categoryId", refundCategory.get("id"),
+            "date", "2026-07-13",
+            "note", "订单退款给客户"
+        ), token);
+        assertEquals(200, customerRefundResponse.status(), customerRefundResponse.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> customerRefundTransaction = (Map<String, Object>) parseMap(
+            customerRefundResponse.body()
+        ).get("transaction");
+        ApiResponse severanceResponse = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 12000,
+            "accountId", account.get("id"),
+            "categoryId", severanceCategory.get("id"),
+            "date", "2026-07-14",
+            "note", "离职补偿 N+1"
+        ), token);
+        assertEquals(200, severanceResponse.status(), severanceResponse.body());
+        ApiResponse refundResponse = request(
+            "POST",
+            "/api/v1/transactions/" + customerRefundTransaction.get("id") + "/refund",
+            Map.of(
+                "companyId", companyId,
+                "amount", 20,
+                "date", "2026-07-14",
+                "note", "部分退款到账"
+            ),
+            token
+        );
+        assertEquals(200, refundResponse.status(), refundResponse.body());
+
+        ApiResponse summaryResponse = request(
+            "GET", "/api/v1/transactions/summary?companyId=" + companyId, null, token
+        );
+        assertEquals(200, summaryResponse.status(), summaryResponse.body());
+        Map<String, Object> summary = parseMap(summaryResponse.body());
+        assertEquals(0, new BigDecimal("500").compareTo(decimal(summary.get("income"))));
+        assertEquals(0, new BigDecimal("12050").compareTo(decimal(summary.get("expense"))));
+        assertEquals(0, new BigDecimal("20").compareTo(decimal(summary.get("refund"))));
+        assertEquals(0, new BigDecimal("500").compareTo(decimal(summary.get("pendingCollection"))));
+        assertEquals(0, new BigDecimal("50").compareTo(decimal(summary.get("customerRefund"))));
+        assertEquals(0, new BigDecimal("12000").compareTo(decimal(summary.get("severance"))));
+        assertEquals(0, new BigDecimal("450").compareTo(decimal(summary.get("netCollectedIncome"))));
+        assertEquals(0, new BigDecimal("-11530").compareTo(decimal(summary.get("net"))));
+        assertEquals(4, ((Number) summary.get("rows")).intValue());
+        assertEquals(1, ((Number) summary.get("largeCount")).intValue());
+        assertEquals(3, ((Number) summary.get("reviewCount")).intValue());
+
+        String filteredPath = "/api/v1/transactions?companyId=" + companyId
+            + "&type=1&startDate=2026-07-11&endDate=2026-07-13"
+            + "&minAmount=40&maxAmount=600&keyword=pending&page=0&size=10";
+        ApiResponse filteredResponse = request("GET", filteredPath, null, token);
+        assertEquals(200, filteredResponse.status(), filteredResponse.body());
+        Map<String, Object> filtered = parseMap(filteredResponse.body());
+        assertEquals(1, ((Number) filtered.get("totalElements")).intValue());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) filtered.get("content");
+        assertEquals("pending-project 尾款待回款", content.getFirst().get("note"));
+
+        Map<String, Object> clampedPage = parseMap(request(
+            "GET", "/api/v1/transactions?companyId=" + companyId + "&size=1000", null, token
+        ).body());
+        assertEquals(200, ((Number) clampedPage.get("size")).intValue());
+
+        ApiResponse invalid = request(
+            "GET",
+            "/api/v1/transactions?companyId=" + companyId
+                + "&type=4&categoryId=0&minAmount=-1&keyword=" + "x".repeat(201),
+            null,
+            token
+        );
+        assertEquals(400, invalid.status(), invalid.body());
+        Map<String, Object> problem = parseMap(invalid.body());
+        assertEquals("validation_failed", problem.get("code"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fields = (Map<String, Object>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(Set.of("type", "categoryId", "minAmount", "keyword")));
+
+        ApiResponse reversedRange = request(
+            "GET",
+            "/api/v1/transactions/summary?companyId=" + companyId
+                + "&startDate=2026-07-15&endDate=2026-07-01",
+            null,
+            token
+        );
+        assertEquals(400, reversedRange.status(), reversedRange.body());
+    }
+
+    @Test
     void recurringItemCannotPostTwiceOnTheSameDay() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Recurring Lock " + System.nanoTime());

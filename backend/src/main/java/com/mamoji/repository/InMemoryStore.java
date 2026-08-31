@@ -2,8 +2,6 @@ package com.mamoji.repository;
 
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
-import com.mamoji.common.PageRequest;
-import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Budget;
 import com.mamoji.domain.Models.Category;
@@ -23,7 +21,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -378,117 +375,6 @@ public class InMemoryStore {
     /** Reload the process-local compatibility view after a controlled restore. */
     public synchronized void reloadFromDatabase() {
         loadAll();
-    }
-
-    /**
-     * Database-backed transaction pagination. The compatibility maps remain in
-     * place for legacy write paths, while high-volume list reads no longer load
-     * and sort the full transaction table in the application process.
-     */
-    public PagedResponse<TransactionRecord> queryTransactions(
-        long userId,
-        long companyId,
-        Map<String, String> params,
-        PageRequest pageRequest
-    ) {
-        TransactionQuery query = transactionQuery(userId, companyId, params);
-        String from = query.from();
-        List<Object> arguments = query.arguments();
-        Long total = jdbc.queryForObject("SELECT COUNT(*) " + from, Long.class, arguments.toArray());
-        List<Object> pageArguments = new ArrayList<>(arguments);
-        pageArguments.add(pageRequest.size());
-        pageArguments.add((long) pageRequest.page() * pageRequest.size());
-        List<TransactionRecord> content = jdbc.query(
-            "SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon, "
-                + "c.color AS resolved_category_color, a.name AS resolved_account_name "
-                + from + " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?",
-            (rs, rowNum) -> mapTransactionWithRelations(rs),
-            pageArguments.toArray()
-        );
-        long totalElements = total == null ? 0 : total;
-        int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
-        return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
-    }
-
-    public List<TransactionRecord> queryTransactionSummaryRows(
-        long userId,
-        long companyId,
-        Map<String, String> params
-    ) {
-        TransactionQuery query = transactionQuery(userId, companyId, params);
-        return jdbc.query("""
-            SELECT t.id, t.type, t.amount, t.note, t.category_id, t.account_id, t.is_refundable,
-                   c.name AS summary_category_name, a.name AS summary_account_name
-            """ + query.from(), (rs, rowNum) -> {
-            TransactionRecord transaction = new TransactionRecord();
-            transaction.id = rs.getLong("id");
-            transaction.type = rs.getInt("type");
-            transaction.amount = money(rs.getString("amount"));
-            transaction.note = rs.getString("note");
-            transaction.categoryId = rs.getLong("category_id");
-            transaction.accountId = rs.getLong("account_id");
-            transaction.isRefundable = rs.getInt("is_refundable") == 1;
-            transaction.categoryName = rs.getString("summary_category_name");
-            transaction.accountName = rs.getString("summary_account_name");
-            return transaction;
-        }, query.arguments().toArray());
-    }
-
-    private TransactionQuery transactionQuery(long userId, long companyId, Map<String, String> params) {
-        StringBuilder from = new StringBuilder("""
-            FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.user_id = ? AND t.company_id = ?
-            """);
-        List<Object> arguments = new ArrayList<>();
-        arguments.add(userId);
-        arguments.add(companyId);
-        addLongCondition(from, arguments, "t.type", params.get("type"));
-        addLongCondition(from, arguments, "t.category_id", params.get("categoryId"));
-        addLongCondition(from, arguments, "t.account_id", params.get("accountId"));
-        addTextBoundary(from, arguments, "t.date >= ?", params.get("startDate"));
-        addTextBoundary(from, arguments, "t.date <= ?", params.get("endDate"));
-        addDecimalBoundary(from, arguments, "CAST(t.amount AS NUMERIC) >= ?", params.get("minAmount"));
-        addDecimalBoundary(from, arguments, "CAST(t.amount AS NUMERIC) <= ?", params.get("maxAmount"));
-        String keyword = Objects.toString(params.get("keyword"), "").trim().toLowerCase(Locale.ROOT);
-        if (!keyword.isBlank()) {
-            from.append(" AND (LOWER(t.note) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ? OR LOWER(COALESCE(a.name, '')) LIKE ?)");
-            String pattern = "%" + keyword + "%";
-            arguments.add(pattern);
-            arguments.add(pattern);
-            arguments.add(pattern);
-        }
-        return new TransactionQuery(from.toString(), List.copyOf(arguments));
-    }
-
-    private record TransactionQuery(String from, List<Object> arguments) { }
-
-    private void addLongCondition(StringBuilder sql, List<Object> arguments, String column, String rawValue) {
-        if (rawValue == null || rawValue.isBlank()) return;
-        try {
-            sql.append(" AND ").append(column).append(" = ?");
-            arguments.add(Long.parseLong(rawValue));
-        } catch (NumberFormatException ignored) {
-            // Invalid filters match no rows instead of broadening the query.
-            sql.append(" AND 1 = 0");
-        }
-    }
-
-    private void addTextBoundary(StringBuilder sql, List<Object> arguments, String condition, String value) {
-        if (value == null || value.isBlank()) return;
-        sql.append(" AND ").append(condition);
-        arguments.add(value);
-    }
-
-    private void addDecimalBoundary(StringBuilder sql, List<Object> arguments, String condition, String rawValue) {
-        if (rawValue == null || rawValue.isBlank()) return;
-        try {
-            sql.append(" AND ").append(condition);
-            arguments.add(new BigDecimal(rawValue));
-        } catch (NumberFormatException ignored) {
-            sql.append(" AND 1 = 0");
-        }
     }
 
     private void seedInitialData() {
