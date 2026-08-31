@@ -38,11 +38,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 @DependsOn("singleInstanceDatabaseGuard")
@@ -66,12 +63,9 @@ public class InMemoryStore {
     private final String bootstrapAdminNickname;
     private final int passwordMinLength;
     private final boolean passwordRequireComplexity;
-    private final TransactionTemplate requiresNewTransaction;
-
     public InMemoryStore(
         JdbcTemplate jdbc,
         PasswordHasher passwordHasher,
-        PlatformTransactionManager transactionManager,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
         @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
@@ -81,8 +75,6 @@ public class InMemoryStore {
     ) {
         this.jdbc = jdbc;
         this.passwordHasher = passwordHasher;
-        this.requiresNewTransaction = new TransactionTemplate(transactionManager);
-        this.requiresNewTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
         this.bootstrapAdminPassword = defaultIfBlank(bootstrapAdminPassword, "123456");
@@ -514,17 +506,6 @@ public class InMemoryStore {
         return invite;
     }
 
-    public Optional<RegistrationInvite> findRegistrationInviteByToken(String token) {
-        if (token == null || token.isBlank()) {
-            return Optional.empty();
-        }
-        return jdbc.query(
-            "SELECT * FROM registration_invites WHERE token = ?",
-            (rs, rowNum) -> mapRegistrationInvite(rs),
-            token
-        ).stream().findFirst();
-    }
-
     public List<RegistrationInvite> sortedRegistrationInvites() {
         return jdbc.query(
             "SELECT * FROM registration_invites ORDER BY created_at DESC, id DESC",
@@ -627,7 +608,7 @@ public class InMemoryStore {
         }
     }
 
-    public void saveBudget(Budget budget) {
+    private void saveBudget(Budget budget) {
         int updated = jdbc.update("""
             UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
                 spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?, risk_level = ?, risk_message = ?,
@@ -683,11 +664,6 @@ public class InMemoryStore {
             tokens.remove(tokenKey);
             tokens.remove(token);
         });
-    }
-
-    public void deleteBudget(long id) {
-        jdbc.update("DELETE FROM budgets WHERE id = ?", id);
-        afterCommit(() -> budgets.remove(id));
     }
 
     public void deleteRecurring(String id) {
@@ -833,26 +809,12 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public Optional<Budget> budgetForUpdate(long id) {
-        List<Budget> matches = jdbc.query("SELECT * FROM budgets WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapBudget(rs), id);
-        return matches.stream().findFirst();
-    }
-
     private boolean ledgerMemberExists(long ledgerId, long userId) {
         Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
             Integer.class,
             ledgerId,
             userId
-        );
-        return count != null && count > 0;
-    }
-
-    public boolean budgetHasTransactions(long budgetId) {
-        Integer count = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM transactions WHERE budget_id = ?",
-            Integer.class,
-            budgetId
         );
         return count != null && count > 0;
     }
@@ -866,7 +828,7 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public List<TransactionRecord> sortedTransactions() {
+    private List<TransactionRecord> sortedTransactions() {
         return jdbc.query("""
             SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
                    c.color AS resolved_category_color, a.name AS resolved_account_name
@@ -877,15 +839,15 @@ public class InMemoryStore {
             """, (rs, rowNum) -> mapTransactionWithRelations(rs));
     }
 
-    public List<Account> sortedAccounts() {
+    private List<Account> sortedAccounts() {
         return jdbc.query("SELECT * FROM accounts ORDER BY id", (rs, rowNum) -> mapAccount(rs));
     }
 
-    public List<Category> sortedCategories() {
+    private List<Category> sortedCategories() {
         return jdbc.query("SELECT * FROM categories ORDER BY id", (rs, rowNum) -> mapCategory(rs));
     }
 
-    public List<Budget> sortedBudgets() {
+    private List<Budget> sortedBudgets() {
         return jdbc.query("""
             SELECT budget.*, category.name AS resolved_category_name, category.icon AS resolved_category_icon
             FROM budgets budget
@@ -971,15 +933,7 @@ public class InMemoryStore {
         });
     }
 
-    public void refreshBudgetDataAfterCommit() {
-        afterCommit(() -> requiresNewTransaction.executeWithoutResult(status -> refreshBudgetData()));
-    }
-
-    public void attachBudgetData() {
-        attachBudgetData(false);
-    }
-
-    public void refreshBudgetData() {
+    private void refreshBudgetData() {
         attachBudgetData(true);
     }
 
@@ -1027,7 +981,7 @@ public class InMemoryStore {
         });
     }
 
-    public void attachTransactionRelations(TransactionRecord tx) {
+    private void attachTransactionRelations(TransactionRecord tx) {
         jdbc.query("""
             SELECT c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
                    a.name AS account_name
@@ -1043,7 +997,7 @@ public class InMemoryStore {
             }, tx.id);
     }
 
-    public void attachCategory(Budget budget) {
+    private void attachCategory(Budget budget) {
         if (budget.categoryId == null) {
             budget.categoryName = null;
             budget.categoryIcon = null;
@@ -1055,7 +1009,7 @@ public class InMemoryStore {
         });
     }
 
-    public void recalculateBudget(Budget budget) {
+    private void recalculateBudget(Budget budget) {
         if (budget.amount == null || budget.amount.compareTo(BigDecimal.ZERO) <= 0) {
             budget.remainingAmount = BigDecimal.ZERO;
             budget.usageRate = 0;
