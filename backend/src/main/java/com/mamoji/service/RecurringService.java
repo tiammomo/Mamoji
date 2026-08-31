@@ -1,18 +1,19 @@
 package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.platform.identity.User;
+import com.mamoji.recurring.api.RecurringCreateRequest;
+import com.mamoji.recurring.api.RecurringUpdateRequest;
+import com.mamoji.recurring.domain.RecurringItem;
+import com.mamoji.recurring.domain.RecurringSchedule;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,13 +23,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-
-import static com.mamoji.common.PayloadReader.intValue;
-import static com.mamoji.common.PayloadReader.nullableText;
-import static com.mamoji.common.PayloadReader.number;
-import static com.mamoji.common.PayloadReader.optionalInt;
-import static com.mamoji.common.PayloadReader.optionalLong;
-import static com.mamoji.common.PayloadReader.text;
 
 @Service
 public class RecurringService {
@@ -63,14 +57,25 @@ public class RecurringService {
     }
 
     @Transactional
-    public RecurringItem createRecurring(String authorization, Map<String, Object> body) {
+    public RecurringItem createRecurring(String authorization, RecurringCreateRequest command) {
         User user = accessControl.requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
+        Company company = accessControl.resolveCompany(user, command.companyId());
         RecurringItem item = new RecurringItem();
         item.id = UUID.randomUUID().toString();
         item.userId = user.id;
         item.companyId = company.id;
-        applyRecurring(item, body);
+        item.name = command.name();
+        item.type = command.type();
+        item.amount = command.amount();
+        item.frequency = command.frequency();
+        item.interval = command.interval();
+        item.dayOfWeek = command.dayOfWeek();
+        item.dayOfMonth = command.dayOfMonth();
+        item.monthOfYear = command.monthOfYear();
+        item.startDate = command.startDate().toString();
+        item.endDate = command.endDate() == null ? null : command.endDate().toString();
+        item.note = blankToNull(command.note());
+        validateRecurring(item);
         item.status = 1;
         item.executionCount = 0;
         item.nextExecution = nextExecution(item);
@@ -79,13 +84,19 @@ public class RecurringService {
     }
 
     @Transactional
-    public RecurringItem updateRecurring(String authorization, String id, Map<String, Object> body) {
+    public RecurringItem updateRecurring(
+        String authorization,
+        String id,
+        Long queryCompanyId,
+        RecurringUpdateRequest command
+    ) {
         RecurringItem item = copyRecurring(requireRecurringForUpdate(
             authorization,
             id,
-            optionalLong(body.get("companyId")).orElse(null)
+            queryCompanyId == null ? command.companyId() : queryCompanyId
         ));
-        applyRecurring(item, body);
+        applyUpdate(item, command);
+        validateRecurring(item);
         item.nextExecution = nextExecution(item);
         store.saveRecurring(item);
         return item;
@@ -169,88 +180,40 @@ public class RecurringService {
         return item;
     }
 
-    private void applyRecurring(RecurringItem item, Map<String, Object> body) {
-        if (body.containsKey("name")) {
-            item.name = text(body.get("name"));
-        }
-        if (body.containsKey("type")) {
-            item.type = intValue(body.get("type"), item.type == 0 ? 2 : item.type);
-        }
-        if (body.containsKey("amount")) {
-            item.amount = number(body.get("amount"), item.amount == null ? BigDecimal.ZERO : item.amount);
-        }
-        if (body.containsKey("frequency")) {
-            item.frequency = text(body.get("frequency"));
-        }
-        if (body.containsKey("interval")) {
-            item.interval = intValue(body.get("interval"), item.interval == 0 ? 1 : item.interval);
-        }
-        if (body.containsKey("dayOfWeek")) {
-            item.dayOfWeek = optionalInt(body.get("dayOfWeek")).orElse(null);
-        }
-        if (body.containsKey("dayOfMonth")) {
-            item.dayOfMonth = optionalInt(body.get("dayOfMonth")).orElse(null);
-        }
-        if (body.containsKey("monthOfYear")) {
-            item.monthOfYear = optionalInt(body.get("monthOfYear")).orElse(null);
-        }
-        if (body.containsKey("startDate")) {
-            item.startDate = text(body.get("startDate"));
-        }
-        if (body.containsKey("endDate")) {
-            item.endDate = nullableText(body.get("endDate"));
-        }
-        if (body.containsKey("note")) {
-            item.note = nullableText(body.get("note"));
-        }
-        if (item.name == null) {
-            item.name = "周期项目";
-        }
-        if (item.frequency == null) {
-            item.frequency = "monthly";
-        }
-        if (item.interval == 0) {
-            item.interval = 1;
-        }
-        if (item.amount == null) {
-            item.amount = BigDecimal.ZERO;
-        }
-        if (item.startDate == null) {
-            item.startDate = LocalDate.now().toString();
-        }
-        validateRecurringDates(item);
+    private void applyUpdate(RecurringItem item, RecurringUpdateRequest command) {
+        if (command.name() != null) item.name = command.name();
+        if (command.type() != null) item.type = command.type();
+        if (command.amount() != null) item.amount = command.amount();
+        if (command.frequency() != null) item.frequency = command.frequency();
+        if (command.interval() != null) item.interval = command.interval();
+        if (command.dayOfWeek() != null) item.dayOfWeek = command.dayOfWeek();
+        if (command.dayOfMonth() != null) item.dayOfMonth = command.dayOfMonth();
+        if (command.monthOfYear() != null) item.monthOfYear = command.monthOfYear();
+        if (command.startDate() != null) item.startDate = command.startDate().toString();
+        if (command.endDate() != null) item.endDate = command.endDate().toString();
+        if (command.note() != null) item.note = blankToNull(command.note());
     }
 
-    private void validateRecurringDates(RecurringItem item) {
+    private void validateRecurring(RecurringItem item) {
         if (item.interval < 1) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "interval must be greater than 0");
         }
-        LocalDate start = parseRecurringDate("startDate", item.startDate);
+        LocalDate start = LocalDate.parse(item.startDate);
         if (item.endDate == null) {
             return;
         }
-        LocalDate end = parseRecurringDate("endDate", item.endDate);
+        LocalDate end = LocalDate.parse(item.endDate);
         if (end.isBefore(start)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must be on or after startDate");
         }
     }
 
-    private LocalDate parseRecurringDate(String field, String value) {
-        try {
-            return LocalDate.parse(value);
-        } catch (DateTimeParseException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must use yyyy-MM-dd format");
-        }
+    private String nextExecution(RecurringItem item) {
+        return RecurringSchedule.next(item).toString();
     }
 
-    private String nextExecution(RecurringItem item) {
-        LocalDate base = item.lastExecuted == null ? LocalDate.parse(item.startDate) : LocalDate.parse(item.lastExecuted);
-        return switch (item.frequency) {
-            case "daily" -> base.plusDays(item.interval).toString();
-            case "weekly" -> base.plusWeeks(item.interval).toString();
-            case "yearly" -> base.plusYears(item.interval).toString();
-            default -> base.plusMonths(item.interval).toString();
-        };
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private Optional<Long> defaultCategoryId(long userId, long companyId, int type) {

@@ -1,7 +1,8 @@
-package com.mamoji.controller;
+package com.mamoji.recurring.api;
 
-import com.mamoji.domain.Models.RecurringItem;
+import com.mamoji.recurring.domain.RecurringItem;
 import com.mamoji.service.RecurringService;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -12,8 +13,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/recurring")
@@ -35,9 +36,9 @@ public class RecurringController {
     @PostMapping
     public RecurringItem create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody RecurringCreateRequest request
     ) {
-        return service.createRecurring(authorization, body);
+        return service.createRecurring(authorization, request);
     }
 
     @PutMapping("/{id}")
@@ -45,11 +46,9 @@ public class RecurringController {
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable String id,
         @RequestParam(value = "companyId", required = false) Long companyId,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody RecurringUpdateRequest request
     ) {
-        Map<String, Object> scopedBody = new java.util.LinkedHashMap<>(body);
-        if (companyId != null) scopedBody.put("companyId", companyId);
-        return service.updateRecurring(authorization, id, scopedBody);
+        return service.updateRecurring(authorization, id, companyId, request);
     }
 
     @DeleteMapping("/{id}")
