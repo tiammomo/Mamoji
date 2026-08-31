@@ -2,11 +2,11 @@ package com.mamoji.service;
 
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
-import com.mamoji.domain.Models.RegistrationInvite;
-import com.mamoji.domain.Models.User;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
+import com.mamoji.platform.identity.RegistrationInvite;
+import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;

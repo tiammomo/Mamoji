@@ -2,8 +2,8 @@ package com.mamoji.operations.application;
 
 import com.mamoji.common.PayloadReader;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.User;
 import com.mamoji.operations.domain.Category;
+import com.mamoji.platform.identity.User;
 import com.mamoji.service.support.AccessControlService;
 import java.time.OffsetDateTime;
 import java.util.List;

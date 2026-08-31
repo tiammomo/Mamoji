@@ -1,9 +1,9 @@
 package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.User;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.access.AccessContextView;
+import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import java.util.ArrayList;
 import java.util.List;

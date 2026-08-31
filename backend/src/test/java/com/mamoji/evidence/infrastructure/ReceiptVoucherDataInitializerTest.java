@@ -13,8 +13,8 @@ import static org.mockito.Mockito.when;
 
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.domain.Models.User;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
+import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import java.util.ArrayList;
