@@ -10,6 +10,7 @@ import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
@@ -44,6 +45,7 @@ public class EnterpriseManagementService {
     private final EnterpriseStore enterpriseStore;
     private final InMemoryStore coreStore;
     private final FinanceRepository financeRepository;
+    private final CategoryRepository categoryRepository;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
     private final OutboxEventService outboxEventService;
@@ -54,6 +56,7 @@ public class EnterpriseManagementService {
         EnterpriseStore enterpriseStore,
         InMemoryStore coreStore,
         FinanceRepository financeRepository,
+        CategoryRepository categoryRepository,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
         OutboxEventService outboxEventService,
@@ -63,6 +66,7 @@ public class EnterpriseManagementService {
         this.enterpriseStore = enterpriseStore;
         this.coreStore = coreStore;
         this.financeRepository = financeRepository;
+        this.categoryRepository = categoryRepository;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
         this.outboxEventService = outboxEventService;
@@ -138,7 +142,7 @@ public class EnterpriseManagementService {
         enterpriseStore.saveCompany(company);
         memberships.ensureOwner(company);
         financeRepository.ensureAccountingLedger(user.id, company.id, company.currency, company.name);
-        coreStore.ensureCompanyAccountingCategories(user.id, company.id);
+        categoryRepository.ensureCompanyDefaults(user.id, company.id);
         audit(company.id, "company", company.id, "create", "创建公司主体: " + company.name, user);
         return company;
     }

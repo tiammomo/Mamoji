@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Category;
-import com.mamoji.service.AccountingService;
+import com.mamoji.operations.application.CategoryApplicationService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,9 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/categories")
 public class CategoryController {
-    private final AccountingService service;
+    private final CategoryApplicationService service;
 
-    public CategoryController(AccountingService service) {
+    public CategoryController(CategoryApplicationService service) {
         this.service = service;
     }
 
