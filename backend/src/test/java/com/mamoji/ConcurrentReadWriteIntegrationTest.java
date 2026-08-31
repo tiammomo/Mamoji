@@ -212,6 +212,70 @@ class ConcurrentReadWriteIntegrationTest {
     }
 
     @Test
+    void concurrentRefundsCannotExceedRemainingRefundableAmount() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent refund capacity");
+        Map<String, Object> account = createAccount(token, companyId, "Refund concurrency account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Refund concurrency expense", "expense");
+        ApiResponse created = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 100,
+            "accountId", id(account),
+            "categoryId", id(category),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-refund-original"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> original = (Map<String, Object>) map(created.body()).get("transaction");
+        long originalId = id(original);
+
+        CompletableFuture<ApiResponse> first;
+        CompletableFuture<ApiResponse> second;
+        try (Connection blocker = lockRow("SELECT id FROM transactions WHERE id = ? FOR UPDATE", originalId)) {
+            String path = "/api/v1/transactions/" + originalId + "/refund";
+            Map<String, Object> body = Map.of(
+                "companyId", companyId,
+                "amount", 70,
+                "date", LocalDate.now().toString(),
+                "note", "concurrent-refund"
+            );
+            first = requestAsync("POST", path, body, token);
+            second = requestAsync("POST", path, body, token);
+            awaitBlockedQueries("FROM transactions WHERE id", 2);
+            blocker.commit();
+        }
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        assertEquals(0, new BigDecimal("70").compareTo(jdbc.queryForObject(
+            "SELECT CAST(refunded_amount AS NUMERIC) FROM transactions WHERE id = ?",
+            BigDecimal.class,
+            originalId
+        )));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE original_transaction_id = ?",
+            Integer.class,
+            originalId
+        ));
+        assertEquals("970", jdbc.queryForObject(
+            "SELECT balance FROM accounts WHERE id = ?",
+            String.class,
+            id(account)
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE event_type = 'accounting.transaction.refund' AND company_id = ?
+            """, Integer.class, companyId));
+    }
+
+    @Test
     void concurrentAdministratorDemotionsAlwaysLeaveOneAdministrator() throws Exception {
         String token = adminToken();
         long primaryAdministratorId = jdbc.queryForObject(
