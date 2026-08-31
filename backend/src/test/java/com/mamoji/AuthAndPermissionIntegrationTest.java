@@ -672,6 +672,7 @@ class AuthAndPermissionIntegrationTest {
         Map<String, Object> category = createCategory(token, companyId, "Deleted category", "expense");
         long accountId = ((Number) account.get("id")).longValue();
         long categoryId = ((Number) category.get("id")).longValue();
+        assertEquals("Deleted category", coreStore.categories.get(categoryId).name);
 
         CompletableFuture<ApiResponse> create;
         try (Connection blocker = lockRow("SELECT id FROM accounts WHERE id = ? FOR UPDATE", accountId)) {
@@ -699,6 +700,7 @@ class AuthAndPermissionIntegrationTest {
         assertEquals(400, created.status(), created.body());
         assertEquals(0, transactionCount(token, companyId));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM categories WHERE id = ?", Integer.class, categoryId));
+        assertFalse(coreStore.categories.containsKey(categoryId));
     }
 
     @Test

@@ -4,21 +4,24 @@ import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionAccountingGateway;
-import com.mamoji.repository.InMemoryStore;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;
 
-/** Finance-backed transaction collaboration adapter; category locking remains transitional. */
+/** Adapter coordinating transaction writes with finance and operations-owned persistence. */
 @Repository
-public class LegacyTransactionAccountingGateway implements TransactionAccountingGateway {
+public class TransactionAccountingAdapter implements TransactionAccountingGateway {
     private final FinanceRepository financeRepository;
-    private final InMemoryStore store;
+    private final CategoryRepository categoryRepository;
 
-    public LegacyTransactionAccountingGateway(FinanceRepository financeRepository, InMemoryStore store) {
+    public TransactionAccountingAdapter(
+        FinanceRepository financeRepository,
+        CategoryRepository categoryRepository
+    ) {
         this.financeRepository = financeRepository;
-        this.store = store;
+        this.categoryRepository = categoryRepository;
     }
 
     @Override
@@ -28,7 +31,7 @@ public class LegacyTransactionAccountingGateway implements TransactionAccounting
 
     @Override
     public Optional<Category> findCategoryForUpdate(long id) {
-        return store.categoryForUpdate(id);
+        return categoryRepository.findForUpdate(id);
     }
 
     @Override
