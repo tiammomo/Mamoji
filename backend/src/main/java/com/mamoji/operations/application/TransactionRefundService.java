@@ -1,11 +1,11 @@
 package com.mamoji.operations.application;
 
 import com.mamoji.budget.application.BudgetApplicationService;
-import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.finance.domain.Account;
+import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.RefundTransactionCommand;
 import com.mamoji.operations.domain.TransactionRiskAssessment;
 import com.mamoji.operations.domain.TransactionRiskPolicy;

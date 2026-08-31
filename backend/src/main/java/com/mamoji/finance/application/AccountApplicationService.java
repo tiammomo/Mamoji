@@ -1,10 +1,10 @@
 package com.mamoji.finance.application;
 
 import com.mamoji.common.PayloadReader;
-import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.User;
+import com.mamoji.finance.domain.Account;
+import com.mamoji.finance.domain.Ledger;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;

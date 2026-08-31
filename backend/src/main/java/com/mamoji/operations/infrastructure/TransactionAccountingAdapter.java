@@ -1,11 +1,11 @@
 package com.mamoji.operations.infrastructure;
 
-import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Category;
-import com.mamoji.domain.Models.Ledger;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.finance.domain.Account;
+import com.mamoji.finance.domain.Ledger;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionAccountingGateway;
+import com.mamoji.operations.domain.Category;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;

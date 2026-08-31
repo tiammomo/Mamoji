@@ -1,8 +1,8 @@
 package com.mamoji.operations.application;
 
-import com.mamoji.domain.Models.Account;
-import com.mamoji.domain.Models.Category;
-import com.mamoji.domain.Models.Ledger;
+import com.mamoji.finance.domain.Account;
+import com.mamoji.finance.domain.Ledger;
+import com.mamoji.operations.domain.Category;
 import java.util.List;
 import java.util.Optional;
 

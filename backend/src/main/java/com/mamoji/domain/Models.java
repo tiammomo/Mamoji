@@ -37,53 +37,6 @@ public final class Models {
         public String updatedAt;
     }
 
-    public static class Account {
-        public long id;
-        public long version;
-        public Long companyId;
-        public String name;
-        public String type;
-        public String subType;
-        public String bank;
-        public String accountNo;
-        public String openingBank;
-        public String currency;
-        public BigDecimal balance;
-        public BigDecimal availableBalance;
-        public BigDecimal creditLimit;
-        public BigDecimal frozenAmount;
-        public boolean includeInNetWorth;
-        public long userId;
-        public Long ledgerId;
-        public int status;
-        public String openedAt;
-        public String lastReconciledAt;
-        public String ownerName;
-        public String purpose;
-        public String reconciliationStatus;
-        public String riskLevel;
-        public BigDecimal monthlyIncome;
-        public BigDecimal monthlyExpense;
-        public BigDecimal currentMonthNetFlow;
-        public long transactionCount;
-        public String lastTransactionDate;
-        public String createdAt;
-        public String updatedAt;
-    }
-
-    public static class Category {
-        public long id;
-        public Long companyId;
-        public String name;
-        public String icon;
-        public String color;
-        public String type;
-        public long userId;
-        public int status;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class Budget {
         public long id;
         public long version;
@@ -134,29 +87,6 @@ public final class Models {
         public Long budgetId;
         public String createdAt;
         public String updatedAt;
-    }
-
-    public static class Ledger {
-        public long id;
-        public Long companyId;
-        public String name;
-        public String description;
-        public String currency;
-        public long ownerId;
-        public boolean isDefault;
-        public int status;
-        public String createdAt;
-        public String updatedAt;
-    }
-
-    public static class LedgerMember {
-        public long id;
-        public long ledgerId;
-        public long userId;
-        public String role;
-        public String nickname;
-        public String avatar;
-        public String joinedAt;
     }
 
     public static class RecurringItem {
