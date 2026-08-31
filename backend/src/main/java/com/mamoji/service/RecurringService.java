@@ -4,6 +4,7 @@ import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.User;
 import com.mamoji.domain.Models.Company;
+import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
@@ -31,15 +32,18 @@ import static com.mamoji.common.PayloadReader.text;
 @Service
 public class RecurringService {
     private final InMemoryStore store;
+    private final FinanceRepository financeRepository;
     private final AccessControlService accessControl;
     private final TransactionApplicationService transactionApplicationService;
 
     public RecurringService(
         InMemoryStore store,
+        FinanceRepository financeRepository,
         AccessControlService accessControl,
         TransactionApplicationService transactionApplicationService
     ) {
         this.store = store;
+        this.financeRepository = financeRepository;
         this.accessControl = accessControl;
         this.transactionApplicationService = transactionApplicationService;
     }
@@ -126,7 +130,7 @@ public class RecurringService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Recurring item has already been executed today");
         }
         long userId = user.id;
-        List<Account> accounts = store.queryAccounts(user.id, item.companyId);
+        List<Account> accounts = financeRepository.findAccounts(user.id, item.companyId);
         if (accounts.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before executing a recurring item");
         }

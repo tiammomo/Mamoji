@@ -3,8 +3,10 @@ package com.mamoji.service;
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Ledger;
+import com.mamoji.domain.Models.LedgerMember;
 import com.mamoji.domain.Models.RegistrationInvite;
 import com.mamoji.domain.Models.User;
+import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -36,6 +38,7 @@ public class AuthService {
 
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
+    private final FinanceRepository financeRepository;
     private final AccessControlService accessControl;
     private final PasswordHasher passwordHasher;
     private final LoginSecurityService loginSecurityService;
@@ -48,6 +51,7 @@ public class AuthService {
     public AuthService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
+        FinanceRepository financeRepository,
         AccessControlService accessControl,
         PasswordHasher passwordHasher,
         LoginSecurityService loginSecurityService,
@@ -58,6 +62,7 @@ public class AuthService {
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
+        this.financeRepository = financeRepository;
         this.accessControl = accessControl;
         this.passwordHasher = passwordHasher;
         this.loginSecurityService = loginSecurityService;
@@ -122,8 +127,16 @@ public class AuthService {
             touch(invite);
             store.saveRegistrationInvite(invite);
         }
-        Ledger ledger = store.ledger(user.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
-        store.member(ledger.id, user.id, "owner");
+        Ledger ledger = registrationLedger(user.id);
+        financeRepository.insertLedger(ledger);
+        LedgerMember member = new LedgerMember();
+        member.ledgerId = ledger.id;
+        member.userId = user.id;
+        member.role = "owner";
+        member.nickname = user.nickname;
+        member.avatar = user.avatar;
+        member.joinedAt = OffsetDateTime.now().toString();
+        financeRepository.insertLedgerMember(member);
         enterpriseStore.auditLog(0, "user", user.id, "register", "注册用户: " + user.email, user.id, user.nickname);
         outboxEventService.publish("auth.user.registered", 0, "user", user.id, user.id, Map.of(
             "email", user.email,
@@ -140,6 +153,19 @@ public class AuthService {
             ));
         }
         return authenticated(user);
+    }
+
+    private Ledger registrationLedger(long ownerId) {
+        Ledger ledger = new Ledger();
+        ledger.ownerId = ownerId;
+        ledger.name = "公司经营账本";
+        ledger.description = "初创公司经营收入、成本、税费与预算";
+        ledger.currency = "CNY";
+        ledger.isDefault = true;
+        ledger.status = 1;
+        ledger.createdAt = OffsetDateTime.now().toString();
+        ledger.updatedAt = ledger.createdAt;
+        return ledger;
     }
 
     public List<RegistrationInvite> listInvitations(String authorization) {

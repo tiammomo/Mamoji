@@ -1,8 +1,9 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Account;
-import com.mamoji.service.AccountingService;
-import com.mamoji.service.AccountReconciliationService;
+import com.mamoji.finance.application.AccountApplicationService;
+import com.mamoji.finance.application.AccountReconciliationService;
+import com.mamoji.finance.domain.AccountReconciliation;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,10 +22,13 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/accounts")
 public class AccountController {
-    private final AccountingService service;
+    private final AccountApplicationService service;
     private final AccountReconciliationService reconciliationService;
 
-    public AccountController(AccountingService service, AccountReconciliationService reconciliationService) {
+    public AccountController(
+        AccountApplicationService service,
+        AccountReconciliationService reconciliationService
+    ) {
         this.service = service;
         this.reconciliationService = reconciliationService;
     }
@@ -84,7 +88,7 @@ public class AccountController {
     }
 
     @GetMapping("/{id}/reconciliations")
-    public List<AccountReconciliationService.ReconciliationRecord> reconciliations(
+    public List<AccountReconciliation> reconciliations(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId
@@ -93,7 +97,7 @@ public class AccountController {
     }
 
     @PostMapping("/{id}/reconciliations")
-    public AccountReconciliationService.ReconciliationRecord reconcile(
+    public AccountReconciliation reconcile(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId,
