@@ -4,6 +4,8 @@ import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.application.TransactionMutationService;
+import com.mamoji.operations.application.TransactionRefundService;
+import com.mamoji.operations.domain.RefundTransactionCommand;
 import com.mamoji.operations.domain.UpdateTransactionCommand;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.CurrentActor;
@@ -35,17 +37,20 @@ public class TransactionController {
     private final AccountingService service;
     private final TransactionApplicationService applicationService;
     private final TransactionMutationService mutationService;
+    private final TransactionRefundService refundService;
     private final TransactionImportService importService;
 
     public TransactionController(
         AccountingService service,
         TransactionApplicationService applicationService,
         TransactionMutationService mutationService,
+        TransactionRefundService refundService,
         TransactionImportService importService
     ) {
         this.service = service;
         this.applicationService = applicationService;
         this.mutationService = mutationService;
+        this.refundService = refundService;
         this.importService = importService;
     }
 
@@ -141,21 +146,24 @@ public class TransactionController {
 
     @GetMapping("/refundable")
     public List<TransactionRecord> refundable(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.refundableTransactions(authorization, companyId);
+        return refundService.refundable(actor, companyId);
     }
 
     @PostMapping("/{id}/refund")
     public Map<String, Object> refund(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody TransactionRefundRequest request
     ) {
-        Map<String, Object> scopedBody = new java.util.LinkedHashMap<>(body);
-        if (companyId != null) scopedBody.put("companyId", companyId);
-        return service.refundTransaction(authorization, id, scopedBody);
+        return refundService.refund(actor, id, new RefundTransactionCommand(
+            companyId == null ? request.companyId() : companyId,
+            request.amount(),
+            request.date(),
+            request.note()
+        ));
     }
 }
