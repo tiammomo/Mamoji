@@ -167,12 +167,12 @@ abstract class AbstractPostgresIntegrationTest {
         return ((Number) parseMap(response.body()).get("id")).longValue();
     }
 
-    protected Connection lockRow(String sql, long id) throws Exception {
+    protected Connection lockRow(String sql, Object id) throws Exception {
         Connection connection = dataSource.getConnection();
         try {
             connection.setAutoCommit(false);
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setLong(1, id);
+                statement.setObject(1, id);
                 try (var rows = statement.executeQuery()) {
                     assertTrue(rows.next(), "Expected row to lock");
                 }
