@@ -19,7 +19,7 @@
 | P1 | `Models` 聚合多个无关可变模型 | 模型回到所属模块，优先使用不可变值对象 | 进行中：权限管理已使用模块自有不可变 `ManagedUser` |
 | P1 | 多个接口使用 `Map<String, Object>` | 强类型 DTO、Bean Validation、统一 Problem Detail | 进行中：流水读写、预算和权限更新已完成 |
 | P2 | 启动期兼容建表与 Flyway 并存 | 完成迁移后删除生产兼容 DDL | 待处理 |
-| P2 | 测试集中在少数大文件 | 按模块建立领域单测和 Testcontainers 集成测试 | 待处理 |
+| P2 | 测试集中在少数大文件 | 按模块建立领域单测和 Testcontainers 集成测试 | 已落地：跨域套件已拆为身份访问、会计经营和企业工作流三组独立 PostgreSQL 测试 |
 | P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 待处理 |
 
 ## 目标包边界
@@ -54,11 +54,20 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 将大型集成测试按业务模块拆分为独立 PostgreSQL 测试套件；
-2. 继续缩减启动期兼容建表和公开兼容集合，明确最终删除条件；
-3. 将 `Models` 中的账户、账本和分类模型迁回所属模块。
+1. 继续缩减启动期兼容建表和公开兼容集合，明确最终删除条件；
+2. 将 `Models` 中的账户、账本和分类模型迁回所属模块；
+3. 将剩余跨模块并发测试按数据所有权归入对应模块套件。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。
+
+## PostgreSQL 集成测试套件
+
+- `IdentityAndAccessIntegrationTest`：登录、邀请注册、管理员保护、公司角色和部门数据范围；
+- `AccountingOperationsIntegrationTest`：账户、分类、流水、退款、预算、对账和并发删除完整性；
+- `EnterpriseWorkflowIntegrationTest`：票据报销、审批、周期入账、全局搜索和人力成本；
+- `ConcurrentReadWriteIntegrationTest`：仍需跨请求精确编排的数据库锁与并发回归。
+
+前三个业务套件复用 `AbstractPostgresIntegrationTest` 中的 HTTP 和数据构造夹具，但各自启动独立 PostgreSQL 容器。这样既可以按模块单独执行，又不会通过测试顺序共享数据库状态。
 
 ## 完成标准
 
