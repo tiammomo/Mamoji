@@ -548,6 +548,58 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void financeWritesSynchronizeAccountLedgerAndMembershipCompatibilityViews() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long userId = ((Number) parseMap(request("GET", "/api/v1/auth/me", null, token).body()).get("id"))
+            .longValue();
+        long companyId = createCompany(token, "Finance boundary " + System.nanoTime());
+
+        ApiResponse ledgerResponse = request("POST", "/api/v1/ledgers", Map.of(
+            "companyId", companyId,
+            "name", "Finance-owned ledger",
+            "currency", "CNY"
+        ), token);
+        assertEquals(200, ledgerResponse.status(), ledgerResponse.body());
+        long ledgerId = ((Number) parseMap(ledgerResponse.body()).get("id")).longValue();
+        assertEquals("Finance-owned ledger", coreStore.ledgers.get(ledgerId).name);
+        assertTrue(coreStore.ledgerMembers.values().stream()
+            .anyMatch(member -> member.ledgerId == ledgerId && member.userId == userId));
+
+        Map<String, Object> created = createAccount(token, companyId, "Finance-owned account", "1000");
+        long accountId = ((Number) created.get("id")).longValue();
+        assertEquals(1, coreStore.accounts.get(accountId).version);
+
+        ApiResponse updated = request(
+            "PUT",
+            "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
+            Map.of("name", "Finance-owned account updated"),
+            token
+        );
+        assertEquals(200, updated.status(), updated.body());
+        assertEquals(2, coreStore.accounts.get(accountId).version);
+        assertEquals("Finance-owned account updated", coreStore.accounts.get(accountId).name);
+
+        ApiResponse deleted = request(
+            "DELETE",
+            "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
+            null,
+            token
+        );
+        assertEquals(200, deleted.status(), deleted.body());
+        assertFalse(coreStore.accounts.containsKey(accountId));
+
+        ApiResponse memberDeleted = request(
+            "DELETE",
+            "/api/v1/ledgers/" + ledgerId + "/members/" + userId,
+            null,
+            token
+        );
+        assertEquals(200, memberDeleted.status(), memberDeleted.body());
+        assertFalse(coreStore.ledgerMembers.values().stream()
+            .anyMatch(member -> member.ledgerId == ledgerId && member.userId == userId));
+    }
+
+    @Test
     void accountDeletionChecksCommittedDatabaseReferencesEvenWhenCacheEntryIsMissing() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Reference Lock " + System.nanoTime());

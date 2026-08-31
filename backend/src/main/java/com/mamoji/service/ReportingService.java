@@ -5,6 +5,7 @@ import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.domain.Models.Company;
+import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -32,15 +33,18 @@ public class ReportingService {
         Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
 
     private final InMemoryStore store;
+    private final FinanceRepository financeRepository;
     private final AccessControlService accessControl;
     private final BudgetApplicationService budgetService;
 
     public ReportingService(
         InMemoryStore store,
+        FinanceRepository financeRepository,
         AccessControlService accessControl,
         BudgetApplicationService budgetService
     ) {
         this.store = store;
+        this.financeRepository = financeRepository;
         this.accessControl = accessControl;
         this.budgetService = budgetService;
     }
@@ -167,7 +171,7 @@ public class ReportingService {
         long userId = user.id;
         Map<String, BigDecimal> summary = accountSummary(userId, company.id);
         Map<String, Object> result = new LinkedHashMap<>(summary);
-        List<Map<String, Object>> accounts = store.queryAccounts(userId, company.id).stream()
+        List<Map<String, Object>> accounts = financeRepository.findAccounts(userId, company.id).stream()
             .map(account -> {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("type", account.type);
@@ -222,7 +226,7 @@ public class ReportingService {
     }
 
     private Map<String, BigDecimal> accountSummary(long userId, long companyId) {
-        List<Account> accounts = store.queryAccounts(userId, companyId);
+        List<Account> accounts = financeRepository.findAccounts(userId, companyId);
         BigDecimal liabilities = accounts.stream()
             .filter(account -> account.includeInNetWorth)
             .filter(account -> account.type.equals("debt") || account.type.equals("credit"))

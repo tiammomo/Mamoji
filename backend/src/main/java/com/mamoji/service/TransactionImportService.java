@@ -5,6 +5,7 @@ import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
@@ -40,17 +41,20 @@ public class TransactionImportService {
 
     private final AccessControlService accessControl;
     private final InMemoryStore store;
+    private final FinanceRepository financeRepository;
     private final TransactionApplicationService transactionApplicationService;
     private final TransactionTemplate writeTransaction;
 
     public TransactionImportService(
         AccessControlService accessControl,
         InMemoryStore store,
+        FinanceRepository financeRepository,
         TransactionApplicationService transactionApplicationService,
         PlatformTransactionManager transactionManager
     ) {
         this.accessControl = accessControl;
         this.store = store;
+        this.financeRepository = financeRepository;
         this.transactionApplicationService = transactionApplicationService;
         this.writeTransaction = new TransactionTemplate(transactionManager);
     }
@@ -127,7 +131,7 @@ public class TransactionImportService {
     private ImportContext context(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<Account> accounts = store.queryAccounts(user.id, company.id);
+        List<Account> accounts = financeRepository.findAccounts(user.id, company.id);
         List<Category> categories = store.queryCategories(user.id, company.id, null);
         if (accounts.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before importing transactions");

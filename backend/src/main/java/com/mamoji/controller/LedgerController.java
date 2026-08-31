@@ -2,7 +2,7 @@ package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.LedgerMember;
-import com.mamoji.service.LedgerService;
+import com.mamoji.finance.application.LedgerApplicationService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,9 +18,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 @RestController
 @RequestMapping("/api/v1/ledgers")
 public class LedgerController {
-    private final LedgerService service;
+    private final LedgerApplicationService service;
 
-    public LedgerController(LedgerService service) {
+    public LedgerController(LedgerApplicationService service) {
         this.service = service;
     }
 
