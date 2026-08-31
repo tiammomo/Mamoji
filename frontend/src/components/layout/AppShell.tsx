@@ -73,7 +73,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ["/hr/benefits", "talent-suite"],
       ["/hr/performance", "talent-suite"],
       ["/admin/compensation", "workforce-cost"],
-      ["/admin/users", "people-core"],
+      ["/admin/users", "access-management"],
       ["/backup", "backup"],
     ];
     const requiredModule = optionalRoutes.find(([prefix]) => pathname.startsWith(prefix))?.[1];

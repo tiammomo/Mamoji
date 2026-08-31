@@ -21,6 +21,7 @@ flowchart TB
     tenant[Company Memberships] --> access
     product[Product Module Catalog] --> access
 
+    access --> accessManagement[Access Management]
     access --> workspace[Workspace Read Model]
     access --> approvals[Approvals]
     access --> operations[Operations]
@@ -54,6 +55,7 @@ flowchart TB
 | `platform.identity` | 解析当前人员 | 当前 Actor | 用户会话/外部身份声明 | `ActorContext`、`@CurrentActor` |
 | `platform.tenant` | 同步成员关系 | 公司、角色、部门、范围 | `company_memberships` | `CompanyMembershipRepository` |
 | `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
+| `access-management` | 公司成员和角色维护 | 成员、角色、数据范围 | `users/company_memberships` | `/admin/users` |
 | `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
 | `workspace` | 无业务写入 | 跨模块健康度、待办、指标 | SQL 投影 | `GET /workspace` |
 | `approvals` | 提交、通过、驳回、撤回 | 我的申请/待办/轨迹 | `approval_requests/actions` | `/approvals`、Outbox |
@@ -65,7 +67,7 @@ flowchart TB
 | `workforce-cost` | 薪酬批次生成、锁定 | 公司/部门人力成本、预算差异、趋势 | `payroll_runs/items` + 人员/流水只读投影 | `/payroll-runs`、`GET /workforce-cost` |
 | `notifications` | 偏好与发送状态 | 站内通知 | `notifications/deliveries` | `/notifications` |
 
-`people-core` 与 `workforce-cost` 是默认经营能力，`talent-suite`（福利、绩效）、税务、政策和备份 UI 是可选能力包。任何可选能力都不允许成为核心模块的反向依赖。
+`access-management` 是默认核心能力。`people-core`、`workforce-cost`、`talent-suite`（福利、绩效）、税务、政策和备份 UI 是可选能力包。任何可选能力都不允许成为核心模块的反向依赖。
 
 ## 4. 统一访问上下文
 
@@ -91,7 +93,7 @@ ActorContext
   "scope": "company",
   "departmentId": null,
   "permissions": ["finance.read", "budget.manage"],
-  "modules": { "mode": "internal-module", "enabled": ["workspace", "budgets"] }
+  "modules": { "mode": "internal-module", "enabled": ["workspace", "budgets", "access-management"] }
 }
 ```
 

@@ -1,9 +1,9 @@
-package com.mamoji.controller;
+package com.mamoji.accessmanagement.api;
 
+import com.mamoji.accessmanagement.application.AdminUserService;
 import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.User;
-import com.mamoji.service.AdminUserService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
-@RequiresProductModule("people-core")
+@RequiresProductModule("access-management")
 public class AdminUserController {
     private final AdminUserService service;
 
