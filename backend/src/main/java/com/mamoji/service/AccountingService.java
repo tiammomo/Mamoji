@@ -1,7 +1,5 @@
 package com.mamoji.service;
 
-import com.mamoji.common.PageRequest;
-import com.mamoji.common.PagedResponse;
 import com.mamoji.common.PayloadReader;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
@@ -17,13 +15,11 @@ import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -299,73 +295,6 @@ public class AccountingService {
         store.deleteCategory(id);
     }
 
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public PagedResponse<TransactionRecord> listTransactions(String authorization, Map<String, String> params) {
-        User user = requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        return store.queryTransactions(user.id, company.id, params, PageRequest.from(params));
-    }
-
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Map<String, Object> transactionSummary(String authorization, Map<String, String> params) {
-        User user = requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        BigDecimal income = BigDecimal.ZERO;
-        BigDecimal expense = BigDecimal.ZERO;
-        BigDecimal refund = BigDecimal.ZERO;
-        BigDecimal pendingCollection = BigDecimal.ZERO;
-        BigDecimal customerRefund = BigDecimal.ZERO;
-        BigDecimal severance = BigDecimal.ZERO;
-        long rows = 0;
-        long largeCount = 0;
-        long reviewCount = 0;
-
-        List<TransactionRecord> transactions = store.queryTransactionSummaryRows(user.id, company.id, params);
-        for (TransactionRecord tx : transactions) {
-            rows += 1;
-            if (tx.type == 1) income = income.add(tx.amount);
-            if (tx.type == 2) expense = expense.add(tx.amount);
-            if (tx.type == 3) refund = refund.add(tx.amount);
-            String searchable = transactionSearchText(tx);
-            boolean pending = tx.type == 1 && containsAny(searchable, "待回款", "应收", "未回款", "尾款", "分期", "验收后", "交付后", "回款中");
-            boolean customerRefundRow = tx.type == 2 && containsAny(searchable, "客户退款", "退款给客户", "收入退款", "订单退款", "项目退款", "退货退款", "服务退款");
-            boolean severanceRow = tx.type == 2 && containsAny(searchable, "裁员", "离职补偿", "经济补偿", "遣散", "n+1", "n+ 1", "补偿金", "解除劳动");
-            if (pending) pendingCollection = pendingCollection.add(tx.amount);
-            if (customerRefundRow) customerRefund = customerRefund.add(tx.amount);
-            if (severanceRow) severance = severance.add(tx.amount);
-            boolean large = tx.amount.compareTo(new BigDecimal("10000")) >= 0;
-            if (large) largeCount += 1;
-            if (large || (tx.type == 2 && tx.isRefundable) || pending || customerRefundRow || severanceRow || text(tx.note).isBlank()) {
-                reviewCount += 1;
-            }
-        }
-
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("income", income);
-        summary.put("expense", expense);
-        summary.put("refund", refund);
-        summary.put("pendingCollection", pendingCollection);
-        summary.put("customerRefund", customerRefund);
-        summary.put("severance", severance);
-        summary.put("netCollectedIncome", income.subtract(customerRefund));
-        summary.put("net", income.add(refund).subtract(expense));
-        summary.put("rows", rows);
-        summary.put("largeCount", largeCount);
-        summary.put("reviewCount", reviewCount);
-        return summary;
-    }
-
-    public TransactionRecord getTransaction(String authorization, long id) {
-        return getTransaction(authorization, id, null);
-    }
-
-    public TransactionRecord getTransaction(String authorization, long id, Long companyId) {
-        User user = requireUser(authorization);
-        TransactionRecord tx = requireTransaction(user, id, companyId);
-        store.attachTransactionRelations(tx);
-        return tx;
-    }
-
     private void applyAccountFields(Account account, Map<String, Object> body) {
         if (body.containsKey("accountNo")) {
             account.accountNo = nullableText(body.get("accountNo"));
@@ -560,25 +489,6 @@ public class AccountingService {
 
     private User requireUser(String authorization) {
         return accessControl.requireUser(authorization);
-    }
-
-    private TransactionRecord requireTransaction(User user, long id, Long companyId) {
-        TransactionRecord tx = store.findTransaction(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
-        Company company = accessControl.resolveCompany(user, companyId == null ? tx.companyId : companyId);
-        assertScopedOwner(tx.userId, tx.companyId, user.id, company.id);
-        return tx;
-    }
-
-    private String transactionSearchText(TransactionRecord tx) {
-        return (text(tx.note) + " " + text(tx.categoryName) + " " + text(tx.accountName)).toLowerCase(Locale.ROOT);
-    }
-
-    private boolean containsAny(String value, String... needles) {
-        for (String needle : needles) {
-            if (value.contains(needle)) return true;
-        }
-        return false;
     }
 
     private long defaultLedgerId(User user, Company company) {
