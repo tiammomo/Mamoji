@@ -9,12 +9,17 @@ import org.springframework.stereotype.Component;
 public class BudgetPolicy {
     public Budget apply(Budget budget) {
         budget.spent = zeroIfNull(budget.spent).max(BigDecimal.ZERO);
+        budget.reservedAmount = zeroIfNull(budget.reservedAmount).max(BigDecimal.ZERO);
         if (budget.amount == null || budget.amount.compareTo(BigDecimal.ZERO) <= 0) {
             budget.remainingAmount = BigDecimal.ZERO;
+            budget.availableAmount = BigDecimal.ZERO;
             budget.usageRate = 0;
         } else {
             budget.remainingAmount = budget.amount.subtract(budget.spent);
-            budget.usageRate = budget.spent.divide(budget.amount, 4, RoundingMode.HALF_UP).doubleValue();
+            budget.availableAmount = budget.remainingAmount.subtract(budget.reservedAmount).max(BigDecimal.ZERO);
+            budget.usageRate = budget.spent.add(budget.reservedAmount)
+                .divide(budget.amount, 4, RoundingMode.HALF_UP)
+                .doubleValue();
         }
         budget.warningReached = budget.usageRate * 100 >= budget.warningThreshold;
         boolean mutableLifecycle = budget.status != 0 && budget.status != 2;

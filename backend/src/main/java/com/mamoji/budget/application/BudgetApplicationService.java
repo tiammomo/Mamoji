@@ -3,7 +3,10 @@ package com.mamoji.budget.application;
 import com.mamoji.budget.api.BudgetCreateRequest;
 import com.mamoji.budget.api.BudgetUpdateRequest;
 import com.mamoji.budget.domain.BudgetPolicy;
+import com.mamoji.budget.domain.BudgetReservation;
+import com.mamoji.budget.domain.BudgetReservationCommand;
 import com.mamoji.budget.infrastructure.BudgetRepository;
+import com.mamoji.budget.infrastructure.BudgetReservationRepository;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.Budget;
@@ -32,6 +35,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class BudgetApplicationService {
     private final BudgetRepository repository;
+    private final BudgetReservationRepository reservationRepository;
     private final BudgetPolicy policy;
     private final AccessContextService accessContext;
     private final InMemoryStore compatibilityStore;
@@ -40,6 +44,7 @@ public class BudgetApplicationService {
 
     public BudgetApplicationService(
         BudgetRepository repository,
+        BudgetReservationRepository reservationRepository,
         BudgetPolicy policy,
         AccessContextService accessContext,
         InMemoryStore compatibilityStore,
@@ -47,6 +52,7 @@ public class BudgetApplicationService {
         OutboxEventService outbox
     ) {
         this.repository = repository;
+        this.reservationRepository = reservationRepository;
         this.policy = policy;
         this.accessContext = accessContext;
         this.compatibilityStore = compatibilityStore;
@@ -179,6 +185,26 @@ public class BudgetApplicationService {
 
     public Optional<Long> matchingBudgetId(TransactionRecord transaction) {
         return repository.matchingBudgetId(transaction);
+    }
+
+    @Transactional
+    public Optional<BudgetReservation> reserveExpense(BudgetReservationCommand command) {
+        return reservationRepository.reserveMatching(command);
+    }
+
+    @Transactional
+    public BudgetReservation confirmReservation(long reservationId, long transactionId) {
+        return reservationRepository.confirm(reservationId, transactionId);
+    }
+
+    @Transactional
+    public BudgetReservation releaseReservation(long reservationId, String reason) {
+        return reservationRepository.release(reservationId, reason);
+    }
+
+    @Transactional
+    public Optional<BudgetReservation> releaseTransactionReservation(long transactionId, String reason) {
+        return reservationRepository.releaseByTransaction(transactionId, reason);
     }
 
     public void refreshCompany(long companyId) {

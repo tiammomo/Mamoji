@@ -144,6 +144,74 @@ class ConcurrentReadWriteIntegrationTest {
     }
 
     @Test
+    void concurrentExpensesCannotConsumeMoreThanOneSharedBudget() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent budget capacity");
+        Map<String, Object> firstAccount = createAccount(token, companyId, "Budget account A", "1000");
+        Map<String, Object> secondAccount = createAccount(token, companyId, "Budget account B", "1000");
+        Map<String, Object> firstCategory = createCategory(token, companyId, "Budget category A", "expense");
+        Map<String, Object> secondCategory = createCategory(token, companyId, "Budget category B", "expense");
+        ApiResponse budget = request("POST", "/api/v1/budgets", Map.of(
+            "companyId", companyId,
+            "name", "Shared operating budget",
+            "amount", 100,
+            "startDate", LocalDate.now().minusDays(1).toString(),
+            "endDate", LocalDate.now().plusDays(1).toString(),
+            "warningThreshold", 80
+        ), token);
+        assertEquals(200, budget.status(), budget.body());
+        long budgetId = id(map(budget.body()));
+
+        CompletableFuture<ApiResponse> first = requestAsync("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 70,
+            "accountId", id(firstAccount),
+            "categoryId", id(firstCategory),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-budget-a"
+        ), token);
+        CompletableFuture<ApiResponse> second = requestAsync("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 70,
+            "accountId", id(secondAccount),
+            "categoryId", id(secondCategory),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-budget-b"
+        ), token);
+
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE company_id = ? AND note LIKE 'concurrent-budget-%'",
+            Integer.class,
+            companyId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'confirmed'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'reserved'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(0, new BigDecimal("70").compareTo(jdbc.queryForObject("""
+            SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0)
+            FROM transactions
+            WHERE company_id = ? AND note LIKE 'concurrent-budget-%'
+            """, BigDecimal.class, companyId)));
+    }
+
+    @Test
     void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Concurrent approval");

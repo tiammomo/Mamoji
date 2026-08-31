@@ -1,6 +1,9 @@
 package com.mamoji.operations.application;
 
 import com.mamoji.budget.application.BudgetApplicationService;
+import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
+import com.mamoji.budget.domain.BudgetReservation;
+import com.mamoji.budget.domain.BudgetReservationCommand;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
@@ -22,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,6 +110,14 @@ public class TransactionApplicationService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
         validateRelations(user, company.id, account, command);
         Long ledgerId = resolveLedgerId(user, company, account);
+        Optional<BudgetReservation> reservation = reserveBudget(
+            company.id,
+            user.id,
+            ledgerId,
+            transactionDate,
+            command,
+            idempotencyKey
+        );
         TransactionRecord transaction = store.transaction(
             user.id,
             company.id,
@@ -118,12 +130,46 @@ public class TransactionApplicationService {
             command.note() == null ? "" : command.note(),
             idempotencyKey
         );
-        transaction.budgetId = budgetService.matchingBudgetId(transaction).orElse(null);
+        transaction.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
         store.saveTransaction(transaction);
+        reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), transaction.id));
         saveAdjustedAccount(account, transaction);
         budgetService.refreshCompany(company.id);
         audit(company.id, transaction, user);
         return Map.of("transaction", transaction, "risk", riskFor(transaction));
+    }
+
+    private Optional<BudgetReservation> reserveBudget(
+        long companyId,
+        long userId,
+        Long ledgerId,
+        LocalDate transactionDate,
+        CreateTransactionCommand command,
+        String idempotencyKey
+    ) {
+        if (command.type() != 2) {
+            return Optional.empty();
+        }
+        String referenceKey = "transaction:" + (
+            idempotencyKey == null ? UUID.randomUUID().toString() : idempotencyKey
+        );
+        try {
+            return budgetService.reserveExpense(new BudgetReservationCommand(
+                companyId,
+                userId,
+                ledgerId,
+                command.categoryId(),
+                transactionDate,
+                command.amount(),
+                referenceKey,
+                null
+            ));
+        } catch (BudgetCapacityExceededException ex) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Budget capacity exceeded; available amount is " + ex.available().stripTrailingZeros().toPlainString()
+            );
+        }
     }
 
     private void requireMatchingReplay(
