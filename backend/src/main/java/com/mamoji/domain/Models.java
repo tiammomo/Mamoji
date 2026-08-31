@@ -8,35 +8,6 @@ public final class Models {
     private Models() {
     }
 
-    public static class User {
-        public long id;
-        public String email;
-        public String nickname;
-        public String avatar;
-        public Long familyId;
-        public int role;
-        public int permissions;
-        public String createdAt;
-        public String updatedAt;
-
-        @JsonIgnore
-        public String passwordHash;
-    }
-
-    public static class RegistrationInvite {
-        public long id;
-        public String token;
-        public String email;
-        public int role;
-        public int permissions;
-        public String expiresAt;
-        public String acceptedAt;
-        public Long acceptedUserId;
-        public long invitedByUserId;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class RecurringItem {
         public String id;
         public Long companyId;

@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
-import com.mamoji.domain.Models.RegistrationInvite;
-import com.mamoji.domain.Models.User;
+import com.mamoji.platform.identity.RegistrationInvite;
+import com.mamoji.platform.identity.User;
 import com.mamoji.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;

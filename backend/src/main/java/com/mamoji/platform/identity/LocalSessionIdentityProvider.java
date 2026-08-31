@@ -1,6 +1,5 @@
 package com.mamoji.platform.identity;
 
-import com.mamoji.domain.Models.User;
 import com.mamoji.repository.InMemoryStore;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
