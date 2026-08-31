@@ -551,11 +551,11 @@ public class InMemoryStore {
         return account;
     }
 
-    public Category category(long userId, String name, String icon, String color, String type) {
+    private Category category(long userId, String name, String icon, String color, String type) {
         return category(userId, null, name, icon, color, type);
     }
 
-    public Category category(long userId, Long companyId, String name, String icon, String color, String type) {
+    private Category category(long userId, Long companyId, String name, String icon, String color, String type) {
         Category category = new Category();
         category.userId = userId;
         category.companyId = companyId;
@@ -720,8 +720,7 @@ public class InMemoryStore {
         return ledger;
     }
 
-    /** Transitional category bootstrap hook until category persistence moves into operations. */
-    public void ensureCompanyAccountingCategories(long ownerId, long companyId) {
+    private void ensureCompanyAccountingCategories(long ownerId, long companyId) {
         if (queryCategories(ownerId, companyId, "income").isEmpty()) {
             category(ownerId, companyId, "经营收入", "💼", "#22c55e", "income");
         }
@@ -829,6 +828,16 @@ public class InMemoryStore {
         afterCommit(() -> accounts.remove(id));
     }
 
+    /** Transitional cache hook for legacy readers after a committed category write. */
+    public void synchronizeCategoryAfterCommit(Category category) {
+        afterCommit(() -> categories.put(category.id, category));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed category deletion. */
+    public void removeCategoryFromCompatibilityViewAfterCommit(long id) {
+        afterCommit(() -> categories.remove(id));
+    }
+
     /** Transitional cache hook for legacy readers after a committed ledger creation. */
     public void synchronizeLedgerAfterCommit(Ledger ledger) {
         afterCommit(() -> ledgers.put(ledger.id, ledger));
@@ -857,15 +866,6 @@ public class InMemoryStore {
             replacement.updatedAt = updatedAt;
             afterCommit(() -> users.put(replacement.id, replacement));
         }
-    }
-
-    public void saveCategory(Category category) {
-        jdbc.update("""
-            UPDATE categories SET name = ?, icon = ?, color = ?, type = ?, user_id = ?, status = ?, created_at = ?, updated_at = ?, company_id = ?
-            WHERE id = ?
-            """, category.name, category.icon, category.color, category.type, category.userId, category.status,
-            category.createdAt, category.updatedAt, category.companyId, category.id);
-        afterCommit(() -> categories.put(category.id, category));
     }
 
     public void saveBudget(Budget budget) {
@@ -924,11 +924,6 @@ public class InMemoryStore {
             tokens.remove(tokenKey);
             tokens.remove(token);
         });
-    }
-
-    public void deleteCategory(long id) {
-        jdbc.update("DELETE FROM categories WHERE id = ?", id);
-        afterCommit(() -> categories.remove(id));
     }
 
     public void deleteBudget(long id) {
@@ -1007,11 +1002,11 @@ public class InMemoryStore {
         return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
     }
 
-    public Optional<Category> findCategory(long id) {
+    private Optional<Category> findCategory(long id) {
         return jdbc.query("SELECT * FROM categories WHERE id = ?", (rs, rowNum) -> mapCategory(rs), id).stream().findFirst();
     }
 
-    public List<Category> queryCategories(long userId, long companyId, String type) {
+    private List<Category> queryCategories(long userId, long companyId, String type) {
         if (type == null || type.isBlank()) {
             return jdbc.query(
                 "SELECT * FROM categories WHERE user_id = ? AND company_id = ? ORDER BY id",
@@ -1079,11 +1074,6 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public Optional<Category> categoryForUpdate(long id) {
-        List<Category> matches = jdbc.query("SELECT * FROM categories WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapCategory(rs), id);
-        return matches.stream().findFirst();
-    }
-
     public Optional<Budget> budgetForUpdate(long id) {
         List<Budget> matches = jdbc.query("SELECT * FROM budgets WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapBudget(rs), id);
         return matches.stream().findFirst();
@@ -1096,16 +1086,6 @@ public class InMemoryStore {
             ledgerId,
             userId
         );
-        return count != null && count > 0;
-    }
-
-    public boolean categoryHasAccountingReferences(long categoryId) {
-        Integer count = jdbc.queryForObject("""
-            SELECT (
-                (SELECT COUNT(*) FROM transactions WHERE category_id = ?)
-                + (SELECT COUNT(*) FROM budgets WHERE category_id = ?)
-            )
-            """, Integer.class, categoryId, categoryId);
         return count != null && count > 0;
     }
 
