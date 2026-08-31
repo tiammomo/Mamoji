@@ -1,6 +1,6 @@
 package com.mamoji.service.support;
 
-import com.mamoji.domain.Models.OutboxEvent;
+import com.mamoji.notification.domain.OutboxEvent;
 import com.mamoji.service.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

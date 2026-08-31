@@ -9,7 +9,7 @@ Mamoji 当前不直接依赖 RocketMQ。生产环境先使用数据库 Outbox �
 主要状态：
 
 - `pending`：已写入，等待本地消费者处理。
-- `processing`：消费者已抢占，正在处理。
+- `processing`：消费者已通过唯一 `lock_token` 抢占，正在处理。
 - `failed`：处理失败，等待下次重试。
 - `processed`：已处理完成。
 - `dead`：超过最大重试次数，需要人工排查。
@@ -64,12 +64,19 @@ UPDATE outbox_events
 SET status = 'pending',
     next_attempt_at = NULL,
     locked_at = NULL,
+    lock_token = NULL,
     last_error = NULL,
     updated_at = now()::text
 WHERE id = :event_id
   AND status = 'dead';
 ```
 
+## 消费租约与重复投递
+
+每次认领事件都会生成新的 `lock_token`。处理成功或失败时，消费者必须同时匹配事件 ID、`processing` 状态和当前令牌才能更新终态。陈旧处理锁被恢复后，旧工作线程即使稍后返回，也不能覆盖新消费者写入的状态。
+
+Outbox 保证至少一次投递，不承诺外部副作用天然只执行一次。站内通知使用 `event_id` 生成去重键；后续消息适配器也必须把 `event_id` 作为消息键，并由下游按该键实现幂等。
+
 ## 未来接 RocketMQ
 
-未来需要 RocketMQ 时，保留业务侧 `OutboxEventService.publish(...)` 不变，只替换 `OutboxEventHandler` 的实现，把本地日志处理改为 RocketMQ 发布即可。发布到 RocketMQ 成功后再标记 `processed`，失败继续沿用现有重试和死信机制。
+未来需要 RocketMQ 时，保留业务侧 `OutboxEventService.publish(...)` 不变，只替换 `OutboxEventHandler` 的实现，把本地日志处理改为 RocketMQ 发布即可。发布到 RocketMQ 成功且当前消费租约仍有效后再标记 `processed`，失败继续沿用现有重试和死信机制。
