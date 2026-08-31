@@ -55,19 +55,18 @@ api -> application -> domain
 ## 下一批变更
 
 1. 继续缩减 `InMemoryStore` 与 `EnterpriseStore` 的公开兼容读模型；
-2. 将剩余跨模块并发测试按数据所有权归入对应模块套件；
-3. 评估通知 Outbox 的外部消息适配层与失败重试边界。
+2. 评估通知 Outbox 的外部消息适配层与失败重试边界；
+3. 将剩余 `Models` 企业对象按 HR、税务和通知边界继续拆分。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。
 
 ## PostgreSQL 集成测试套件
 
-- `IdentityAndAccessIntegrationTest`：登录、邀请注册、管理员保护、公司角色和部门数据范围；
-- `AccountingOperationsIntegrationTest`：账户、分类、流水、退款、预算、对账和并发删除完整性；
-- `EnterpriseWorkflowIntegrationTest`：票据报销、审批、周期入账、全局搜索和人力成本；
-- `ConcurrentReadWriteIntegrationTest`：仍需跨请求精确编排的数据库锁与并发回归，复用统一 HTTP、数据库和异步夹具。
+- `IdentityAndAccessIntegrationTest`：登录、邀请注册、管理员保护及其并发约束、公司角色和部门数据范围；
+- `AccountingOperationsIntegrationTest`：账户、分类、流水、退款、预算、对账及其数据库锁与并发完整性；
+- `EnterpriseWorkflowIntegrationTest`：票据报销、审批、周期入账、全局搜索、人力成本及其幂等并发约束。
 
-四个套件均复用 `AbstractPostgresIntegrationTest` 中的 HTTP 和数据构造夹具，但各自启动独立 PostgreSQL 容器。这样既可以按模块单独执行，又不会通过测试顺序共享数据库状态。
+三个套件均复用 `AbstractPostgresIntegrationTest` 中的 HTTP、数据库锁和数据构造夹具，但各自启动独立 PostgreSQL 容器。这样既可以按模块单独执行，又不会通过测试顺序共享数据库状态。
 
 ## 完成标准
 
