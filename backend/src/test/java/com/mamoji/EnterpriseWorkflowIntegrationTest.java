@@ -4,8 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -336,5 +342,167 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         );
         assertEquals(200, closedResponse.status(), closedResponse.body());
         assertEquals("closed", parseMap(closedResponse.body()).get("payrollRunStatus"));
+    }
+
+    @Test
+    void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent approval");
+        ApiResponse voucherResponse = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Concurrent reimbursement",
+            "voucherType", "reimbursement",
+            "direction", "expense",
+            "counterparty", "Employee",
+            "amount", 100
+        ), token);
+        assertEquals(200, voucherResponse.status(), voucherResponse.body());
+        long voucherId = id(parseMap(voucherResponse.body()));
+        Map<String, Object> body = Map.of(
+            "companyId", companyId,
+            "requestType", "reimbursement",
+            "entityType", "receipt_voucher",
+            "entityId", voucherId,
+            "title", "Only one pending approval",
+            "amount", 100
+        );
+        String leaseKey = "approval:" + companyId + ":receipt_voucher:" + voucherId;
+
+        CompletableFuture<ApiResponse> first;
+        CompletableFuture<ApiResponse> second;
+        try (Connection blocker = holdApprovalLease(leaseKey)) {
+            first = requestAsync("POST", "/api/v1/approvals", body, token);
+            second = requestAsync("POST", "/api/v1/approvals", body, token);
+            awaitBlockedQueries("pg_advisory_xact_lock", 2);
+            blocker.commit();
+        }
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(List.of(200, 409), List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body());
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM approval_requests
+            WHERE company_id = ? AND entity_type = 'receipt_voucher' AND entity_id = ? AND status = 'pending'
+            """, Integer.class, companyId, voucherId));
+    }
+
+    @Test
+    void concurrentPayrollClosePublishesSideEffectsOnce() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent payroll");
+        createEmployee(token, companyId);
+        ApiResponse created = request("POST", "/api/v1/payroll-runs", Map.of(
+            "companyId", companyId,
+            "period", "2026-07"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        long runId = id(parseMap(created.body()));
+
+        CompletableFuture<ApiResponse> first;
+        CompletableFuture<ApiResponse> second;
+        try (Connection blocker = lockRow("SELECT id FROM payroll_runs WHERE id = ? FOR UPDATE", runId)) {
+            first = requestAsync("POST", "/api/v1/payroll-runs/" + runId + "/close", null, token);
+            second = requestAsync("POST", "/api/v1/payroll-runs/" + runId + "/close", null, token);
+            awaitBlockedQueries("FROM payroll_runs WHERE id", 2);
+            blocker.commit();
+        }
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(200, firstResponse.status(), firstResponse.body());
+        assertEquals(200, secondResponse.status(), secondResponse.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM outbox_events WHERE event_type = 'payroll.run.closed' AND aggregate_id = ?",
+            Integer.class,
+            runId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_type = 'payroll_run' AND entity_id = ? AND action = 'close'",
+            Integer.class,
+            runId
+        ));
+    }
+
+    @Test
+    void concurrentRecurringExecutionPostsOneTransactionAndIncrementsOnce() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent recurring");
+        Map<String, Object> account = createAccount(token, companyId, "Recurring account", "1000");
+        createCategory(token, companyId, "Recurring expense", "expense");
+        String note = "recurring-" + System.nanoTime();
+        ApiResponse created = request("POST", "/api/v1/recurring", Map.of(
+            "companyId", companyId,
+            "name", "Concurrent recurring item",
+            "type", 2,
+            "amount", 25,
+            "frequency", "monthly",
+            "interval", 1,
+            "startDate", LocalDate.now().toString(),
+            "note", note
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        String recurringId = String.valueOf(parseMap(created.body()).get("id"));
+
+        CompletableFuture<ApiResponse> first;
+        CompletableFuture<ApiResponse> second;
+        try (Connection blocker = lockRow("SELECT id FROM recurring_items WHERE id = ? FOR UPDATE", recurringId)) {
+            String path = "/api/v1/recurring/" + recurringId + "/execute?companyId=" + companyId;
+            first = requestAsync("POST", path, null, token);
+            second = requestAsync("POST", path, null, token);
+            awaitBlockedQueries("FROM recurring_items WHERE id", 2);
+            blocker.commit();
+        }
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(List.of(200, 409), List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE company_id = ? AND account_id = ? AND note = ?",
+            Integer.class,
+            companyId,
+            id(account),
+            note
+        ));
+        Map<String, Object> state = jdbc.queryForMap(
+            "SELECT execution_count, last_executed FROM recurring_items WHERE id = ?",
+            recurringId
+        );
+        assertEquals(1, ((Number) state.get("execution_count")).intValue());
+        assertEquals(LocalDate.now().toString(), state.get("last_executed"));
+    }
+
+    private Connection holdApprovalLease(String leaseKey) throws Exception {
+        Connection connection = dataSource.getConnection();
+        try {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))"
+            )) {
+                statement.setString(1, leaseKey);
+                statement.executeQuery().close();
+            }
+            return connection;
+        } catch (Exception ex) {
+            connection.close();
+            throw ex;
+        }
+    }
+
+    private void createEmployee(String token, long companyId) throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("companyId", companyId);
+        body.put("name", "Payroll employee");
+        body.put("email", "payroll-" + System.nanoTime() + "@example.invalid");
+        body.put("position", "Engineer");
+        body.put("employmentType", "full_time");
+        body.put("status", "active");
+        body.put("accessRole", "employee");
+        body.put("accessScope", "self");
+        body.put("hireDate", "2026-07-01");
+        body.put("salary", 10000);
+        ApiResponse response = request("POST", "/api/v1/enterprise/employees", body, token);
+        assertEquals(200, response.status(), response.body());
     }
 }
