@@ -10,6 +10,7 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -379,9 +380,24 @@ public class AccountingService {
 
     @Transactional
     public Map<String, Object> createTransaction(String authorization, Map<String, Object> body) {
+        CreateTransactionCommand command = new CreateTransactionCommand(
+            optionalLong(body.get("companyId")).orElse(null),
+            intValue(body.get("type"), 2),
+            positiveAmount(body.get("amount"), "amount"),
+            requiredId(body.get("categoryId"), "categoryId"),
+            requiredId(body.get("accountId"), "accountId"),
+            LocalDate.parse(validDate(textOr(body.get("date"), LocalDate.now().toString()), "date")),
+            textOr(body.get("note"), ""),
+            idempotencyKey(body.get("idempotencyKey"))
+        );
+        return createTransaction(authorization, command);
+    }
+
+    @Transactional
+    public Map<String, Object> createTransaction(String authorization, CreateTransactionCommand command) {
         User user = requireUser(authorization);
-        Company company = resolveCompany(user, body);
-        String idempotencyKey = idempotencyKey(body.get("idempotencyKey"));
+        Company company = accessControl.resolveCompany(user, command.companyId());
+        String idempotencyKey = idempotencyKey(command.idempotencyKey());
         if (idempotencyKey != null) {
             store.lockTransactionIdempotency(company.id, idempotencyKey);
             Optional<TransactionRecord> replay = store.findTransactionByIdempotency(company.id, idempotencyKey);
@@ -391,14 +407,14 @@ public class AccountingService {
                 return Map.of("transaction", existing, "risk", riskFor(existing), "replayed", true);
             }
         }
-        int type = intValue(body.get("type"), 2);
+        int type = command.type();
         if (type != 1 && type != 2) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be income(1) or expense(2)");
         }
-        BigDecimal amount = positiveAmount(body.get("amount"), "amount");
-        long categoryId = requiredId(body.get("categoryId"), "categoryId");
-        long accountId = requiredId(body.get("accountId"), "accountId");
-        String date = validDate(textOr(body.get("date"), LocalDate.now().toString()), "date");
+        BigDecimal amount = positiveAmount(command.amount(), "amount");
+        long categoryId = requiredId(command.categoryId(), "categoryId");
+        long accountId = requiredId(command.accountId(), "accountId");
+        String date = validDate(command.date().toString(), "date");
         Account lockedAccount = store.accountForUpdate(accountId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
         TransactionRelations relations = validateRelationOwnership(user, company.id, accountId, categoryId, lockedAccount, type);
@@ -412,7 +428,7 @@ public class AccountingService {
             categoryId,
             accountId,
             date,
-            textOr(body.get("note"), ""),
+            textOr(command.note(), ""),
             idempotencyKey
         );
         tx.budgetId = budgetService.matchingBudgetId(tx).orElse(null);

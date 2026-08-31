@@ -1,8 +1,8 @@
 # Mamoji
 
-Mamoji 是面向企业门户的内部经营协同模块。它把经营流水、预算、审批、资金账户、票据证据、组织人员和人力成本连接起来，帮助团队在一条可审计链路上完成日常经营控制。
+Mamoji 是面向中小企业的费用、预算与审批协同平台。它把费用证据、审批、预算、经营流水和资金账户连接起来，帮助团队在一条可审计链路上完成日常经营控制。
 
-默认产品模式是 `internal-module`。组织人员与人力成本属于公司经营的默认能力；绩效福利等人才扩展、税务工作台、政策中心、家庭主体和备份 UI 按需开启。
+默认产品模式是 `internal-module`。公司成员与数据权限属于核心能力；组织人员、人力成本、人才扩展、税务、政策、家庭主体和备份 UI 按企业实际需求开启。
 
 当前项目采用前后端分离架构：后端是 Spring Boot API，前端是 Next.js 应用，数据落在 PostgreSQL，附件走 MinIO，对外生产入口由 Caddy 承接，监控使用 Prometheus。
 
@@ -51,15 +51,15 @@ Mamoji 不替代电子税务局、银行、正式财务软件或人事合同系�
 | 经营报表 | `/reports` | 趋势、分类占比、年度视图和经营洞察 |
 | 周期事项 | `/recurring` | 工资、房租、SaaS、税费申报等周期性事项 |
 | 票据凭证 | `/receipts` | 上传、查验状态、抵扣状态、审批、会计过账、附件下载 |
-| 组织人员 | `/hr/organization` | 部门、员工档案、入离职状态、岗位与部门预算 |
-| 薪酬月结 | `/admin/compensation` | 五险一金、个税、个人到卡、公司总成本、月结锁定 |
-| 人力成本 | `/hr/workforce-cost`、`/api/v1/workforce-cost` | 薪酬快照、部门成本、预算差异、六期趋势和经营支出占比 |
 | 公司与权限 | `/settings`、`/admin/users`、`/api/v1/platform/access-context` | 当前人员、公司、角色、数据范围、权限和模块能力 |
+| 可选：组织人员 | `/hr/organization` | 部门、员工档案、入离职状态、岗位与部门预算 |
+| 可选：薪酬月结 | `/admin/compensation` | 五险一金、个税、个人到卡、公司总成本、月结锁定 |
+| 可选：人力成本 | `/hr/workforce-cost`、`/api/v1/workforce-cost` | 薪酬快照、部门成本、预算差异、六期趋势和经营支出占比 |
 | 可选：税务 | `/tax` | 税费台账、申报日历、资料清单、风险项 |
 | 可选：人才扩展 | `/hr/benefits`、`/hr/performance` | 福利、绩效等非经营必需的人才管理能力 |
 | 可选：备份 UI | `/backup` | 备份状态、结构化导出和受控恢复 |
 
-默认侧栏只设置五个一级模块：`经营工作台`、`经营管理`、`财务管理`、`组织与人力成本`、`系统管理`。可选税务归入财务管理，人才扩展归入组织与人力成本，避免一级导航随能力开启持续膨胀。
+默认侧栏只显示四个一级模块：`经营工作台`、`经营管理`、`财务管理`、`系统管理`。开启人员能力后才显示`组织与人力成本`，避免核心业务被非必要功能稀释。
 
 ## 模块模式
 
@@ -68,8 +68,8 @@ Mamoji 不替代电子税务局、银行、正式财务软件或人事合同系�
 ```env
 MAMOJI_PRODUCT_MODE=internal-module
 MAMOJI_MODULE_HOUSEHOLD_ENABLED=false
-MAMOJI_MODULE_PEOPLE_CORE_ENABLED=true
-MAMOJI_MODULE_WORKFORCE_COST_ENABLED=true
+MAMOJI_MODULE_PEOPLE_CORE_ENABLED=false
+MAMOJI_MODULE_WORKFORCE_COST_ENABLED=false
 MAMOJI_MODULE_TALENT_SUITE_ENABLED=false
 MAMOJI_MODULE_TAX_WORKSPACE_ENABLED=false
 MAMOJI_MODULE_POLICY_CENTER_ENABLED=false
@@ -80,7 +80,7 @@ MAMOJI_MODULE_BACKUP_UI_ENABLED=false
 
 ## 系统截图
 
-以下截图来自启用了可选演示能力的本地环境；默认内部模块模式只展示已启用入口。
+以下截图来自启用了可选演示能力的本地环境；默认内部模块模式只展示核心入口。
 
 | 经营工作台 | 薪酬月结 |
 | --- | --- |
@@ -99,7 +99,7 @@ flowchart LR
     frontend --> api[Spring Boot API]
     api --> access[Identity + Company Access Context]
     api --> workspace[Workspace Read Model]
-    api --> workforce[Workforce Cost Read Model]
+    api -. optional .-> workforce[Workforce Cost Read Model]
     api --> postgres[(PostgreSQL)]
     api --> minio[(MinIO private bucket)]
     api --> outbox[(outbox_events)]
@@ -173,10 +173,10 @@ docker compose up -d --build
 
 | 角色 | 邮箱 | 密码 | 说明 |
 | --- | --- | --- | --- |
-| 公司管理员 | `test@mamoji.com` | `123456` | 完整经营、财务、HR、税务和系统管理能力 |
+| 公司管理员 | `test@mamoji.com` | `123456` | 默认开放经营、财务和系统管理；扩展模块受配置控制 |
 | 团队成员 | `family@mamoji.com` | `123456` | 普通成员视角和权限边界 |
 
-演示数据覆盖公司主体、部门、员工档案、税费事项、票据凭证、资金账户、经营分类、预算、流水和周期事项。
+演示数据覆盖公司主体、票据凭证、资金账户、经营分类、预算、流水和周期事项；扩展模式还包含部门、员工、薪酬和税费事项。
 
 ## 本地开发
 
@@ -404,6 +404,8 @@ Mamoji/
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/ENTERPRISE_DELIVERY_ROADMAP.md](docs/ENTERPRISE_DELIVERY_ROADMAP.md) | 企业交付阶段、上线门槛与运行指标 |
+| [docs/ENGINEERING_REFACTOR_PLAN.md](docs/ENGINEERING_REFACTOR_PLAN.md) | 后端重构优先级和目标边界 |
 | [docs/ENTERPRISE_PRODUCT_POSITIONING.md](docs/ENTERPRISE_PRODUCT_POSITIONING.md) | 产品定位 |
 | [docs/ENTERPRISE_MODULE_ARCHITECTURE.md](docs/ENTERPRISE_MODULE_ARCHITECTURE.md) | 企业模块架构 |
 | [docs/ENTERPRISE_PERMISSION_MATRIX.md](docs/ENTERPRISE_PERMISSION_MATRIX.md) | 权限矩阵 |
@@ -412,7 +414,7 @@ Mamoji/
 | [docs/OUTBOX_EVENTS.md](docs/OUTBOX_EVENTS.md) | Outbox 事件机制 |
 | [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) | 生产运行手册 |
 | [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md) | 投产检查清单 |
-| [docs/learning/README.md](docs/learning/README.md) | 使用教学 |
+| [docs/USER_ACCEPTANCE_GUIDE.md](docs/USER_ACCEPTANCE_GUIDE.md) | 使用、实施与业务验收指南 |
 
 ## 常见问题
 

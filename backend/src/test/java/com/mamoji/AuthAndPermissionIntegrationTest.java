@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Duration;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -256,6 +257,58 @@ class AuthAndPermissionIntegrationTest {
             memberToken
         ).body());
         assertEquals(0, beforeBalance.compareTo(decimal(afterAccount.get("balance"))));
+    }
+
+    @Test
+    void transactionCreateValidationReturnsProblemDetailBeforeWriting() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+
+        ApiResponse response = request("POST", "/api/v1/transactions", Map.of(
+            "type", 3,
+            "amount", -1,
+            "categoryId", 0
+        ), token);
+
+        assertEquals(400, response.status(), response.body());
+        Map<String, Object> problem = parseMap(response.body());
+        assertEquals("validation_failed", problem.get("code"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fields = (Map<String, Object>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(Set.of("type", "amount", "categoryId", "accountId")));
+    }
+
+    @Test
+    void transactionIdempotencyHeaderReplaysWithoutDoubleDeduction() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Idempotent transaction " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Idempotent account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Idempotent expense", "expense");
+        long accountId = ((Number) account.get("id")).longValue();
+        Map<String, Object> command = Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 25,
+            "accountId", accountId,
+            "categoryId", category.get("id"),
+            "date", "2026-07-14",
+            "note", "idempotent transaction"
+        );
+        Map<String, String> headers = Map.of("Idempotency-Key", "tx-create-" + System.nanoTime());
+
+        ApiResponse first = request("POST", "/api/v1/transactions", command, token, headers);
+        ApiResponse second = request("POST", "/api/v1/transactions", command, token, headers);
+
+        assertEquals(200, first.status(), first.body());
+        assertEquals(200, second.status(), second.body());
+        assertEquals(Boolean.TRUE, parseMap(second.body()).get("replayed"));
+        assertEquals(1, transactionCount(token, companyId));
+        Map<String, Object> updatedAccount = parseMap(request(
+            "GET",
+            "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
+            null,
+            token
+        ).body());
+        assertEquals(0, new BigDecimal("975").compareTo(decimal(updatedAccount.get("balance"))));
     }
 
     @Test
@@ -788,6 +841,7 @@ class AuthAndPermissionIntegrationTest {
 
     @Test
     void workspaceAppliesDepartmentScopeInsideAggregateQueries() throws Exception {
+        YearMonth currentPeriod = YearMonth.now();
         String adminToken = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(adminToken, "Workspace Scope " + System.nanoTime());
         long departmentA = createDepartment(adminToken, companyId, "Workspace A");
@@ -810,11 +864,11 @@ class AuthAndPermissionIntegrationTest {
 
         Map<String, Object> peerAccount = createAccount(peerToken, companyId, "Department A account", "1000");
         Map<String, Object> peerCategory = createCategory(peerToken, companyId, "Department A expense", "expense");
-        createTransaction(peerToken, companyId, peerAccount, peerCategory, "40");
+        createTransaction(peerToken, companyId, peerAccount, peerCategory, "40", currentPeriod.atDay(14).toString());
 
         Map<String, Object> outsiderAccount = createAccount(outsiderToken, companyId, "Department B account", "1000");
         Map<String, Object> outsiderCategory = createCategory(outsiderToken, companyId, "Department B expense", "expense");
-        createTransaction(outsiderToken, companyId, outsiderAccount, outsiderCategory, "90");
+        createTransaction(outsiderToken, companyId, outsiderAccount, outsiderCategory, "90", currentPeriod.atDay(14).toString());
 
         ApiResponse contextResponse = request(
             "GET", "/api/v1/platform/access-context?companyId=" + companyId, null, managerToken
@@ -834,7 +888,7 @@ class AuthAndPermissionIntegrationTest {
         assertEquals(0, new BigDecimal("40").compareTo(decimal(recentTransactions.getFirst().get("amount"))));
 
         ApiResponse workforceResponse = request(
-            "GET", "/api/v1/workforce-cost?companyId=" + companyId + "&period=2026-07", null, managerToken
+            "GET", "/api/v1/workforce-cost?companyId=" + companyId + "&period=" + currentPeriod, null, managerToken
         );
         assertEquals(200, workforceResponse.status(), workforceResponse.body());
         Map<String, Object> workforce = parseMap(workforceResponse.body());
@@ -1047,13 +1101,24 @@ class AuthAndPermissionIntegrationTest {
         Map<String, Object> category,
         String amount
     ) throws Exception {
+        return createTransaction(token, companyId, account, category, amount, "2026-07-14");
+    }
+
+    private Map<String, Object> createTransaction(
+        String token,
+        long companyId,
+        Map<String, Object> account,
+        Map<String, Object> category,
+        String amount,
+        String date
+    ) throws Exception {
         ApiResponse response = request("POST", "/api/v1/transactions", Map.of(
             "companyId", companyId,
             "type", 2,
             "amount", amount,
             "accountId", account.get("id"),
             "categoryId", category.get("id"),
-            "date", "2026-07-14",
+            "date", date,
             "note", "company scope test"
         ), token);
         assertEquals(200, response.status(), response.body());
@@ -1129,9 +1194,20 @@ class AuthAndPermissionIntegrationTest {
     }
 
     private ApiResponse request(String method, String path, Object body, String token) throws Exception {
+        return request(method, path, body, token, Map.of());
+    }
+
+    private ApiResponse request(
+        String method,
+        String path,
+        Object body,
+        String token,
+        Map<String, String> headers
+    ) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
             .uri(URI.create("http://localhost:" + port + path))
             .timeout(Duration.ofSeconds(10));
+        headers.forEach(builder::header);
         if (token != null && !token.isBlank()) {
             builder.header("Authorization", "Bearer " + token);
         }

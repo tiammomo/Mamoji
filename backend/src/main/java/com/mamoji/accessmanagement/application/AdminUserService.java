@@ -1,4 +1,4 @@
-package com.mamoji.service;
+package com.mamoji.accessmanagement.application;
 
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
