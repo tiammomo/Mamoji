@@ -733,6 +733,54 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void transactionRefundValidatesTypedFieldsBeforeChangingAccountingData() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Typed Transaction Refund " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Typed refund account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Typed refund expense", "expense");
+        Map<String, Object> created = createTransaction(token, companyId, account, category, "25");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+        long transactionId = ((Number) transaction.get("id")).longValue();
+
+        ApiResponse invalid = request(
+            "POST",
+            "/api/v1/transactions/" + transactionId + "/refund",
+            Map.of(
+                "companyId", 0,
+                "amount", 0,
+                "note", "x".repeat(2001)
+            ),
+            token
+        );
+
+        assertEquals(400, invalid.status(), invalid.body());
+        Map<String, Object> problem = parseMap(invalid.body());
+        assertEquals("validation_failed", problem.get("code"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fields = (Map<String, Object>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(Set.of("companyId", "amount", "note")));
+
+        ApiResponse invalidDate = request(
+            "POST",
+            "/api/v1/transactions/" + transactionId + "/refund?companyId=" + companyId,
+            Map.of("amount", 10, "date", "2026-07-13"),
+            token
+        );
+        assertEquals(409, invalidDate.status(), invalidDate.body());
+        assertEquals("0", jdbc.queryForObject(
+            "SELECT refunded_amount FROM transactions WHERE id = ?", String.class, transactionId
+        ));
+        assertAccountBalances(
+            token,
+            companyId,
+            ((Number) account.get("id")).longValue(),
+            "975",
+            "975"
+        );
+    }
+
+    @Test
     void recurringItemCannotPostTwiceOnTheSameDay() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Recurring Lock " + System.nanoTime());
@@ -1139,6 +1187,12 @@ class AuthAndPermissionIntegrationTest {
         long originalId = ((Number) original.get("id")).longValue();
         assertAccountBalances(token, companyId, accountId, "920", "920");
         assertEquals(0, new BigDecimal("80").compareTo(budgetSpent(token, companyId)));
+        List<Map<String, Object>> initiallyRefundable = parseList(request(
+            "GET", "/api/v1/transactions/refundable?companyId=" + companyId, null, token
+        ).body());
+        assertEquals(List.of(originalId), initiallyRefundable.stream()
+            .map(transaction -> ((Number) transaction.get("id")).longValue())
+            .toList());
 
         ApiResponse refundResponse = request("POST", "/api/v1/transactions/" + originalId + "/refund", Map.of(
             "companyId", companyId,
@@ -1155,6 +1209,9 @@ class AuthAndPermissionIntegrationTest {
             "GET", "/api/v1/transactions/" + originalId + "?companyId=" + companyId, null, token
         ).body());
         assertEquals(0, new BigDecimal("30").compareTo(decimal(afterRefundOriginal.get("refundedAmount"))));
+        assertEquals(1, parseList(request(
+            "GET", "/api/v1/transactions/refundable?companyId=" + companyId, null, token
+        ).body()).size());
 
         ApiResponse deleted = request("DELETE", "/api/v1/transactions/" + refundId + "?companyId=" + companyId, null, token);
         assertEquals(200, deleted.status(), deleted.body());
@@ -1165,6 +1222,15 @@ class AuthAndPermissionIntegrationTest {
         ).body());
         assertEquals(0, BigDecimal.ZERO.compareTo(decimal(afterDeleteOriginal.get("refundedAmount"))));
         assertTrue(Boolean.TRUE.equals(afterDeleteOriginal.get("isRefundable")));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE entity_type = 'transaction' AND entity_id = ? AND action IN ('refund', 'delete')
+            """, Integer.class, refundId));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE aggregate_type = 'transaction' AND aggregate_id = ?
+              AND event_type IN ('accounting.transaction.refund', 'accounting.transaction.delete')
+            """, Integer.class, refundId));
     }
 
     @Test
