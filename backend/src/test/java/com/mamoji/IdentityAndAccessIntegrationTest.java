@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.platform.audit.application.AuditLogRepository;
+import com.mamoji.platform.audit.domain.AuditEvent;
+import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.time.YearMonth;
 import java.util.List;
@@ -13,6 +16,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -23,6 +27,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
+
+    @Autowired
+    AuditLogRepository auditLogRepository;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -143,6 +150,71 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         assertEquals(403, request("GET", "/api/v1/backup/status", null, token).status());
         assertEquals(403, request("GET", "/api/v1/auth/invitations", null, token).status());
         assertEquals(403, request("GET", "/api/v1/audit-logs?size=1", null, token).status());
+    }
+
+    @Test
+    void auditSearchUsesValidatedDatabasePagingAndExactFilters() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Audit query " + System.nanoTime());
+        long actorUserId = jdbc.queryForObject(
+            "SELECT id FROM users WHERE email = 'test@mamoji.com'",
+            Long.class
+        );
+        String marker = "auditmarker" + System.nanoTime();
+        for (long entityId = 901; entityId <= 903; entityId++) {
+            auditLogRepository.append(new AuditEvent(
+                companyId,
+                "integration_audit",
+                entityId,
+                "verify",
+                marker + " entry " + entityId,
+                actorUserId,
+                "Integration administrator",
+                InMemoryStore.now()
+            ));
+        }
+        auditLogRepository.append(new AuditEvent(
+            companyId + 1,
+            "integration_audit",
+            904,
+            "verify",
+            marker + " different company",
+            actorUserId,
+            "Integration administrator",
+            InMemoryStore.now()
+        ));
+
+        ApiResponse pageResponse = request(
+            "GET",
+            "/api/v1/audit-logs?companyId=" + companyId
+                + "&entityType=integration_audit&action=verify&actorUserId=" + actorUserId
+                + "&keyword=" + marker.toUpperCase() + "&page=1&size=2",
+            null,
+            token
+        );
+        assertEquals(200, pageResponse.status(), pageResponse.body());
+        Map<String, Object> page = parseMap(pageResponse.body());
+        assertEquals(3, ((Number) page.get("totalElements")).intValue());
+        assertEquals(2, ((Number) page.get("totalPages")).intValue());
+        assertEquals(1, ((Number) page.get("number")).intValue());
+        assertEquals(1, ((List<?>) page.get("content")).size());
+
+        ApiResponse exactEntity = request(
+            "GET",
+            "/api/v1/audit-logs?companyId=" + companyId + "&entityType=integration_audit&entityId=902",
+            null,
+            token
+        );
+        assertEquals(200, exactEntity.status(), exactEntity.body());
+        assertEquals(1, ((Number) parseMap(exactEntity.body()).get("totalElements")).intValue());
+
+        ApiResponse invalid = request(
+            "GET",
+            "/api/v1/audit-logs?companyId=-1&entityId=-1&actorUserId=-1&page=-1&size=201",
+            null,
+            token
+        );
+        assertValidationFields(invalid, Set.of("companyId", "entityId", "actorUserId", "page", "size"));
     }
 
     @Test

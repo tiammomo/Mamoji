@@ -1,6 +1,5 @@
 package com.mamoji.repository;
 
-import com.mamoji.domain.Models.AuditLog;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
@@ -10,6 +9,9 @@ import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.SocialInsuranceItem;
 import com.mamoji.domain.Models.TaxItem;
+import com.mamoji.platform.audit.application.AuditLogRepository;
+import com.mamoji.platform.audit.domain.AuditEvent;
+import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.identity.User;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
@@ -42,8 +44,6 @@ public class EnterpriseStore {
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
     public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
-    public final Map<Long, AuditLog> auditLogs = new ConcurrentHashMap<>();
-
     private static final String DEFAULT_SOCIAL_INSURANCE_REGION = "深圳";
     private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
     private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
@@ -93,6 +93,7 @@ public class EnterpriseStore {
 
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
+    private final AuditLogRepository auditLogRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
     private final String bootstrapCompanyCreditCode;
@@ -103,6 +104,7 @@ public class EnterpriseStore {
     public EnterpriseStore(
         JdbcTemplate jdbc,
         InMemoryStore coreStore,
+        AuditLogRepository auditLogRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
@@ -112,6 +114,7 @@ public class EnterpriseStore {
     ) {
         this.jdbc = jdbc;
         this.coreStore = coreStore;
+        this.auditLogRepository = auditLogRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
         this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
@@ -144,7 +147,6 @@ public class EnterpriseStore {
         entityTransfers.clear();
         employmentEvents.clear();
         taxItems.clear();
-        auditLogs.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM departments", rs -> departments.put(rs.getLong("id"), mapDepartment(rs)));
@@ -152,7 +154,6 @@ public class EnterpriseStore {
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
         forEachRow("SELECT * FROM tax_items", rs -> taxItems.put(rs.getLong("id"), mapTaxItem(rs)));
-        forEachRow("SELECT * FROM audit_logs", rs -> auditLogs.put(rs.getLong("id"), mapAuditLog(rs)));
     }
 
     /** Reload the process-local compatibility view after a controlled restore. */
@@ -797,15 +798,11 @@ public class EnterpriseStore {
     }
 
     public List<AuditLog> sortedAuditLogs(long companyId, String entityType, long entityId) {
-        return jdbc.query("""
-            SELECT * FROM audit_logs
-            WHERE company_id = ? AND entity_type = ? AND entity_id = ?
-            ORDER BY created_at DESC, id DESC
-            """, (rs, rowNum) -> mapAuditLog(rs), companyId, entityType, entityId);
+        return auditLogRepository.findByEntity(companyId, entityType, entityId);
     }
 
-    public List<AuditLog> sortedAuditLogs() {
-        return jdbc.query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC", (rs, rowNum) -> mapAuditLog(rs));
+    public boolean hasAuditLogEntityType(String entityType) {
+        return auditLogRepository.existsByEntityType(entityType);
     }
 
     public Optional<Company> findCompany(long id) {
@@ -1074,12 +1071,10 @@ public class EnterpriseStore {
         jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employment_events WHERE employee_id = ?", id);
-        jdbc.update("DELETE FROM audit_logs WHERE entity_type = 'employee' AND entity_id = ?", id);
         jdbc.update("DELETE FROM payroll_run_items WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employees WHERE id = ?", id);
         employees.remove(id);
         employmentEvents.entrySet().removeIf(entry -> entry.getValue().employeeId == id);
-        auditLogs.entrySet().removeIf(entry -> "employee".equals(entry.getValue().entityType) && entry.getValue().entityId == id);
     }
 
     public void replaceEmployeeCertificates(long employeeId, List<EmployeeCertificate> certificates) {
@@ -1266,30 +1261,16 @@ public class EnterpriseStore {
         long actorUserId,
         String actorName
     ) {
-        AuditLog log = new AuditLog();
-        log.companyId = companyId;
-        log.entityType = entityType == null || entityType.isBlank() ? "unknown" : entityType;
-        log.entityId = entityId;
-        log.action = action == null || action.isBlank() ? "update" : action;
-        log.summary = summary == null || summary.isBlank() ? "记录更新" : summary;
-        log.actorUserId = actorUserId;
-        log.actorName = actorName == null || actorName.isBlank() ? "系统用户" : actorName;
-        log.createdAt = InMemoryStore.now();
-        log.id = insert("""
-            INSERT INTO audit_logs (company_id, entity_type, entity_id, action, summary, actor_user_id, actor_name, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> {
-            ps.setLong(1, log.companyId);
-            ps.setString(2, log.entityType);
-            ps.setLong(3, log.entityId);
-            ps.setString(4, log.action);
-            ps.setString(5, log.summary);
-            ps.setLong(6, log.actorUserId);
-            ps.setString(7, log.actorName);
-            ps.setString(8, log.createdAt);
-        });
-        auditLogs.put(log.id, log);
-        return log;
+        return auditLogRepository.append(new AuditEvent(
+            companyId,
+            entityType,
+            entityId,
+            action,
+            summary,
+            actorUserId,
+            actorName,
+            InMemoryStore.now()
+        ));
     }
 
     private void attachDepartmentNames() {
@@ -1653,20 +1634,6 @@ public class EnterpriseStore {
         transfer.updatedAt = rs.getString("updated_at");
         attachEntityTransferNames(transfer);
         return transfer;
-    }
-
-    private AuditLog mapAuditLog(ResultSet rs) throws SQLException {
-        AuditLog log = new AuditLog();
-        log.id = rs.getLong("id");
-        log.companyId = rs.getLong("company_id");
-        log.entityType = rs.getString("entity_type");
-        log.entityId = rs.getLong("entity_id");
-        log.action = rs.getString("action");
-        log.summary = rs.getString("summary");
-        log.actorUserId = rs.getLong("actor_user_id");
-        log.actorName = rs.getString("actor_name");
-        log.createdAt = rs.getString("created_at");
-        return log;
     }
 
     private void bindDepartment(PreparedStatement ps, Department department) throws SQLException {
