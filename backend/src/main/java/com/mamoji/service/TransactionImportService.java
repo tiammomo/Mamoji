@@ -6,6 +6,7 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
@@ -42,6 +43,7 @@ public class TransactionImportService {
     private final AccessControlService accessControl;
     private final InMemoryStore store;
     private final FinanceRepository financeRepository;
+    private final CategoryRepository categoryRepository;
     private final TransactionApplicationService transactionApplicationService;
     private final TransactionTemplate writeTransaction;
 
@@ -49,12 +51,14 @@ public class TransactionImportService {
         AccessControlService accessControl,
         InMemoryStore store,
         FinanceRepository financeRepository,
+        CategoryRepository categoryRepository,
         TransactionApplicationService transactionApplicationService,
         PlatformTransactionManager transactionManager
     ) {
         this.accessControl = accessControl;
         this.store = store;
         this.financeRepository = financeRepository;
+        this.categoryRepository = categoryRepository;
         this.transactionApplicationService = transactionApplicationService;
         this.writeTransaction = new TransactionTemplate(transactionManager);
     }
@@ -132,7 +136,7 @@ public class TransactionImportService {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
         List<Account> accounts = financeRepository.findAccounts(user.id, company.id);
-        List<Category> categories = store.queryCategories(user.id, company.id, null);
+        List<Category> categories = categoryRepository.findAll(user.id, company.id, null);
         if (accounts.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before importing transactions");
         }

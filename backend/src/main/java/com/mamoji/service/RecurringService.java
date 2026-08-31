@@ -5,6 +5,7 @@ import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.User;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
@@ -33,17 +34,20 @@ import static com.mamoji.common.PayloadReader.text;
 public class RecurringService {
     private final InMemoryStore store;
     private final FinanceRepository financeRepository;
+    private final CategoryRepository categoryRepository;
     private final AccessControlService accessControl;
     private final TransactionApplicationService transactionApplicationService;
 
     public RecurringService(
         InMemoryStore store,
         FinanceRepository financeRepository,
+        CategoryRepository categoryRepository,
         AccessControlService accessControl,
         TransactionApplicationService transactionApplicationService
     ) {
         this.store = store;
         this.financeRepository = financeRepository;
+        this.categoryRepository = categoryRepository;
         this.accessControl = accessControl;
         this.transactionApplicationService = transactionApplicationService;
     }
@@ -251,7 +255,7 @@ public class RecurringService {
 
     private Optional<Long> defaultCategoryId(long userId, long companyId, int type) {
         String typeName = type == 1 ? "income" : "expense";
-        return store.queryCategories(userId, companyId, typeName).stream()
+        return categoryRepository.findAll(userId, companyId, typeName).stream()
             .map(category -> category.id)
             .min(Long::compareTo);
     }
