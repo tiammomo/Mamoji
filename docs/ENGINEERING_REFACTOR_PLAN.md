@@ -65,9 +65,9 @@ api -> application -> domain
 - `IdentityAndAccessIntegrationTest`：登录、邀请注册、管理员保护、公司角色和部门数据范围；
 - `AccountingOperationsIntegrationTest`：账户、分类、流水、退款、预算、对账和并发删除完整性；
 - `EnterpriseWorkflowIntegrationTest`：票据报销、审批、周期入账、全局搜索和人力成本；
-- `ConcurrentReadWriteIntegrationTest`：仍需跨请求精确编排的数据库锁与并发回归。
+- `ConcurrentReadWriteIntegrationTest`：仍需跨请求精确编排的数据库锁与并发回归，复用统一 HTTP、数据库和异步夹具。
 
-前三个业务套件复用 `AbstractPostgresIntegrationTest` 中的 HTTP 和数据构造夹具，但各自启动独立 PostgreSQL 容器。这样既可以按模块单独执行，又不会通过测试顺序共享数据库状态。
+四个套件均复用 `AbstractPostgresIntegrationTest` 中的 HTTP 和数据构造夹具，但各自启动独立 PostgreSQL 容器。这样既可以按模块单独执行，又不会通过测试顺序共享数据库状态。
 
 ## 完成标准
 

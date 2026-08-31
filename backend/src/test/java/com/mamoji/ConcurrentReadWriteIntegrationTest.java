@@ -3,31 +3,17 @@ package com.mamoji;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.operations.domain.TransactionRecord;
-import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
-import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -35,45 +21,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-    "mamoji.runtime.environment=local",
-    "mamoji.bootstrap.mode=demo",
-    "mamoji.product.modules.people-core-enabled=true",
-    "mamoji.product.modules.workforce-cost-enabled=true",
-    "mamoji.product.modules.talent-suite-enabled=true",
-    "mamoji.product.modules.tax-workspace-enabled=true",
-    "mamoji.product.modules.backup-ui-enabled=true",
-    "mamoji.registration.mode=invite",
-    "mamoji.object-storage.enabled=false",
-    "mamoji.outbox.consumer.enabled=false",
-    "mamoji.notifications.reminder.enabled=false",
-    "mamoji.notifications.delivery.enabled=false",
-    "debug=false",
-    "spring.main.log-startup-info=false",
-    "logging.level.root=WARN"
-})
-class ConcurrentReadWriteIntegrationTest {
+class ConcurrentReadWriteIntegrationTest extends AbstractPostgresIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
-
-    @LocalServerPort
-    int port;
-
-    @Autowired
-    JdbcTemplate jdbc;
-
-    @Autowired
-    DataSource dataSource;
-
-    @Autowired
-    InMemoryStore coreStore;
-
-    private final HttpClient client = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        .build();
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -468,23 +418,6 @@ class ConcurrentReadWriteIntegrationTest {
         }
     }
 
-    private Connection lockRow(String sql, Object id) throws Exception {
-        Connection connection = dataSource.getConnection();
-        try {
-            connection.setAutoCommit(false);
-            try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setObject(1, id);
-                try (var rows = statement.executeQuery()) {
-                    assertTrue(rows.next(), "Expected a row to lock");
-                }
-            }
-            return connection;
-        } catch (Exception ex) {
-            connection.close();
-            throw ex;
-        }
-    }
-
     private void awaitBlockedQueries(String queryFragment, int expected) throws Exception {
         for (int attempt = 0; attempt < 250; attempt++) {
             Integer blocked = jdbc.queryForObject("""
@@ -499,16 +432,6 @@ class ConcurrentReadWriteIntegrationTest {
         throw new AssertionError("Timed out waiting for " + expected + " blocked queries containing " + queryFragment);
     }
 
-    private CompletableFuture<ApiResponse> requestAsync(String method, String path, Object body, String token) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return request(method, path, body, token);
-            } catch (Exception ex) {
-                throw new CompletionException(ex);
-            }
-        });
-    }
-
     private String adminToken() throws Exception {
         ApiResponse response = request("POST", "/api/v1/auth/login", Map.of(
             "email", "test@mamoji.com",
@@ -516,41 +439,6 @@ class ConcurrentReadWriteIntegrationTest {
         ), null);
         assertEquals(200, response.status(), response.body());
         return String.valueOf(map(response.body()).get("token"));
-    }
-
-    private long createCompany(String token, String prefix) throws Exception {
-        ApiResponse response = request("POST", "/api/v1/enterprise/companies", Map.of(
-            "name", prefix + " " + System.nanoTime(),
-            "entityType", "company",
-            "currency", "CNY",
-            "industry", "integration-test",
-            "taxpayerType", "test"
-        ), token);
-        assertEquals(200, response.status(), response.body());
-        return id(map(response.body()));
-    }
-
-    private Map<String, Object> createAccount(String token, long companyId, String name, String balance) throws Exception {
-        ApiResponse response = request("POST", "/api/v1/accounts", Map.of(
-            "companyId", companyId,
-            "name", name,
-            "type", "bank",
-            "balance", balance
-        ), token);
-        assertEquals(200, response.status(), response.body());
-        return map(response.body());
-    }
-
-    private Map<String, Object> createCategory(String token, long companyId, String name, String type) throws Exception {
-        ApiResponse response = request("POST", "/api/v1/categories", Map.of(
-            "companyId", companyId,
-            "name", name,
-            "type", type,
-            "icon", "T",
-            "color", "#000000"
-        ), token);
-        assertEquals(200, response.status(), response.body());
-        return map(response.body());
     }
 
     private void createEmployee(String token, long companyId) throws Exception {
@@ -569,34 +457,12 @@ class ConcurrentReadWriteIntegrationTest {
         assertEquals(200, response.status(), response.body());
     }
 
-    private ApiResponse request(String method, String path, Object body, String token) throws Exception {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-            .uri(URI.create("http://localhost:" + port + path))
-            .timeout(Duration.ofSeconds(10));
-        if (token != null) {
-            builder.header("Authorization", "Bearer " + token);
-        }
-        if (body == null) {
-            builder.method(method, HttpRequest.BodyPublishers.noBody());
-        } else {
-            builder.header("Content-Type", "application/json");
-            builder.method(method, HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(body)));
-        }
-        HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        return new ApiResponse(response.statusCode(), response.body());
-    }
-
     private Map<String, Object> map(String json) throws Exception {
-        return MAPPER.readValue(json, MAP_TYPE);
+        return parseMap(json);
     }
 
     private long id(Map<String, Object> value) {
         return ((Number) value.get("id")).longValue();
     }
 
-    private BigDecimal decimal(Object value) {
-        return new BigDecimal(String.valueOf(value));
-    }
-
-    private record ApiResponse(int status, String body) { }
 }
