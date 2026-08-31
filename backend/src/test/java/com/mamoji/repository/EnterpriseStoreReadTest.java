@@ -22,7 +22,6 @@ class EnterpriseStoreReadTest {
         EnterpriseStore store = new EnterpriseStore(
             jdbc,
             mock(InMemoryStore.class),
-            false,
             "demo",
             "Test",
             "",

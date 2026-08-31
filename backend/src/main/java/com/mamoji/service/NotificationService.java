@@ -18,7 +18,6 @@ import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.WebhookUrlValidator;
-import jakarta.annotation.PostConstruct;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -86,49 +85,6 @@ public class NotificationService {
         this.taxLookaheadDays = Math.max(1, taxLookaheadDays);
         this.peopleLookaheadDays = Math.max(1, peopleLookaheadDays);
         this.receiptLookaheadDays = Math.max(1, receiptLookaheadDays);
-    }
-
-    @PostConstruct
-    void ensureSchema() {
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS notifications (
-                id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                company_id BIGINT NOT NULL DEFAULT 0,
-                type TEXT NOT NULL,
-                severity TEXT NOT NULL DEFAULT 'info',
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                target_url TEXT,
-                source_type TEXT,
-                source_id BIGINT,
-                dedupe_key TEXT,
-                read_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC, id DESC)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at, created_at DESC)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_notifications_company_created ON notifications(company_id, created_at DESC, id DESC)");
-        jdbc.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_dedupe
-            ON notifications(user_id, dedupe_key)
-            WHERE dedupe_key IS NOT NULL AND dedupe_key <> ''
-            """);
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS notification_preferences (
-                user_id BIGINT PRIMARY KEY,
-                enabled BOOLEAN NOT NULL DEFAULT true,
-                webhook_enabled BOOLEAN NOT NULL DEFAULT false,
-                webhook_provider TEXT NOT NULL DEFAULT 'generic',
-                webhook_url TEXT,
-                min_severity TEXT NOT NULL DEFAULT 'info',
-                muted_types TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
