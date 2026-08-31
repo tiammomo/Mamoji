@@ -1,10 +1,10 @@
-# Mamoji 企业内部模块产品定位
+# Mamoji 企业经营协同产品定位
 
-> 状态：已采用。Mamoji 默认以 `internal-module` 模式运行，不再把自己定义成一套独立、全栈、覆盖所有职能的 ERP。
+> 状态：已采用。Mamoji 默认以 `internal-module` 模式运行，聚焦费用、预算、审批、资金和审计闭环；组织人力、税务、政策等能力作为可选扩展。
 
 ## 一句话定位
 
-Mamoji 是嵌入企业门户的经营协同与成本控制模块，把经营流水、预算、账户、票据、审批、组织人员和人力成本连接成一条可追踪的内部控制链路。
+Mamoji 是面向中小企业的费用、预算与审批协同平台，把经营流水、预算、账户、票据、审批和权限连接成一条可追踪的内部控制链路。
 
 ## 目标使用方式
 
@@ -27,16 +27,13 @@ Mamoji 默认由企业已有门户、统一身份平台或内部应用中心承�
 | 周期事项 | 房租、订阅、固定付款等事项是否按期执行 | `/recurring` | `operations.read/write` |
 | 资金账户 | 可用资金、冻结资金和对账状态是否可靠 | `/finance`、`/accounts` | `finance.read/write` |
 | 票据证据 | 流水、票据、附件、审批和入账是否闭环 | `/receipts` | `finance.read/write` |
-| 组织人员 | 部门、岗位、员工状态和部门预算是否清楚 | `/hr/organization` | `people.read/write` |
-| 薪酬月结 | 本月员工薪酬口径是否已生成并锁定 | `/admin/compensation` | `workforce.cost.manage` |
-| 人力成本 | 公司及部门的人力成本、趋势和预算偏差如何 | `/hr/workforce-cost`、`GET /api/v1/workforce-cost` | `workforce.cost.read` |
+| 公司权限 | 公司成员、角色和数据范围是否正确 | `/admin/users`、`GET /api/v1/platform/access-context` | `admin.permissions`、`company.manage` |
 | 平台设置 | 公司切换、个人偏好和能力上下文 | `/settings` | `company.switch` 等 |
 
 默认核心范围刻意保持短链路：
 
 ```text
 经营事项 -> 流水/单据 -> 预算与审批 -> 资金与票据 -> 工作台与报表
-组织人员 -> 薪酬月结 -> 人力成本 -> 部门预算与经营决策
 ```
 
 ## 产品能力包
@@ -45,8 +42,9 @@ Mamoji 默认由企业已有门户、统一身份平台或内部应用中心承�
 
 | 能力包 | 模块键 | 默认 | 开关 |
 | --- | --- | --- | --- |
-| 组织人员核心 | `people-core` | 开启 | `MAMOJI_MODULE_PEOPLE_CORE_ENABLED` |
-| 人力成本与薪酬月结 | `workforce-cost` | 开启 | `MAMOJI_MODULE_WORKFORCE_COST_ENABLED` |
+| 公司成员与权限 | `access-management` | 开启且不可关闭 | 无 |
+| 组织人员核心 | `people-core` | 关闭 | `MAMOJI_MODULE_PEOPLE_CORE_ENABLED` |
+| 人力成本与薪酬月结 | `workforce-cost` | 关闭 | `MAMOJI_MODULE_WORKFORCE_COST_ENABLED` |
 | 人才扩展（福利、绩效） | `talent-suite` | 关闭 | `MAMOJI_MODULE_TALENT_SUITE_ENABLED` |
 | 家庭主体 | `household` | 关闭 | `MAMOJI_MODULE_HOUSEHOLD_ENABLED` |
 | 税务工作台 | `tax` | 关闭 | `MAMOJI_MODULE_TAX_WORKSPACE_ENABLED` |

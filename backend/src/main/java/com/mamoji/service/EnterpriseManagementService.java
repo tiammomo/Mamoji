@@ -118,7 +118,7 @@ public class EnterpriseManagementService {
         User user = accessControl.requireUser(authorization);
         String entityType = textOr(body.get("entityType"), "company");
         if ("household".equals(entityType) && !productModules.householdEnabled()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Household subjects are disabled in internal-module mode");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Household subjects are disabled by product configuration");
         }
         Company company = enterpriseStore.company(
             user.id,

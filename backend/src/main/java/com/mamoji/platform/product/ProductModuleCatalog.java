@@ -7,9 +7,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Defines the capabilities exposed when Mamoji is mounted as an internal
- * enterprise module. Organization and workforce cost are first-class company
- * capabilities; broader talent capabilities remain independently gated.
+ * Defines the capabilities exposed by Mamoji. The focused internal module keeps
+ * expense control and company access management in the core;
+ * people, workforce, tax, policy, household, and backup capabilities remain
+ * independently gated.
  */
 @Component
 public class ProductModuleCatalog {
@@ -24,6 +25,7 @@ public class ProductModuleCatalog {
         "finance",
         "accounts",
         "evidence",
+        "access-management",
         "settings"
     );
 
@@ -39,8 +41,8 @@ public class ProductModuleCatalog {
     public ProductModuleCatalog(
         @Value("${mamoji.product.mode:internal-module}") String mode,
         @Value("${mamoji.product.modules.household-enabled:false}") boolean householdEnabled,
-        @Value("${mamoji.product.modules.people-core-enabled:true}") boolean peopleCoreEnabled,
-        @Value("${mamoji.product.modules.workforce-cost-enabled:true}") boolean workforceCostEnabled,
+        @Value("${mamoji.product.modules.people-core-enabled:false}") boolean peopleCoreEnabled,
+        @Value("${mamoji.product.modules.workforce-cost-enabled:false}") boolean workforceCostEnabled,
         @Value("${mamoji.product.modules.talent-suite-enabled:false}") boolean talentSuiteEnabled,
         @Value("${mamoji.product.modules.tax-workspace-enabled:false}") boolean taxWorkspaceEnabled,
         @Value("${mamoji.product.modules.policy-center-enabled:false}") boolean policyCenterEnabled,
