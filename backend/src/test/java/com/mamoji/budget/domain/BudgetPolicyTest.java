@@ -43,6 +43,21 @@ class BudgetPolicyTest {
         assertFalse(budget.warningReached);
         assertEquals(0.4d, budget.usageRate);
         assertEquals(0, budget.remainingAmount.compareTo(new BigDecimal("600")));
+        assertEquals(0, budget.availableAmount.compareTo(new BigDecimal("600")));
+    }
+
+    @Test
+    void reservedCapacityContributesToWarningsWithoutBecomingSpent() {
+        Budget budget = budget("1000", "400", 85, 1);
+        budget.reservedAmount = new BigDecimal("500");
+
+        policy.apply(budget);
+
+        assertEquals(0.9d, budget.usageRate);
+        assertEquals("high", budget.riskLevel);
+        assertTrue(budget.warningReached);
+        assertEquals(0, budget.remainingAmount.compareTo(new BigDecimal("600")));
+        assertEquals(0, budget.availableAmount.compareTo(new BigDecimal("100")));
     }
 
     private Budget budget(String amount, String spent, int threshold, int status) {

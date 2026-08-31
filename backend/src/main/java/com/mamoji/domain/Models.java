@@ -95,7 +95,9 @@ public final class Models {
         public int warningThreshold;
         public int status;
         public BigDecimal spent;
+        public BigDecimal reservedAmount;
         public BigDecimal remainingAmount;
+        public BigDecimal availableAmount;
         public double usageRate;
         public boolean warningReached;
         public String riskLevel;

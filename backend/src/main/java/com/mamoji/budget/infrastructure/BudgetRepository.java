@@ -26,7 +26,12 @@ public class BudgetRepository {
                        WHEN t.type = 3 THEN -CAST(t.amount AS NUMERIC)
                        ELSE 0
                    END
-               ), 0) AS computed_spent
+               ), 0) AS computed_spent,
+               COALESCE((
+                   SELECT SUM(reservation.amount)
+                   FROM budget_reservations reservation
+                   WHERE reservation.budget_id = b.id AND reservation.status = 'reserved'
+               ), 0) AS computed_reserved
         FROM budgets b
         LEFT JOIN categories c ON c.id = b.category_id
         LEFT JOIN transactions t
@@ -149,6 +154,7 @@ public class BudgetRepository {
     private Budget mapProjected(ResultSet rs, int rowNum) throws SQLException {
         Budget budget = mapBase(rs, rowNum);
         budget.spent = rs.getBigDecimal("computed_spent");
+        budget.reservedAmount = rs.getBigDecimal("computed_reserved");
         budget.categoryName = rs.getString("category_name");
         budget.categoryIcon = rs.getString("category_icon");
         return policy.apply(budget);

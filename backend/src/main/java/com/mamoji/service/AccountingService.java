@@ -4,6 +4,9 @@ import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.PayloadReader;
 import com.mamoji.budget.application.BudgetApplicationService;
+import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
+import com.mamoji.budget.domain.BudgetReservation;
+import com.mamoji.budget.domain.BudgetReservationCommand;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
@@ -419,10 +422,13 @@ public class AccountingService {
         validateRelationOwnership(user, company.id, tx.accountId, tx.categoryId, newAccount, tx.type);
         store.attachTransactionRelations(tx);
         tx.familyId = resolveLedgerId(user, company, newAccount);
-        tx.budgetId = budgetService.matchingBudgetId(tx).orElse(null);
+        budgetService.releaseTransactionReservation(current.id, "transaction updated");
+        Optional<BudgetReservation> reservation = reserveUpdatedExpense(company.id, user.id, tx);
+        tx.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
         tx.isRefundable = tx.type == 2 && tx.refundedAmount.compareTo(tx.amount) < 0;
         touch(tx);
         store.saveTransaction(tx);
+        reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), tx.id));
         if (oldAccount.id == newAccount.id) {
             Account adjusted = copyAccount(oldAccount);
             adjustAccount(adjusted, current, -1);
@@ -465,6 +471,7 @@ public class AccountingService {
             touch(updatedOriginal);
             store.saveTransaction(updatedOriginal);
         }
+        budgetService.releaseTransactionReservation(tx.id, "transaction deleted");
         store.deleteTransaction(id);
         budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", tx.id, "delete", "删除交易: " + tx.note, user);
@@ -524,6 +531,29 @@ public class AccountingService {
         budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", refund.id, "refund", "退款交易 #" + original.id, user);
         return Map.of("transaction", refund, "risk", riskFor(refund));
+    }
+
+    private Optional<BudgetReservation> reserveUpdatedExpense(long companyId, long userId, TransactionRecord transaction) {
+        if (transaction.type != 2) {
+            return Optional.empty();
+        }
+        try {
+            return budgetService.reserveExpense(new BudgetReservationCommand(
+                companyId,
+                userId,
+                transaction.familyId,
+                transaction.categoryId,
+                LocalDate.parse(transaction.date),
+                transaction.amount,
+                "transaction-update:" + transaction.id + ":" + (transaction.version + 1),
+                transaction.id
+            ));
+        } catch (BudgetCapacityExceededException ex) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Budget capacity exceeded; available amount is " + ex.available().stripTrailingZeros().toPlainString()
+            );
+        }
     }
 
     private void applyAccountFields(Account account, Map<String, Object> body) {
