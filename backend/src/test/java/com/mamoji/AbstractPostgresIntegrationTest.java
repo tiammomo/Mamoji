@@ -28,7 +28,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
     "mamoji.runtime.environment=local",
-    "mamoji.schema.compatibility-enabled=false",
     "mamoji.bootstrap.mode=demo",
     "mamoji.product.modules.people-core-enabled=true",
     "mamoji.product.modules.workforce-cost-enabled=true",

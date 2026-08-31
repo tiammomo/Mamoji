@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.domain.Models.OutboxEvent;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.OutboxEventHandler;
-import jakarta.annotation.PostConstruct;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
@@ -52,33 +51,6 @@ public class OutboxEventService {
         this.batchSize = Math.max(1, batchSize);
         this.maxAttempts = Math.max(1, maxAttempts);
         this.staleLockMinutes = Math.max(1, staleLockMinutes);
-    }
-
-    @PostConstruct
-    void ensureSchema() {
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS outbox_events (
-                id BIGSERIAL PRIMARY KEY,
-                event_id TEXT NOT NULL UNIQUE,
-                event_type TEXT NOT NULL,
-                aggregate_type TEXT NOT NULL,
-                aggregate_id BIGINT NOT NULL,
-                company_id BIGINT NOT NULL DEFAULT 0,
-                actor_user_id BIGINT NOT NULL DEFAULT 0,
-                payload_json TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                next_attempt_at TEXT,
-                locked_at TEXT,
-                processed_at TEXT,
-                last_error TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_outbox_events_status_next ON outbox_events(status, next_attempt_at, id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_outbox_events_aggregate ON outbox_events(aggregate_type, aggregate_id, id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_outbox_events_created ON outbox_events(created_at, id)");
     }
 
     public void publish(
