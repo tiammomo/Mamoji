@@ -1,14 +1,16 @@
 package com.mamoji.service;
 
+import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.RecurringItem;
 import com.mamoji.domain.Models.User;
 import com.mamoji.domain.Models.Company;
+import com.mamoji.operations.application.TransactionApplicationService;
+import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,12 +32,16 @@ import static com.mamoji.common.PayloadReader.text;
 public class RecurringService {
     private final InMemoryStore store;
     private final AccessControlService accessControl;
-    private final AccountingService accountingService;
+    private final TransactionApplicationService transactionApplicationService;
 
-    public RecurringService(InMemoryStore store, AccessControlService accessControl, AccountingService accountingService) {
+    public RecurringService(
+        InMemoryStore store,
+        AccessControlService accessControl,
+        TransactionApplicationService transactionApplicationService
+    ) {
         this.store = store;
         this.accessControl = accessControl;
-        this.accountingService = accountingService;
+        this.transactionApplicationService = transactionApplicationService;
     }
 
     public List<RecurringItem> listRecurring(String authorization) {
@@ -120,21 +126,23 @@ public class RecurringService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Recurring item has already been executed today");
         }
         long userId = user.id;
-        List<com.mamoji.domain.Models.Account> accounts = accountingService.listAccounts(authorization, item.companyId);
+        List<Account> accounts = store.queryAccounts(user.id, item.companyId);
         if (accounts.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an account before executing a recurring item");
         }
         long categoryId = defaultCategoryId(userId, item.companyId, item.type)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Create a matching category before executing a recurring item"));
-        Map<String, Object> body = new HashMap<>();
-        body.put("companyId", item.companyId);
-        body.put("type", item.type);
-        body.put("amount", item.amount);
-        body.put("categoryId", categoryId);
-        body.put("accountId", accounts.get(0).id);
-        body.put("date", LocalDate.now().toString());
-        body.put("note", item.note == null ? item.name : item.note);
-        Map<String, Object> result = accountingService.createTransaction(authorization, body);
+        CreateTransactionCommand command = new CreateTransactionCommand(
+            item.companyId,
+            item.type,
+            item.amount,
+            categoryId,
+            accounts.getFirst().id,
+            LocalDate.now(),
+            item.note == null ? item.name : item.note,
+            null
+        );
+        Map<String, Object> result = transactionApplicationService.create(authorization, command);
         item.lastExecuted = LocalDate.now().toString();
         item.executionCount++;
         item.nextExecution = nextExecution(item);
