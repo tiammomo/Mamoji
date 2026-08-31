@@ -1,6 +1,5 @@
 package com.mamoji.budget.domain;
 
-import com.mamoji.domain.Models.Budget;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import org.springframework.stereotype.Component;

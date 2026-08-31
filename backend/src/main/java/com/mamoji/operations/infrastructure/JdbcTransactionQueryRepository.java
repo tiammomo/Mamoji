@@ -2,8 +2,8 @@ package com.mamoji.operations.infrastructure;
 
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionQueryRepository;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.operations.domain.TransactionSearchCriteria;
 import com.mamoji.operations.domain.TransactionSummary;
 import java.math.BigDecimal;

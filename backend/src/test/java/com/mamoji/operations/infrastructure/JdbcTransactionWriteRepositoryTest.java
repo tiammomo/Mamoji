@@ -9,8 +9,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionQueryRepository;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.repository.InMemoryStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.OptimisticLockingFailureException;

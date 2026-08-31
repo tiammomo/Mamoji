@@ -1,6 +1,6 @@
 package com.mamoji.operations.application;
 
-import com.mamoji.domain.Models.TransactionRecord;
+import com.mamoji.operations.domain.TransactionRecord;
 import java.util.Optional;
 
 /** Persistence port owned by transaction write use cases. */

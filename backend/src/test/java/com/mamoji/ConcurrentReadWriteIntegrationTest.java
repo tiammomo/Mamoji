@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mamoji.domain.Models.TransactionRecord;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.net.URI;
