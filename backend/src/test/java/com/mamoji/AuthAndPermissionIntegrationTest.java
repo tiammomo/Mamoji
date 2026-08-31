@@ -779,6 +779,86 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void approvalTerminalStatesCannotBeReplayedAndWithdrawRestoresReceiptState() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Approval State Machine " + System.nanoTime());
+        ApiResponse submitted = request("POST", "/api/v1/approvals", Map.of(
+            "companyId", companyId,
+            "requestType", "other",
+            "entityType", "other",
+            "title", "Terminal approval transition"
+        ), token);
+        assertEquals(200, submitted.status(), submitted.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> request = (Map<String, Object>) parseMap(submitted.body()).get("request");
+        long approvalId = ((Number) request.get("id")).longValue();
+
+        ApiResponse missingComment = request(
+            "POST",
+            "/api/v1/approvals/" + approvalId + "/reject",
+            Map.of(),
+            token
+        );
+        assertEquals(400, missingComment.status(), missingComment.body());
+        assertEquals("pending", jdbc.queryForObject(
+            "SELECT status FROM approval_requests WHERE id = ?",
+            String.class,
+            approvalId
+        ));
+
+        assertEquals(200, request(
+            "POST",
+            "/api/v1/approvals/" + approvalId + "/reject",
+            Map.of("comment", "Evidence is incomplete"),
+            token
+        ).status());
+        ApiResponse replay = request(
+            "POST",
+            "/api/v1/approvals/" + approvalId + "/approve",
+            Map.of("comment", "Must remain rejected"),
+            token
+        );
+        assertEquals(409, replay.status(), replay.body());
+
+        ApiResponse receipt = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Withdrawn reimbursement",
+            "voucherType", "reimbursement",
+            "direction", "expense",
+            "counterparty", "Employee",
+            "amount", 320
+        ), token);
+        long voucherId = ((Number) parseMap(receipt.body()).get("id")).longValue();
+        ApiResponse receiptApproval = request("POST", "/api/v1/approvals", Map.of(
+            "companyId", companyId,
+            "requestType", "reimbursement",
+            "entityType", "receipt_voucher",
+            "entityId", voucherId,
+            "title", "Withdraw reimbursement"
+        ), token);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> receiptRequest = (Map<String, Object>) parseMap(receiptApproval.body()).get("request");
+        long receiptApprovalId = ((Number) receiptRequest.get("id")).longValue();
+
+        assertEquals(200, request(
+            "POST",
+            "/api/v1/approvals/" + receiptApprovalId + "/withdraw",
+            Map.of("comment", "Submitted by mistake"),
+            token
+        ).status());
+        assertEquals("withdrawn", jdbc.queryForObject(
+            "SELECT status FROM approval_requests WHERE id = ?",
+            String.class,
+            receiptApprovalId
+        ));
+        assertEquals("not_submitted", jdbc.queryForObject(
+            "SELECT approval_status FROM receipt_vouchers WHERE id = ?",
+            String.class,
+            voucherId
+        ));
+    }
+
+    @Test
     void accountReconciliationCreatesImmutableSnapshotAndUpdatesRiskState() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Reconciliation Flow " + System.nanoTime());
