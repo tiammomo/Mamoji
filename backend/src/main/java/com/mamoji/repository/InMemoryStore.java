@@ -607,7 +607,7 @@ public class InMemoryStore {
         return budget;
     }
 
-    public TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
+    private TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
         Long companyId = findAccount(accountId).map(account -> account.companyId).orElse(null);
         if (companyId == null) {
             companyId = findCategory(categoryId).map(category -> category.companyId).orElse(null);
@@ -618,11 +618,11 @@ public class InMemoryStore {
         return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note);
     }
 
-    public TransactionRecord transaction(long userId, Long companyId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
+    private TransactionRecord transaction(long userId, Long companyId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
         return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note, null);
     }
 
-    public TransactionRecord transaction(
+    private TransactionRecord transaction(
         long userId,
         Long companyId,
         Long ledgerId,
@@ -804,6 +804,16 @@ public class InMemoryStore {
         afterCommit(() -> users.remove(id));
     }
 
+    /** Transitional cache hook for legacy readers after a committed transaction write. */
+    public void synchronizeTransactionAfterCommit(TransactionRecord transaction) {
+        afterCommit(() -> transactions.put(transaction.id, transaction));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed transaction deletion. */
+    public void removeTransactionFromCompatibilityViewAfterCommit(long id) {
+        afterCommit(() -> transactions.remove(id));
+    }
+
     public void updatePasswordHashIfCurrent(User current, String passwordHash, String updatedAt) {
         int updated = jdbc.update("""
             UPDATE users SET password_hash = ?, updated_at = ?
@@ -863,22 +873,6 @@ public class InMemoryStore {
         afterCommit(() -> budgets.put(budget.id, budget));
     }
 
-    public void saveTransaction(TransactionRecord tx) {
-        int updated = jdbc.update("""
-            UPDATE transactions SET user_id = ?, family_id = ?, type = ?, amount = ?, category_id = ?, account_id = ?, date = ?,
-                note = ?, original_transaction_id = ?, refunded_amount = ?, is_refundable = ?, budget_id = ?, created_at = ?, updated_at = ?, company_id = ?,
-                idempotency_key = ?, version = version + 1
-            WHERE id = ? AND version = ?
-            """, tx.userId, tx.familyId, tx.type, moneyText(tx.amount), tx.categoryId, tx.accountId, tx.date, tx.note,
-            tx.originalTransactionId, moneyText(tx.refundedAmount), intBool(tx.isRefundable), tx.budgetId, tx.createdAt, tx.updatedAt,
-            tx.companyId, tx.idempotencyKey, tx.id, tx.version);
-        if (updated != 1) {
-            throw new OptimisticLockingFailureException("Transaction was changed by another request: " + tx.id);
-        }
-        tx.version++;
-        afterCommit(() -> transactions.put(tx.id, tx));
-    }
-
     public void saveRecurring(RecurringItem item) {
         jdbc.update("""
             INSERT INTO recurring_items (
@@ -933,11 +927,6 @@ public class InMemoryStore {
     public void deleteBudget(long id) {
         jdbc.update("DELETE FROM budgets WHERE id = ?", id);
         afterCommit(() -> budgets.remove(id));
-    }
-
-    public void deleteTransaction(long id) {
-        jdbc.update("DELETE FROM transactions WHERE id = ?", id);
-        afterCommit(() -> transactions.remove(id));
     }
 
     public void deleteRecurring(String id) {
@@ -1112,24 +1101,6 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public void lockTransactionIdempotency(long companyId, String idempotencyKey) {
-        jdbc.query(
-            "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-            (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
-            "transaction:" + companyId + ":" + idempotencyKey
-        );
-    }
-
-    public Optional<TransactionRecord> findTransactionByIdempotency(long companyId, String idempotencyKey) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) return Optional.empty();
-        return jdbc.query(
-            "SELECT * FROM transactions WHERE company_id = ? AND idempotency_key = ?",
-            (rs, rowNum) -> mapTransaction(rs),
-            companyId,
-            idempotencyKey
-        ).stream().findFirst();
-    }
-
     public Optional<Account> accountForUpdate(long id) {
         List<Account> matches = jdbc.query("SELECT * FROM accounts WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapAccount(rs), id);
         return matches.stream().findFirst();
@@ -1186,25 +1157,6 @@ public class InMemoryStore {
             budgetId
         );
         return count != null && count > 0;
-    }
-
-    public boolean transactionHasRefunds(long transactionId) {
-        Integer count = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM transactions WHERE original_transaction_id = ?",
-            Integer.class,
-            transactionId
-        );
-        return count != null && count > 0;
-    }
-
-    public Optional<TransactionRecord> transactionForUpdate(long id) {
-        List<TransactionRecord> matches = jdbc.query(
-            "SELECT * FROM transactions WHERE id = ? FOR UPDATE",
-            (rs, rowNum) -> mapTransaction(rs),
-            id
-        );
-        matches.forEach(this::attachTransactionRelations);
-        return matches.stream().findFirst();
     }
 
     public Optional<RecurringItem> recurringForUpdate(String id) {

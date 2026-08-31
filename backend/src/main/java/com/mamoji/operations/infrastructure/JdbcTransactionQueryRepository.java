@@ -126,6 +126,19 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
             """, this::mapTransaction, id).stream().findFirst();
     }
 
+    @Override
+    public List<TransactionRecord> findAll(long userId, long companyId) {
+        return jdbc.query("""
+            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
+                   c.color AS resolved_category_color, a.name AS resolved_account_name
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN accounts a ON a.id = t.account_id
+            WHERE t.user_id = ? AND t.company_id = ?
+            ORDER BY t.date DESC, t.id DESC
+            """, this::mapTransaction, userId, companyId);
+    }
+
     private SqlTransactionQuery transactionQuery(
         long userId,
         long companyId,
