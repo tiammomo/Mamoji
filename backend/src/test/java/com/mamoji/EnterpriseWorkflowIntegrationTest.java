@@ -93,6 +93,51 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void recurringCommandsValidateBeforeWriteAndPersistCalendarSchedule() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Recurring Contract " + System.nanoTime());
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM recurring_items WHERE company_id = ?", Integer.class, companyId
+        );
+
+        ApiResponse invalid = request("POST", "/api/v1/recurring", Map.of(
+            "companyId", companyId,
+            "name", "",
+            "type", 3,
+            "amount", 0,
+            "frequency", "quarterly",
+            "interval", 0,
+            "dayOfWeek", 8,
+            "dayOfMonth", 32,
+            "monthOfYear", 13,
+            "startDate", "2026-01-31"
+        ), token);
+        assertValidationFields(invalid, Set.of(
+            "name", "type", "amount", "frequency", "interval", "dayOfWeek", "dayOfMonth", "monthOfYear"
+        ));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM recurring_items WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/recurring", Map.of(
+            "companyId", companyId,
+            "name", "Month-end settlement",
+            "type", 2,
+            "amount", 100,
+            "frequency", "monthly",
+            "interval", 1,
+            "dayOfMonth", 31,
+            "startDate", "2026-01-31"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> item = parseMap(created.body());
+        assertEquals("2026-02-28", item.get("nextExecution"));
+        assertEquals("2026-02-28", jdbc.queryForObject(
+            "SELECT next_execution FROM recurring_items WHERE id = ?", String.class, item.get("id")
+        ));
+    }
+
+    @Test
     void companyMemberCanSubmitReimbursementButCannotManageFinanceVouchers() throws Exception {
         String memberToken = registerInvitedUser(uniqueEmail("reimbursement-member"));
         Map<String, Object> member = parseMap(request("GET", "/api/v1/auth/me", null, memberToken).body());
