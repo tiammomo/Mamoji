@@ -3,21 +3,17 @@ package com.mamoji.service;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.PayloadReader;
-import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
-import com.mamoji.operations.domain.TransactionRiskAssessment;
-import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,27 +29,21 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AccountingService {
-    private static final Comparator<TransactionRecord> TRANSACTION_ORDER =
-        Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
-
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
-    private final BudgetApplicationService budgetService;
 
     public AccountingService(
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
-        OutboxEventService outboxEventService,
-        BudgetApplicationService budgetService
+        OutboxEventService outboxEventService
     ) {
         this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
-        this.budgetService = budgetService;
     }
 
     public List<Account> listAccounts(String authorization) {
@@ -376,62 +366,6 @@ public class AccountingService {
         return tx;
     }
 
-    public List<TransactionRecord> refundableTransactions(String authorization) {
-        return refundableTransactions(authorization, null);
-    }
-
-    public List<TransactionRecord> refundableTransactions(String authorization, Long companyId) {
-        User user = requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, companyId);
-        return store.queryAllTransactions(user.id, company.id).stream()
-            .filter(tx -> tx.type == 2 && tx.isRefundable)
-            .sorted(TRANSACTION_ORDER)
-            .toList();
-    }
-
-    @Transactional
-    public Map<String, Object> refundTransaction(String authorization, long id, Map<String, Object> body) {
-        User user = requireUser(authorization);
-        TransactionRecord original = requireTransactionForUpdate(user, id, optionalLong(body.get("companyId")).orElse(null));
-        Company company = accessControl.resolveCompany(user, original.companyId);
-        if (original.type != 2) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only expense transactions can be refunded");
-        }
-        BigDecimal refundAmount = positiveAmount(body.get("amount"), "amount");
-        BigDecimal remaining = original.amount.subtract(original.refundedAmount);
-        if (refundAmount.compareTo(BigDecimal.ZERO) <= 0 || refundAmount.compareTo(remaining) > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Refund amount exceeds remaining refundable amount");
-        }
-        String refundDate = validDate(textOr(body.get("date"), LocalDate.now().toString()), "date");
-        Account account = store.accountForUpdate(original.accountId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Transaction account no longer exists"));
-        validateRelationOwnership(user, company.id, original.accountId, original.categoryId, account, original.type);
-        TransactionRecord refund = store.transaction(
-            user.id,
-            company.id,
-            original.familyId,
-            3,
-            String.valueOf(refundAmount),
-            original.categoryId,
-            original.accountId,
-            refundDate,
-            textOr(body.get("note"), "Refund for #" + original.id)
-        );
-        refund.originalTransactionId = original.id;
-        refund.isRefundable = false;
-        refund.budgetId = original.budgetId;
-        TransactionRecord updatedOriginal = copyTransaction(original);
-        updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.add(refundAmount);
-        updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
-        touch(updatedOriginal);
-        store.saveTransaction(refund);
-        store.saveTransaction(updatedOriginal);
-        saveAdjustedAccount(account, refund, 1);
-        budgetService.refreshCompany(company.id);
-        audit(company.id, "transaction", refund.id, "refund", "退款交易 #" + original.id, user);
-        return Map.of("transaction", refund, "risk", riskFor(refund));
-    }
-
     private void applyAccountFields(Account account, Map<String, Object> body) {
         if (body.containsKey("accountNo")) {
             account.accountNo = nullableText(body.get("accountNo"));
@@ -636,63 +570,6 @@ public class AccountingService {
         return tx;
     }
 
-    private TransactionRecord requireTransactionForUpdate(User user, long id, Long companyId) {
-        TransactionRecord tx = store.transactionForUpdate(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
-        Company company = accessControl.resolveCompany(user, companyId == null ? tx.companyId : companyId);
-        assertScopedOwner(tx.userId, tx.companyId, user.id, company.id);
-        return tx;
-    }
-
-    private TransactionRelations validateRelationOwnership(
-        User user,
-        long companyId,
-        long accountId,
-        long categoryId,
-        Account account,
-        int transactionType
-    ) {
-        if (account == null || account.id != accountId) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required");
-        }
-        Category category = store.categoryForUpdate(categoryId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
-        assertScopedOwner(account.userId, account.companyId, user.id, companyId);
-        assertScopedOwner(category.userId, category.companyId, user.id, companyId);
-        String expectedCategoryType = transactionType == 1 ? "income" : "expense";
-        if (!expectedCategoryType.equals(category.type)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Category type does not match transaction type");
-        }
-        return new TransactionRelations(account, category);
-    }
-
-    private void saveAdjustedAccount(Account source, TransactionRecord tx, int direction) {
-        Account adjusted = copyAccount(source);
-        adjustAccount(adjusted, tx, direction);
-        store.saveAccount(adjusted);
-    }
-
-    private void adjustAccount(Account account, TransactionRecord tx, int direction) {
-        BigDecimal delta = tx.amount.multiply(BigDecimal.valueOf(direction));
-        if (tx.type == 1 || tx.type == 3) {
-            account.balance = account.balance.add(delta);
-        } else if (tx.type == 2) {
-            account.balance = account.balance.subtract(delta);
-        }
-        account.availableBalance = nullToZero(account.availableBalance);
-        if (tx.type == 1 || tx.type == 3) {
-            account.availableBalance = account.availableBalance.add(delta);
-        } else if (tx.type == 2) {
-            account.availableBalance = account.availableBalance.subtract(delta);
-        }
-        account.riskLevel = accountRisk(account);
-        touch(account);
-    }
-
-    private TransactionRiskAssessment riskFor(TransactionRecord tx) {
-        return TransactionRiskPolicy.assess(tx, store.queryAllTransactions(tx.userId, tx.companyId));
-    }
-
     private String transactionSearchText(TransactionRecord tx) {
         return (text(tx.note) + " " + text(tx.categoryName) + " " + text(tx.accountName)).toLowerCase(Locale.ROOT);
     }
@@ -721,37 +598,12 @@ public class AccountingService {
         }
     }
 
-    private BigDecimal positiveAmount(Object value, String field) {
-        final BigDecimal amount;
-        try {
-            amount = number(value, BigDecimal.ZERO);
-        } catch (NumberFormatException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be a number");
-        }
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be positive");
-        }
-        return amount;
-    }
-
-    private String validDate(String value, String field) {
-        try {
-            return LocalDate.parse(value).toString();
-        } catch (Exception ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must use yyyy-MM-dd format");
-        }
-    }
-
     private Account copyAccount(Account source) {
         return copyModel(source, new Account());
     }
 
     private Category copyCategory(Category source) {
         return copyModel(source, new Category());
-    }
-
-    private TransactionRecord copyTransaction(TransactionRecord source) {
-        return copyModel(source, new TransactionRecord());
     }
 
     private <T> T copyModel(T source, T target) {
@@ -835,9 +687,6 @@ public class AccountingService {
 
     private static BigDecimal decimalParam(Map<String, String> params, String key, BigDecimal fallback) {
         return PayloadReader.decimalParam(params, key, fallback);
-    }
-
-    private record TransactionRelations(Account account, Category category) {
     }
 
     private static BigDecimal nullToZero(BigDecimal value) {
