@@ -1,7 +1,7 @@
 package com.mamoji.operations.infrastructure;
 
-import com.mamoji.domain.Models.Category;
 import com.mamoji.operations.application.CategoryRepository;
+import com.mamoji.operations.domain.Category;
 import com.mamoji.repository.InMemoryStore;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;

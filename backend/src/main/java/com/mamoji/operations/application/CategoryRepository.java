@@ -1,6 +1,6 @@
 package com.mamoji.operations.application;
 
-import com.mamoji.domain.Models.Category;
+import com.mamoji.operations.domain.Category;
 import java.util.List;
 import java.util.Optional;
 

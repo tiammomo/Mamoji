@@ -1,11 +1,11 @@
 package com.mamoji.service;
 
 import com.mamoji.budget.application.BudgetApplicationService;
-import com.mamoji.domain.Models.Account;
+import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
-import com.mamoji.domain.Models.Company;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.finance.domain.Account;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -20,8 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
-import org.springframework.stereotype.Service;
 import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.intParam;
