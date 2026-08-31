@@ -8,7 +8,6 @@ import com.mamoji.domain.Models.EmployeeCertificate;
 import com.mamoji.domain.Models.EmployeeExperience;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
-import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.SocialInsuranceItem;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
@@ -33,7 +32,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -44,7 +42,6 @@ public class EnterpriseStore {
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
     public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
-    public final Map<Long, ReceiptVoucher> receiptVouchers = new ConcurrentHashMap<>();
     public final Map<Long, AuditLog> auditLogs = new ConcurrentHashMap<>();
 
     private static final String DEFAULT_SOCIAL_INSURANCE_REGION = "深圳";
@@ -137,11 +134,6 @@ public class EnterpriseStore {
             ensureHouseholdSubject();
             ensureCompensationBenchmarkEmployees();
             ensureEntityTransferSeed();
-            ensureReceiptVoucherSeed();
-        }
-        ensureReceiptVoucherDefaults();
-        if (!isBootstrapMode()) {
-            ensureReceiptAuditLogSeed();
         }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
@@ -428,67 +420,6 @@ public class EnterpriseStore {
             )
             """);
         jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS receipt_vouchers (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER NOT NULL,
-                transaction_id INTEGER,
-                voucher_no TEXT NOT NULL,
-                title TEXT NOT NULL,
-                voucher_type TEXT NOT NULL,
-                direction TEXT NOT NULL,
-                counterparty TEXT NOT NULL,
-                amount TEXT NOT NULL,
-                tax_amount TEXT NOT NULL,
-                tax_rate TEXT NOT NULL DEFAULT '0',
-                tax_period TEXT,
-                invoice_check_status TEXT NOT NULL DEFAULT 'not_required',
-                deduction_status TEXT NOT NULL DEFAULT 'not_applicable',
-                reimbursement_status TEXT NOT NULL DEFAULT 'not_applicable',
-                approval_status TEXT NOT NULL DEFAULT 'not_required',
-                accounting_status TEXT NOT NULL DEFAULT 'not_started',
-                accounting_voucher_no TEXT,
-                accounting_entry TEXT,
-                approved_by_user_id INTEGER,
-                approved_at TEXT,
-                accounted_at TEXT,
-                business_purpose TEXT,
-                expense_owner TEXT,
-                issue_date TEXT NOT NULL,
-                due_date TEXT,
-                status TEXT NOT NULL,
-                file_name TEXT,
-                file_size INTEGER NOT NULL,
-                file_type TEXT,
-                file_storage_provider TEXT NOT NULL DEFAULT 'metadata_only',
-                file_bucket TEXT,
-                file_object_key TEXT,
-                file_url TEXT,
-                risk_level TEXT NOT NULL,
-                note TEXT,
-                operator_user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("receipt_vouchers", "tax_rate", "TEXT NOT NULL DEFAULT '0'");
-        ensureColumn("receipt_vouchers", "tax_period", "TEXT");
-        ensureColumn("receipt_vouchers", "invoice_check_status", "TEXT NOT NULL DEFAULT 'not_required'");
-        ensureColumn("receipt_vouchers", "deduction_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
-        ensureColumn("receipt_vouchers", "reimbursement_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
-        ensureColumn("receipt_vouchers", "approval_status", "TEXT NOT NULL DEFAULT 'not_required'");
-        ensureColumn("receipt_vouchers", "accounting_status", "TEXT NOT NULL DEFAULT 'not_started'");
-        ensureColumn("receipt_vouchers", "accounting_voucher_no", "TEXT");
-        ensureColumn("receipt_vouchers", "accounting_entry", "TEXT");
-        ensureColumn("receipt_vouchers", "approved_by_user_id", "INTEGER");
-        ensureColumn("receipt_vouchers", "approved_at", "TEXT");
-        ensureColumn("receipt_vouchers", "accounted_at", "TEXT");
-        ensureColumn("receipt_vouchers", "business_purpose", "TEXT");
-        ensureColumn("receipt_vouchers", "expense_owner", "TEXT");
-        ensureColumn("receipt_vouchers", "file_storage_provider", "TEXT NOT NULL DEFAULT 'metadata_only'");
-        ensureColumn("receipt_vouchers", "file_bucket", "TEXT");
-        ensureColumn("receipt_vouchers", "file_object_key", "TEXT");
-        ensureColumn("receipt_vouchers", "file_url", "TEXT");
-        jdbc.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id BIGSERIAL PRIMARY KEY,
                 company_id INTEGER NOT NULL,
@@ -568,13 +499,6 @@ public class EnterpriseStore {
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_tax_items_company_risk ON tax_items(company_id, risk_level)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_entity_transfers_from_date ON entity_transfers(from_entity_id, transfer_date)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_entity_transfers_to_date ON entity_transfers(to_entity_id, transfer_date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_issue ON receipt_vouchers(company_id, issue_date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_status ON receipt_vouchers(company_id, status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_transaction ON receipt_vouchers(transaction_id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_tax_period ON receipt_vouchers(company_id, tax_period)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_deduction ON receipt_vouchers(company_id, deduction_status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_company_accounting ON receipt_vouchers(company_id, accounting_status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_file_object ON receipt_vouchers(file_storage_provider, file_object_key)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(company_id, entity_type, entity_id, id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at, id)");
         jdbc.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at)");
@@ -591,7 +515,6 @@ public class EnterpriseStore {
         entityTransfers.clear();
         employmentEvents.clear();
         taxItems.clear();
-        receiptVouchers.clear();
         auditLogs.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
@@ -600,7 +523,6 @@ public class EnterpriseStore {
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
         forEachRow("SELECT * FROM tax_items", rs -> taxItems.put(rs.getLong("id"), mapTaxItem(rs)));
-        forEachRow("SELECT * FROM receipt_vouchers", rs -> receiptVouchers.put(rs.getLong("id"), mapReceiptVoucher(rs)));
         forEachRow("SELECT * FROM audit_logs", rs -> auditLogs.put(rs.getLong("id"), mapAuditLog(rs)));
     }
 
@@ -899,77 +821,6 @@ public class EnterpriseStore {
             "公司报销家庭代垫支出", "recorded", owner.id);
     }
 
-    private void ensureReceiptVoucherSeed() {
-        Optional<Company> company = companies.values().stream()
-            .filter(candidate -> "company".equals(candidate.entityType))
-            .min(Comparator.comparing(candidate -> candidate.id));
-        if (company.isEmpty()) {
-            return;
-        }
-        long companyId = company.get().id;
-        if (receiptVouchers.values().stream().anyMatch(voucher -> voucher.companyId == companyId)) {
-            return;
-        }
-        User owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
-            .orElse(null);
-        if (owner == null) {
-            return;
-        }
-        ReceiptVoucher salesInvoice = receiptVoucher(companyId, null, "INV-202606-001", "客户项目回款销项发票", "sales_invoice", "income",
-            "客户项目方", "2800", "0", "2026-06-05", "2026-07-15", "verified",
-            "invoice-202606-001.pdf", 184320, "application/pdf", "low", "已与项目回款匹配", owner.id);
-        salesInvoice.invoiceCheckStatus = "verified";
-        salesInvoice.businessPurpose = "项目服务收入";
-        saveReceiptVoucher(salesInvoice);
-        ReceiptVoucher receivableInvoice = receiptVoucher(companyId, null, "AR-202606-001", "项目已交付待首期回款", "sales_invoice", "income",
-            "客户项目方", "26000", "0", "2026-06-06", "2026-06-12", "pending_review",
-            null, 0, null, "medium", "验收完成，首期款待客户付款并匹配银行回单", owner.id);
-        receivableInvoice.invoiceCheckStatus = "pending";
-        receivableInvoice.businessPurpose = "交付后待开票/待收款";
-        saveReceiptVoucher(receivableInvoice);
-        ReceiptVoucher finalReceivableInvoice = receiptVoucher(companyId, null, "AR-202606-002", "项目尾款待回款", "sales_invoice", "income",
-            "客户项目方", "8800", "0", "2026-06-01", "2026-06-20", "pending_review",
-            null, 0, null, "medium", "尾款按合同约定在交付后十五日内回款", owner.id);
-        finalReceivableInvoice.invoiceCheckStatus = "pending";
-        finalReceivableInvoice.businessPurpose = "项目尾款应收";
-        saveReceiptVoucher(finalReceivableInvoice);
-        ReceiptVoucher purchaseInvoice = receiptVoucher(companyId, null, "VAT-202606-012", "办公采购进项发票", "purchase_invoice", "expense",
-            "办公用品供应商", "899", "26.97", "2026-06-03", null, "linked",
-            "purchase-keyboard.jpg", 728436, "image/jpeg", "low", "可用于成本归档", owner.id);
-        purchaseInvoice.invoiceCheckStatus = "verified";
-        purchaseInvoice.deductionStatus = "deductible";
-        purchaseInvoice.businessPurpose = "办公采购";
-        purchaseInvoice.expenseOwner = "财务行政";
-        saveReceiptVoucher(purchaseInvoice);
-        ReceiptVoucher bankSlip = receiptVoucher(companyId, null, "BANK-202606-003", "银行回单-房租付款", "bank_slip", "expense",
-            "联合办公空间", "3200", "0", "2026-06-05", null, "verified",
-            "rent-bank-slip.png", 566214, "image/png", "medium", "待关联租金周期事项", owner.id);
-        bankSlip.businessPurpose = "办公场地租金";
-        bankSlip.expenseOwner = "财务行政";
-        saveReceiptVoucher(bankSlip);
-        ReceiptVoucher reimbursement = receiptVoucher(companyId, null, "REIM-202605-008", "家庭代垫报销凭证", "reimbursement", "expense",
-            "家庭资产主体", "2680", "0", "2026-05-20", null, "archived",
-            "reimbursement-advance.pdf", 245761, "application/pdf", "low", "与主体往来记录一致", owner.id);
-        reimbursement.reimbursementStatus = "archived";
-        reimbursement.businessPurpose = "家庭主体代垫公司费用";
-        reimbursement.expenseOwner = "创始人";
-        saveReceiptVoucher(reimbursement);
-        ReceiptVoucher contractPayment = receiptVoucher(companyId, null, "CTR-202606-002", "SaaS 年度订阅合同付款证明", "contract", "expense",
-            "SaaS 服务商", "7800", "0", "2026-06-01", "2026-06-30", "pending_review",
-            null, 0, null, "high", "金额较大，需补充合同附件和付款回单", owner.id);
-        contractPayment.businessPurpose = "SaaS 年费";
-        contractPayment.expenseOwner = "产品研发";
-        saveReceiptVoucher(contractPayment);
-        ReceiptVoucher taxReceipt = receiptVoucher(companyId, null, "TAX-202607-001", "税费申报回执待补充", "tax_receipt", "expense",
-            "税务机关", "8458.08", "0", "2026-07-15", "2026-07-15", "pending_review",
-            null, 0, null, "medium", "待完成申报后上传回执", owner.id);
-        taxReceipt.businessPurpose = "2026-06 税费申报";
-        saveReceiptVoucher(taxReceipt);
-    }
-
     private void ensureCompanyPolicyDefaults() {
         companies.values().forEach(company -> {
             boolean updated = false;
@@ -1067,41 +918,6 @@ public class EnterpriseStore {
                 saveTaxItem(item);
             }
         });
-    }
-
-    private void ensureReceiptVoucherDefaults() {
-        receiptVouchers.values().forEach(voucher -> {
-            boolean updated = hydrateReceiptVoucherDefaults(voucher);
-            if (updated) {
-                voucher.updatedAt = InMemoryStore.now();
-                saveReceiptVoucher(voucher);
-            }
-        });
-    }
-
-    private void ensureReceiptAuditLogSeed() {
-        boolean hasReceiptLog = auditLogs.values().stream().anyMatch(log -> "receipt_voucher".equals(log.entityType));
-        if (hasReceiptLog) {
-            return;
-        }
-        Optional<User> owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)));
-        if (owner.isEmpty()) {
-            return;
-        }
-        receiptVouchers.values().stream()
-            .sorted(Comparator.comparing(voucher -> voucher.id))
-            .forEach(voucher -> auditLog(
-                voucher.companyId,
-                "receipt_voucher",
-                voucher.id,
-                "seed",
-                "系统初始化票据「" + voucher.title + "」",
-                owner.get().id,
-                owner.get().nickname
-            ));
     }
 
     private boolean hydrateTaxItemDefaults(TaxItem item) {
@@ -1276,67 +1092,6 @@ public class EnterpriseStore {
         return updated;
     }
 
-    private boolean hydrateReceiptVoucherDefaults(ReceiptVoucher voucher) {
-        boolean updated = false;
-        if (voucher.amount == null) {
-            voucher.amount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (voucher.taxAmount == null) {
-            voucher.taxAmount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (voucher.taxRate == null) {
-            voucher.taxRate = inferredVoucherTaxRate(voucher);
-            updated = true;
-        }
-        if (isBlank(voucher.taxPeriod)) {
-            voucher.taxPeriod = taxPeriodFor(voucher.issueDate);
-            updated = true;
-        }
-        if (isBlank(voucher.invoiceCheckStatus)
-            || ("not_required".equals(voucher.invoiceCheckStatus) && isInvoiceVoucher(voucher.voucherType))) {
-            voucher.invoiceCheckStatus = isClosedVoucher(voucher.status) ? "verified" : defaultInvoiceCheckStatus(voucher.voucherType);
-            updated = true;
-        }
-        if (isBlank(voucher.deductionStatus)
-            || ("not_applicable".equals(voucher.deductionStatus) && "purchase_invoice".equals(voucher.voucherType))) {
-            voucher.deductionStatus = isClosedVoucher(voucher.status) ? "deductible" : defaultDeductionStatus(voucher.voucherType);
-            updated = true;
-        }
-        if (isBlank(voucher.reimbursementStatus)
-            || ("not_applicable".equals(voucher.reimbursementStatus) && "reimbursement".equals(voucher.voucherType))) {
-            voucher.reimbursementStatus = "archived".equals(voucher.status) ? "archived" : defaultReimbursementStatus(voucher.voucherType);
-            updated = true;
-        }
-        if (isBlank(voucher.approvalStatus)
-            || ("not_required".equals(voucher.approvalStatus) && requiresApproval(voucher))) {
-            voucher.approvalStatus = defaultApprovalStatus(voucher);
-            updated = true;
-        }
-        if (isBlank(voucher.accountingStatus)) {
-            voucher.accountingStatus = defaultAccountingStatus(voucher);
-            updated = true;
-        }
-        if (isBlank(voucher.accountingEntry)) {
-            voucher.accountingEntry = accountingEntryFor(voucher);
-            updated = true;
-        }
-        if (isBlank(voucher.accountingVoucherNo) && List.of("draft", "posted").contains(voucher.accountingStatus) && voucher.id > 0) {
-            voucher.accountingVoucherNo = accountingVoucherNoFor(voucher);
-            updated = true;
-        }
-        if ("posted".equals(voucher.accountingStatus) && isBlank(voucher.accountedAt)) {
-            voucher.accountedAt = voucher.updatedAt == null ? voucher.createdAt : voucher.updatedAt;
-            updated = true;
-        }
-        if (isBlank(voucher.fileStorageProvider)) {
-            voucher.fileStorageProvider = voucher.fileName == null || voucher.fileName.isBlank() ? "none" : "metadata_only";
-            updated = true;
-        }
-        return updated;
-    }
-
     public List<Company> sortedCompanies() {
         return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
     }
@@ -1429,25 +1184,6 @@ public class EnterpriseStore {
             .toList();
     }
 
-    public List<ReceiptVoucher> sortedReceiptVouchers(long companyId) {
-        return jdbc.query(
-            "SELECT * FROM receipt_vouchers WHERE company_id = ? ORDER BY issue_date DESC, id",
-            (rs, rowNum) -> mapReceiptVoucher(rs),
-            companyId
-        ).stream()
-            .peek(this::hydrateReceiptVoucherDefaults)
-            .toList();
-    }
-
-    public List<ReceiptVoucher> allReceiptVouchers() {
-        return jdbc.query(
-            "SELECT * FROM receipt_vouchers ORDER BY company_id, issue_date DESC, id",
-            (rs, rowNum) -> mapReceiptVoucher(rs)
-        ).stream()
-            .peek(this::hydrateReceiptVoucherDefaults)
-            .toList();
-    }
-
     public List<AuditLog> sortedAuditLogs(long companyId, String entityType, long entityId) {
         return jdbc.query("""
             SELECT * FROM audit_logs
@@ -1498,27 +1234,6 @@ public class EnterpriseStore {
 
     public Optional<TaxItem> findTaxItem(long id) {
         return jdbc.query("SELECT * FROM tax_items WHERE id = ?", (rs, rowNum) -> mapTaxItem(rs), id).stream().findFirst();
-    }
-
-    public Optional<ReceiptVoucher> findReceiptVoucher(long id) {
-        return jdbc.query("SELECT * FROM receipt_vouchers WHERE id = ?", (rs, rowNum) -> mapReceiptVoucher(rs), id)
-            .stream().findFirst().map(voucher -> {
-                hydrateReceiptVoucherDefaults(voucher);
-                return voucher;
-            });
-    }
-
-    public Optional<ReceiptVoucher> findReceiptVoucherForUpdate(long id) {
-        return jdbc.query(
-            "SELECT * FROM receipt_vouchers WHERE id = ? FOR UPDATE",
-            (rs, rowNum) -> mapReceiptVoucher(rs),
-            id
-        ).stream().findFirst();
-    }
-
-    public long countReceiptVouchers() {
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class);
-        return count == null ? 0 : count;
     }
 
     public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
@@ -1941,114 +1656,6 @@ public class EnterpriseStore {
         attachEntityTransferNames(transfer);
     }
 
-    public ReceiptVoucher receiptVoucher(
-        long companyId,
-        Long transactionId,
-        String voucherNo,
-        String title,
-        String voucherType,
-        String direction,
-        String counterparty,
-        String amount,
-        String taxAmount,
-        String issueDate,
-        String dueDate,
-        String status,
-        String fileName,
-        long fileSize,
-        String fileType,
-        String riskLevel,
-        String note,
-        long operatorUserId
-    ) {
-        ReceiptVoucher voucher = new ReceiptVoucher();
-        voucher.companyId = companyId;
-        voucher.transactionId = transactionId;
-        voucher.voucherNo = voucherNo;
-        voucher.title = title;
-        voucher.voucherType = voucherType;
-        voucher.direction = direction;
-        voucher.counterparty = counterparty;
-        voucher.amount = money(amount);
-        voucher.taxAmount = money(taxAmount);
-        voucher.taxRate = inferredVoucherTaxRate(voucher);
-        voucher.taxPeriod = taxPeriodFor(voucher.issueDate);
-        voucher.invoiceCheckStatus = defaultInvoiceCheckStatus(voucher.voucherType);
-        voucher.deductionStatus = defaultDeductionStatus(voucher.voucherType);
-        voucher.reimbursementStatus = defaultReimbursementStatus(voucher.voucherType);
-        voucher.approvalStatus = defaultApprovalStatus(voucher);
-        voucher.accountingStatus = defaultAccountingStatus(voucher);
-        voucher.accountingVoucherNo = null;
-        voucher.accountingEntry = accountingEntryFor(voucher);
-        voucher.approvedByUserId = null;
-        voucher.approvedAt = null;
-        voucher.accountedAt = null;
-        voucher.businessPurpose = null;
-        voucher.expenseOwner = null;
-        voucher.issueDate = issueDate == null || issueDate.isBlank() ? LocalDate.now().toString() : issueDate;
-        voucher.taxRate = inferredVoucherTaxRate(voucher);
-        voucher.taxPeriod = taxPeriodFor(voucher.issueDate);
-        voucher.accountingEntry = accountingEntryFor(voucher);
-        voucher.dueDate = dueDate == null || dueDate.isBlank() ? null : dueDate;
-        voucher.status = status == null || status.isBlank() ? "pending_review" : status;
-        voucher.approvalStatus = defaultApprovalStatus(voucher);
-        voucher.accountingStatus = defaultAccountingStatus(voucher);
-        voucher.fileName = fileName;
-        voucher.fileSize = fileSize;
-        voucher.fileType = fileType;
-        voucher.fileStorageProvider = fileName == null || fileName.isBlank() ? "none" : "metadata_only";
-        voucher.fileBucket = null;
-        voucher.fileObjectKey = null;
-        voucher.fileUrl = null;
-        voucher.riskLevel = riskLevel == null || riskLevel.isBlank() ? "low" : riskLevel;
-        voucher.note = note;
-        voucher.operatorUserId = operatorUserId;
-        stamp(voucher);
-        voucher.id = insert("""
-            INSERT INTO receipt_vouchers (
-                company_id, transaction_id, voucher_no, title, voucher_type, direction, counterparty,
-                amount, tax_amount, tax_rate, tax_period, invoice_check_status, deduction_status,
-                reimbursement_status, approval_status, accounting_status, accounting_voucher_no, accounting_entry,
-                approved_by_user_id, approved_at, accounted_at, business_purpose, expense_owner, issue_date, due_date, status,
-                file_name, file_size, file_type, file_storage_provider, file_bucket, file_object_key, file_url,
-                risk_level, note, operator_user_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindReceiptVoucher(ps, voucher));
-        hydrateReceiptVoucherDefaults(voucher);
-        if (isBlank(voucher.accountingVoucherNo) && List.of("draft", "posted").contains(voucher.accountingStatus)) {
-            voucher.accountingVoucherNo = accountingVoucherNoFor(voucher);
-            saveReceiptVoucher(voucher);
-        }
-        receiptVouchers.put(voucher.id, voucher);
-        return voucher;
-    }
-
-    public void saveReceiptVoucher(ReceiptVoucher voucher) {
-        int updated = jdbc.update("""
-            UPDATE receipt_vouchers SET company_id = ?, transaction_id = ?, voucher_no = ?, title = ?, voucher_type = ?,
-                direction = ?, counterparty = ?, amount = ?, tax_amount = ?, tax_rate = ?, tax_period = ?,
-                invoice_check_status = ?, deduction_status = ?, reimbursement_status = ?, approval_status = ?,
-                accounting_status = ?, accounting_voucher_no = ?, accounting_entry = ?, approved_by_user_id = ?,
-                approved_at = ?, accounted_at = ?, business_purpose = ?, expense_owner = ?, issue_date = ?, due_date = ?,
-                status = ?, file_name = ?, file_size = ?, file_type = ?, file_storage_provider = ?, file_bucket = ?,
-                file_object_key = ?, file_url = ?, risk_level = ?, note = ?, operator_user_id = ?, updated_at = ?,
-                version = version + 1
-            WHERE id = ? AND version = ?
-            """, voucher.companyId, voucher.transactionId, voucher.voucherNo, voucher.title, voucher.voucherType,
-            voucher.direction, voucher.counterparty, moneyText(voucher.amount), moneyText(voucher.taxAmount), moneyText(voucher.taxRate),
-            voucher.taxPeriod, voucher.invoiceCheckStatus, voucher.deductionStatus, voucher.reimbursementStatus, voucher.approvalStatus,
-            voucher.accountingStatus, voucher.accountingVoucherNo, voucher.accountingEntry, voucher.approvedByUserId,
-            voucher.approvedAt, voucher.accountedAt, voucher.businessPurpose, voucher.expenseOwner, voucher.issueDate, voucher.dueDate,
-            voucher.status, voucher.fileName, voucher.fileSize, voucher.fileType, voucher.fileStorageProvider, voucher.fileBucket,
-            voucher.fileObjectKey, voucher.fileUrl, voucher.riskLevel, voucher.note, voucher.operatorUserId,
-            voucher.updatedAt, voucher.id, voucher.version);
-        if (updated != 1) {
-            throw new OptimisticLockingFailureException("Receipt voucher was changed by another request: " + voucher.id);
-        }
-        voucher.version++;
-        receiptVouchers.put(voucher.id, voucher);
-    }
-
     public AuditLog auditLog(
         long companyId,
         String entityType,
@@ -2191,103 +1798,6 @@ public class EnterpriseStore {
         return money(item.taxAmount)
             .multiply(new BigDecimal("100"))
             .divide(taxableAmount, 2, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal inferredVoucherTaxRate(ReceiptVoucher voucher) {
-        BigDecimal taxAmount = money(voucher.taxAmount);
-        BigDecimal taxExcludedAmount = money(voucher.amount).subtract(taxAmount);
-        if (taxExcludedAmount.compareTo(BigDecimal.ZERO) <= 0 || taxAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
-        }
-        return taxAmount.multiply(new BigDecimal("100")).divide(taxExcludedAmount, 2, RoundingMode.HALF_UP);
-    }
-
-    private String taxPeriodFor(String issueDate) {
-        if (issueDate == null || issueDate.length() < 7) {
-            return LocalDate.now().toString().substring(0, 7);
-        }
-        return issueDate.substring(0, 7);
-    }
-
-    private String defaultInvoiceCheckStatus(String voucherType) {
-        return switch (voucherType == null ? "" : voucherType) {
-            case "sales_invoice", "purchase_invoice" -> "pending";
-            default -> "not_required";
-        };
-    }
-
-    private boolean isInvoiceVoucher(String voucherType) {
-        return "sales_invoice".equals(voucherType) || "purchase_invoice".equals(voucherType);
-    }
-
-    private boolean isClosedVoucher(String status) {
-        return "verified".equals(status) || "linked".equals(status) || "archived".equals(status);
-    }
-
-    private String defaultDeductionStatus(String voucherType) {
-        return "purchase_invoice".equals(voucherType) ? "pending" : "not_applicable";
-    }
-
-    private String defaultReimbursementStatus(String voucherType) {
-        return "reimbursement".equals(voucherType) ? "submitted" : "not_applicable";
-    }
-
-    private boolean requiresApproval(ReceiptVoucher voucher) {
-        return "reimbursement".equals(voucher.voucherType)
-            || "contract".equals(voucher.voucherType)
-            || money(voucher.amount).compareTo(new BigDecimal("5000")) >= 0;
-    }
-
-    private String defaultApprovalStatus(ReceiptVoucher voucher) {
-        if (!requiresApproval(voucher)) {
-            return "not_required";
-        }
-        return "not_submitted";
-    }
-
-    private String defaultAccountingStatus(ReceiptVoucher voucher) {
-        if ("rejected".equals(voucher.status)) {
-            return "not_started";
-        }
-        if ("archived".equals(voucher.status) || "linked".equals(voucher.status)) {
-            return "posted";
-        }
-        if ("verified".equals(voucher.status) || "approved".equals(voucher.approvalStatus)) {
-            return "draft";
-        }
-        return "not_started";
-    }
-
-    private String accountingVoucherNoFor(ReceiptVoucher voucher) {
-        String period = taxPeriodFor(voucher.issueDate).replace("-", "");
-        long id = Math.max(1, voucher.id);
-        return "JV-" + period + "-" + String.format("%04d", id);
-    }
-
-    private String accountingEntryFor(ReceiptVoucher voucher) {
-        BigDecimal amount = money(voucher.amount);
-        BigDecimal tax = money(voucher.taxAmount);
-        BigDecimal netAmount = amount.subtract(tax).max(BigDecimal.ZERO);
-        if ("income".equals(voucher.direction)) {
-            String debit = voucher.transactionId == null ? "应收账款" : "银行存款";
-            return "借：" + debit + " " + moneyText(amount) + "；贷：主营业务收入 " + moneyText(netAmount)
-                + (tax.compareTo(BigDecimal.ZERO) > 0 ? "，应交税费-销项税额 " + moneyText(tax) : "");
-        }
-        if ("purchase_invoice".equals(voucher.voucherType)) {
-            String credit = voucher.transactionId == null ? "应付账款" : "银行存款";
-            return "借：管理费用 " + moneyText(netAmount)
-                + (tax.compareTo(BigDecimal.ZERO) > 0 ? "，应交税费-进项税额 " + moneyText(tax) : "")
-                + "；贷：" + credit + " " + moneyText(amount);
-        }
-        if ("reimbursement".equals(voucher.voucherType)) {
-            String owner = isBlank(voucher.expenseOwner) ? "员工" : voucher.expenseOwner;
-            return "借：管理费用 " + moneyText(amount) + "；贷：其他应付款-" + owner + " " + moneyText(amount);
-        }
-        if ("tax_receipt".equals(voucher.voucherType)) {
-            return "借：应交税费 " + moneyText(amount) + "；贷：银行存款 " + moneyText(amount);
-        }
-        String credit = voucher.transactionId == null ? "应付账款" : "银行存款";
-        return "借：管理费用 " + moneyText(amount) + "；贷：" + credit + " " + moneyText(amount);
     }
 
     private String paymentStatusFor(TaxItem item) {
@@ -2544,52 +2054,6 @@ public class EnterpriseStore {
         return transfer;
     }
 
-    private ReceiptVoucher mapReceiptVoucher(ResultSet rs) throws SQLException {
-        ReceiptVoucher voucher = new ReceiptVoucher();
-        voucher.id = rs.getLong("id");
-        voucher.version = rs.getLong("version");
-        voucher.companyId = rs.getLong("company_id");
-        voucher.transactionId = nullableLong(rs, "transaction_id");
-        voucher.voucherNo = rs.getString("voucher_no");
-        voucher.title = rs.getString("title");
-        voucher.voucherType = rs.getString("voucher_type");
-        voucher.direction = rs.getString("direction");
-        voucher.counterparty = rs.getString("counterparty");
-        voucher.amount = money(rs.getString("amount"));
-        voucher.taxAmount = money(rs.getString("tax_amount"));
-        voucher.taxRate = money(rs.getString("tax_rate"));
-        voucher.taxPeriod = rs.getString("tax_period");
-        voucher.invoiceCheckStatus = rs.getString("invoice_check_status");
-        voucher.deductionStatus = rs.getString("deduction_status");
-        voucher.reimbursementStatus = rs.getString("reimbursement_status");
-        voucher.approvalStatus = rs.getString("approval_status");
-        voucher.accountingStatus = rs.getString("accounting_status");
-        voucher.accountingVoucherNo = rs.getString("accounting_voucher_no");
-        voucher.accountingEntry = rs.getString("accounting_entry");
-        voucher.approvedByUserId = nullableLong(rs, "approved_by_user_id");
-        voucher.approvedAt = rs.getString("approved_at");
-        voucher.accountedAt = rs.getString("accounted_at");
-        voucher.businessPurpose = rs.getString("business_purpose");
-        voucher.expenseOwner = rs.getString("expense_owner");
-        voucher.issueDate = rs.getString("issue_date");
-        voucher.dueDate = rs.getString("due_date");
-        voucher.status = rs.getString("status");
-        voucher.fileName = rs.getString("file_name");
-        voucher.fileSize = rs.getLong("file_size");
-        voucher.fileType = rs.getString("file_type");
-        voucher.fileStorageProvider = rs.getString("file_storage_provider");
-        voucher.fileBucket = rs.getString("file_bucket");
-        voucher.fileObjectKey = rs.getString("file_object_key");
-        voucher.fileUrl = rs.getString("file_url");
-        voucher.riskLevel = rs.getString("risk_level");
-        voucher.note = rs.getString("note");
-        voucher.operatorUserId = rs.getLong("operator_user_id");
-        voucher.createdAt = rs.getString("created_at");
-        voucher.updatedAt = rs.getString("updated_at");
-        hydrateReceiptVoucherDefaults(voucher);
-        return voucher;
-    }
-
     private AuditLog mapAuditLog(ResultSet rs) throws SQLException {
         AuditLog log = new AuditLog();
         log.id = rs.getLong("id");
@@ -2735,47 +2199,6 @@ public class EnterpriseStore {
         ps.setLong(9, transfer.operatorUserId);
         ps.setString(10, transfer.createdAt);
         ps.setString(11, transfer.updatedAt);
-    }
-
-    private void bindReceiptVoucher(PreparedStatement ps, ReceiptVoucher voucher) throws SQLException {
-        ps.setLong(1, voucher.companyId);
-        setLongOrNull(ps, 2, voucher.transactionId);
-        ps.setString(3, voucher.voucherNo);
-        ps.setString(4, voucher.title);
-        ps.setString(5, voucher.voucherType);
-        ps.setString(6, voucher.direction);
-        ps.setString(7, voucher.counterparty);
-        ps.setString(8, moneyText(voucher.amount));
-        ps.setString(9, moneyText(voucher.taxAmount));
-        ps.setString(10, moneyText(voucher.taxRate));
-        ps.setString(11, voucher.taxPeriod);
-        ps.setString(12, voucher.invoiceCheckStatus);
-        ps.setString(13, voucher.deductionStatus);
-        ps.setString(14, voucher.reimbursementStatus);
-        ps.setString(15, voucher.approvalStatus);
-        ps.setString(16, voucher.accountingStatus);
-        ps.setString(17, voucher.accountingVoucherNo);
-        ps.setString(18, voucher.accountingEntry);
-        setLongOrNull(ps, 19, voucher.approvedByUserId);
-        ps.setString(20, voucher.approvedAt);
-        ps.setString(21, voucher.accountedAt);
-        ps.setString(22, voucher.businessPurpose);
-        ps.setString(23, voucher.expenseOwner);
-        ps.setString(24, voucher.issueDate);
-        ps.setString(25, voucher.dueDate);
-        ps.setString(26, voucher.status);
-        ps.setString(27, voucher.fileName);
-        ps.setLong(28, voucher.fileSize);
-        ps.setString(29, voucher.fileType);
-        ps.setString(30, voucher.fileStorageProvider);
-        ps.setString(31, voucher.fileBucket);
-        ps.setString(32, voucher.fileObjectKey);
-        ps.setString(33, voucher.fileUrl);
-        ps.setString(34, voucher.riskLevel);
-        ps.setString(35, voucher.note);
-        ps.setLong(36, voucher.operatorUserId);
-        ps.setString(37, voucher.createdAt);
-        ps.setString(38, voucher.updatedAt);
     }
 
     private long insert(String sql, SqlBinder binder) {
