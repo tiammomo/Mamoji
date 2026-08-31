@@ -72,7 +72,7 @@ const companyNavigation: NavigationGroup[] = [
     labelKey: "systemGroup",
     items: [
       { key: "/settings", labelKey: "settings", icon: <IconSettings />, keywords: ["设置", "偏好", "settings"], module: "settings" },
-      { key: "/admin/users", labelKey: "companyPermissions", icon: <IconUserGroup />, keywords: ["公司", "用户", "权限", "成员", "permission", "member"], module: "people-core", anyPermission: ["admin.permissions", "company.manage"] },
+      { key: "/admin/users", labelKey: "companyPermissions", icon: <IconUserGroup />, keywords: ["公司", "用户", "权限", "成员", "permission", "member"], module: "access-management", anyPermission: ["admin.permissions", "company.manage"] },
       { key: "/policy-center", labelKey: "policyCenter", icon: <IconFile />, keywords: ["政策", "规则", "policy"], module: "policy", anyPermission: ["policy.read"] },
       { key: "/backup", labelKey: "backup", icon: <IconStorage />, keywords: ["备份", "导出", "backup"], adminOnly: true, module: "backup", anyPermission: ["admin.permissions"] },
     ],
@@ -113,7 +113,7 @@ export type NavigationAccess = {
 
 const DEFAULT_INTERNAL_MODULES = new Set([
   "workspace", "approvals", "operations", "transactions", "budgets", "reports", "recurring",
-  "finance", "accounts", "evidence", "people-core", "workforce-cost", "settings",
+  "finance", "accounts", "evidence", "access-management", "settings",
 ]);
 
 export function navigationFor(subjectType: SubjectType, access: NavigationAccess = {}) {

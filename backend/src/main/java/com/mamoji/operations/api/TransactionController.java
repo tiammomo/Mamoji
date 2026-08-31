@@ -1,12 +1,20 @@
-package com.mamoji.controller;
+package com.mamoji.operations.api;
 
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.TransactionRecord;
+import com.mamoji.operations.application.TransactionApplicationService;
+import com.mamoji.platform.identity.ActorContext;
+import com.mamoji.platform.identity.CurrentActor;
 import com.mamoji.service.AccountingService;
 import com.mamoji.service.TransactionImportService;
+import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,19 +26,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.http.ContentDisposition;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 
 @RestController
 @RequestMapping("/api/v1/transactions")
 public class TransactionController {
     private final AccountingService service;
+    private final TransactionApplicationService applicationService;
     private final TransactionImportService importService;
 
-    public TransactionController(AccountingService service, TransactionImportService importService) {
+    public TransactionController(
+        AccountingService service,
+        TransactionApplicationService applicationService,
+        TransactionImportService importService
+    ) {
         this.service = service;
+        this.applicationService = applicationService;
         this.importService = importService;
     }
 
@@ -56,7 +66,8 @@ public class TransactionController {
     ) {
         return ResponseEntity.ok()
             .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
-            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename("mamoji-transaction-import.csv", StandardCharsets.UTF_8).build().toString())
+            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                .filename("mamoji-transaction-import.csv", StandardCharsets.UTF_8).build().toString())
             .body(importService.template(authorization));
     }
 
@@ -90,13 +101,11 @@ public class TransactionController {
 
     @PostMapping
     public Map<String, Object> create(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody TransactionCreateRequest request
     ) {
-        Map<String, Object> command = new java.util.LinkedHashMap<>(body);
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) command.put("idempotencyKey", idempotencyKey);
-        return service.createTransaction(authorization, command);
+        return applicationService.create(actor, request, idempotencyKey);
     }
 
     @PutMapping("/{id}")
