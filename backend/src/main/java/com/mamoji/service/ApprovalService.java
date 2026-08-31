@@ -6,6 +6,7 @@ import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.User;
+import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -42,17 +43,20 @@ public class ApprovalService {
     private final JdbcTemplate jdbc;
     private final AccessControlService accessControl;
     private final EnterpriseStore enterpriseStore;
+    private final ReceiptVoucherRepository receiptVouchers;
     private final ReceiptService receiptService;
 
     public ApprovalService(
         JdbcTemplate jdbc,
         AccessControlService accessControl,
         EnterpriseStore enterpriseStore,
+        ReceiptVoucherRepository receiptVouchers,
         ReceiptService receiptService
     ) {
         this.jdbc = jdbc;
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
+        this.receiptVouchers = receiptVouchers;
         this.receiptService = receiptService;
     }
 
@@ -252,7 +256,7 @@ public class ApprovalService {
     private void validateEntity(User user, long companyId, String entityType, Long entityId) {
         if (entityId == null) return;
         if ("receipt_voucher".equals(entityType)) {
-            ReceiptVoucher voucher = enterpriseStore.findReceiptVoucher(entityId).orElse(null);
+            ReceiptVoucher voucher = receiptVouchers.findById(entityId).orElse(null);
             if (voucher == null || voucher.companyId != companyId) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt voucher is outside the selected company");
             }

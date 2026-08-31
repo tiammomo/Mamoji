@@ -11,6 +11,7 @@ import com.mamoji.domain.Models.OutboxEvent;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
+import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.repository.EnterpriseStore;
@@ -42,6 +43,7 @@ public class NotificationService {
     private final JdbcTemplate jdbc;
     private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
+    private final ReceiptVoucherRepository receiptVouchers;
     private final AccessControlService accessControl;
     private final CompanyMembershipRepository memberships;
     private final ProductModuleCatalog modules;
@@ -58,6 +60,7 @@ public class NotificationService {
         JdbcTemplate jdbc,
         InMemoryStore store,
         EnterpriseStore enterpriseStore,
+        ReceiptVoucherRepository receiptVouchers,
         AccessControlService accessControl,
         CompanyMembershipRepository memberships,
         ProductModuleCatalog modules,
@@ -72,6 +75,7 @@ public class NotificationService {
         this.jdbc = jdbc;
         this.store = store;
         this.enterpriseStore = enterpriseStore;
+        this.receiptVouchers = receiptVouchers;
         this.accessControl = accessControl;
         this.memberships = memberships;
         this.modules = modules;
@@ -454,7 +458,7 @@ public class NotificationService {
 
     private void generateReceiptReminders(LocalDate today) {
         LocalDate latest = today.plusDays(receiptLookaheadDays);
-        for (ReceiptVoucher voucher : enterpriseStore.allReceiptVouchers()) {
+        for (ReceiptVoucher voucher : receiptVouchers.findAll()) {
             if (receiptClosed(voucher)) {
                 continue;
             }
