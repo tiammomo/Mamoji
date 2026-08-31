@@ -2,6 +2,7 @@ package com.mamoji.repository;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.platform.audit.application.AuditLogRepository;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
@@ -37,6 +38,19 @@ class LegacyStoreBoundaryTest {
             "deleteEmployee",
             "saveEntityTransfer"
         ));
+    }
+
+    @Test
+    void auditPersistenceBoundaryExposesNoMutationOrDeletionOperations() {
+        Set<String> forbiddenPrefixes = Set.of("delete", "remove", "update", "replace", "save");
+        Set<String> exposedMethods = Arrays.stream(AuditLogRepository.class.getDeclaredMethods())
+            .map(method -> method.getName().toLowerCase())
+            .filter(name -> forbiddenPrefixes.stream().anyMatch(name::startsWith))
+            .collect(Collectors.toSet());
+
+        assertTrue(exposedMethods.isEmpty(), () ->
+            "Audit logs must remain append-only at the persistence boundary: " + exposedMethods
+        );
     }
 
     private static void assertNotPublic(Class<?> storeType, Set<String> forbiddenMethods) {

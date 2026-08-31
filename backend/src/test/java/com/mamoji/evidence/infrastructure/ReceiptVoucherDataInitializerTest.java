@@ -57,7 +57,7 @@ class ReceiptVoucherDataInitializerTest {
         List<ReceiptVoucher> inserted = new ArrayList<>();
         AtomicLong ids = new AtomicLong(100);
         when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
-        when(enterpriseStore.sortedAuditLogs()).thenReturn(List.of());
+        when(enterpriseStore.hasAuditLogEntityType("receipt_voucher")).thenReturn(false);
         when(coreStore.sortedUsers()).thenReturn(List.of(owner));
         when(receiptVouchers.findByCompany(company.id)).thenReturn(List.of());
         when(receiptVouchers.insert(any())).thenAnswer(invocation -> {

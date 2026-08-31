@@ -189,11 +189,14 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec postgr
 
 - `companyId`
 - `entityType`
+- `entityId`
 - `action`
 - `actorUserId`
 - `keyword`
 - `page`
 - `size`
+
+查询由数据库完成筛选、计数和分页，`size` 取值为 `1-200`，非法筛选或分页参数会返回 `400`，不会退化成无条件全表查询。审计持久化边界只暴露追加与读取操作，员工等业务记录发生变化时不会清理既有审计轨迹。
 
 当前覆盖登录、失败登录、退出、注册、注册邀请、改密码、用户权限、公司主体、部门、员工、薪酬月结、税费事项、主体划转和资金账户变更。
 
