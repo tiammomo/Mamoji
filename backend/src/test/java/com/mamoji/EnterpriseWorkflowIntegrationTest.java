@@ -1,18 +1,26 @@
 package com.mamoji;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -23,6 +31,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
+
+    @Autowired
+    OutboxEventStatusRepository outboxStatusRepository;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -473,6 +484,53 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals(LocalDate.now().toString(), state.get("last_executed"));
     }
 
+    @Test
+    void outboxTerminalTransitionsRequireTheCurrentDeliveryLease() {
+        String processedLease = "processed-owner-" + UUID.randomUUID();
+        long processedId = processingOutboxEvent(processedLease);
+        String completedAt = OffsetDateTime.now().toString();
+
+        assertFalse(outboxStatusRepository.markProcessed(processedId, "stale-worker", completedAt));
+        assertEquals("processing", outboxStatus(processedId));
+        assertEquals(processedLease, outboxLockToken(processedId));
+
+        assertTrue(outboxStatusRepository.markProcessed(processedId, processedLease, completedAt));
+        assertEquals("processed", outboxStatus(processedId));
+        assertNull(outboxLockToken(processedId));
+        assertNotNull(jdbc.queryForObject(
+            "SELECT processed_at FROM outbox_events WHERE id = ?",
+            String.class,
+            processedId
+        ));
+
+        String failedLease = "failed-owner-" + UUID.randomUUID();
+        long failedId = processingOutboxEvent(failedLease);
+        String nextAttemptAt = OffsetDateTime.now().plusMinutes(1).toString();
+
+        assertThrows(IllegalArgumentException.class, () -> outboxStatusRepository.markFailed(
+            failedId, failedLease, "processed", nextAttemptAt, "invalid transition", completedAt
+        ));
+        assertEquals("processing", outboxStatus(failedId));
+        assertEquals(failedLease, outboxLockToken(failedId));
+
+        assertFalse(outboxStatusRepository.markFailed(
+            failedId, "stale-worker", "failed", nextAttemptAt, "stale failure", completedAt
+        ));
+        assertEquals("processing", outboxStatus(failedId));
+        assertEquals(failedLease, outboxLockToken(failedId));
+
+        assertTrue(outboxStatusRepository.markFailed(
+            failedId, failedLease, "failed", nextAttemptAt, "delivery failed", completedAt
+        ));
+        assertEquals("failed", outboxStatus(failedId));
+        assertNull(outboxLockToken(failedId));
+        assertEquals("delivery failed", jdbc.queryForObject(
+            "SELECT last_error FROM outbox_events WHERE id = ?",
+            String.class,
+            failedId
+        ));
+    }
+
     private Connection holdApprovalLease(String leaseKey) throws Exception {
         Connection connection = dataSource.getConnection();
         try {
@@ -504,5 +562,25 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         body.put("salary", 10000);
         ApiResponse response = request("POST", "/api/v1/enterprise/employees", body, token);
         assertEquals(200, response.status(), response.body());
+    }
+
+    private long processingOutboxEvent(String lockToken) {
+        String now = OffsetDateTime.now().toString();
+        return jdbc.queryForObject("""
+            INSERT INTO outbox_events (
+                event_id, event_type, aggregate_type, aggregate_id, company_id, actor_user_id,
+                payload_json, status, attempts, next_attempt_at, locked_at, lock_token,
+                processed_at, last_error, created_at, updated_at
+            ) VALUES (?, 'test.delivery.lease', 'test', 1, 0, 0, '{}', 'processing', 1, NULL, ?, ?, NULL, NULL, ?, ?)
+            RETURNING id
+            """, Long.class, UUID.randomUUID().toString(), now, lockToken, now, now);
+    }
+
+    private String outboxStatus(long id) {
+        return jdbc.queryForObject("SELECT status FROM outbox_events WHERE id = ?", String.class, id);
+    }
+
+    private String outboxLockToken(long id) {
+        return jdbc.queryForObject("SELECT lock_token FROM outbox_events WHERE id = ?", String.class, id);
     }
 }
