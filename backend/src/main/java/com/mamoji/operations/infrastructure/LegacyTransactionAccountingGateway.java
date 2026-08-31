@@ -3,29 +3,27 @@ package com.mamoji.operations.infrastructure;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Ledger;
+import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.TransactionAccountingGateway;
 import com.mamoji.repository.InMemoryStore;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;
 
-/**
- * Transitional adapter over the legacy accounting store.
- *
- * <p>The operations application layer depends only on its own collaboration port;
- * account and ledger persistence can move behind this adapter independently.</p>
- */
+/** Finance-backed transaction collaboration adapter; category locking remains transitional. */
 @Repository
 public class LegacyTransactionAccountingGateway implements TransactionAccountingGateway {
+    private final FinanceRepository financeRepository;
     private final InMemoryStore store;
 
-    public LegacyTransactionAccountingGateway(InMemoryStore store) {
+    public LegacyTransactionAccountingGateway(FinanceRepository financeRepository, InMemoryStore store) {
+        this.financeRepository = financeRepository;
         this.store = store;
     }
 
     @Override
     public Optional<Account> findAccountForUpdate(long id) {
-        return store.accountForUpdate(id);
+        return financeRepository.findAccountForUpdate(id);
     }
 
     @Override
@@ -35,12 +33,12 @@ public class LegacyTransactionAccountingGateway implements TransactionAccounting
 
     @Override
     public Optional<Ledger> findLedger(long id) {
-        return store.findLedger(id);
+        return financeRepository.findLedger(id);
     }
 
     @Override
     public List<Ledger> findLedgers(long userId, long companyId) {
-        return store.queryLedgers(userId, companyId);
+        return financeRepository.findOwnedLedgers(userId, companyId);
     }
 
     @Override
@@ -50,11 +48,11 @@ public class LegacyTransactionAccountingGateway implements TransactionAccounting
         String currency,
         String subjectName
     ) {
-        return store.ensureCompanyAccountingWorkspace(ownerId, companyId, currency, subjectName);
+        return financeRepository.ensureAccountingLedger(ownerId, companyId, currency, subjectName);
     }
 
     @Override
     public void updateAccount(Account account) {
-        store.saveAccount(account);
+        financeRepository.updateAccount(account);
     }
 }

@@ -510,12 +510,12 @@ public class InMemoryStore {
         return user;
     }
 
-    public Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
+    private Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
         Long companyId = ledgerId == null ? null : findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
         return account(userId, companyId, ledgerId, name, type, subType, bank, balance);
     }
 
-    public Account account(long userId, Long companyId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
+    private Account account(long userId, Long companyId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
         Account account = new Account();
         account.userId = userId;
         account.companyId = companyId;
@@ -660,11 +660,11 @@ public class InMemoryStore {
         return tx;
     }
 
-    public Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
+    private Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
         return ledger(ownerId, null, name, description, currency, isDefault);
     }
 
-    public Ledger ledger(long ownerId, Long companyId, String name, String description, String currency, boolean isDefault) {
+    private Ledger ledger(long ownerId, Long companyId, String name, String description, String currency, boolean isDefault) {
         Ledger ledger = new Ledger();
         ledger.ownerId = ownerId;
         ledger.companyId = companyId;
@@ -682,7 +682,7 @@ public class InMemoryStore {
         return ledger;
     }
 
-    public LedgerMember member(long ledgerId, long userId, String role) {
+    private LedgerMember member(long ledgerId, long userId, String role) {
         LedgerMember member = new LedgerMember();
         member.ledgerId = ledgerId;
         member.userId = userId;
@@ -701,7 +701,7 @@ public class InMemoryStore {
         return member;
     }
 
-    public Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName) {
+    Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName) {
         Ledger ledger = queryLedgers(ownerId, companyId).stream()
             .filter(candidate -> candidate.isDefault)
             .min(Comparator.comparing(candidate -> candidate.id))
@@ -716,13 +716,18 @@ public class InMemoryStore {
         if (!ledgerMemberExists(ledger.id, ownerId)) {
             member(ledger.id, ownerId, "owner");
         }
+        ensureCompanyAccountingCategories(ownerId, companyId);
+        return ledger;
+    }
+
+    /** Transitional category bootstrap hook until category persistence moves into operations. */
+    public void ensureCompanyAccountingCategories(long ownerId, long companyId) {
         if (queryCategories(ownerId, companyId, "income").isEmpty()) {
             category(ownerId, companyId, "经营收入", "💼", "#22c55e", "income");
         }
         if (queryCategories(ownerId, companyId, "expense").isEmpty()) {
             category(ownerId, companyId, "经营支出", "🧾", "#ef4444", "expense");
         }
-        return ledger;
     }
 
     public RegistrationInvite registrationInvite(
@@ -814,6 +819,33 @@ public class InMemoryStore {
         afterCommit(() -> transactions.remove(id));
     }
 
+    /** Transitional cache hook for legacy readers after a committed account write. */
+    public void synchronizeAccountAfterCommit(Account account) {
+        afterCommit(() -> accounts.put(account.id, account));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed account deletion. */
+    public void removeAccountFromCompatibilityViewAfterCommit(long id) {
+        afterCommit(() -> accounts.remove(id));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed ledger creation. */
+    public void synchronizeLedgerAfterCommit(Ledger ledger) {
+        afterCommit(() -> ledgers.put(ledger.id, ledger));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed ledger-member creation. */
+    public void synchronizeLedgerMemberAfterCommit(LedgerMember member) {
+        afterCommit(() -> ledgerMembers.put(member.id, member));
+    }
+
+    /** Transitional cache hook for legacy readers after a committed ledger-member deletion. */
+    public void removeLedgerMemberFromCompatibilityViewAfterCommit(long ledgerId, long userId) {
+        afterCommit(() -> ledgerMembers.values().removeIf(
+            member -> member.ledgerId == ledgerId && member.userId == userId
+        ));
+    }
+
     public void updatePasswordHashIfCurrent(User current, String passwordHash, String updatedAt) {
         int updated = jdbc.update("""
             UPDATE users SET password_hash = ?, updated_at = ?
@@ -825,26 +857,6 @@ public class InMemoryStore {
             replacement.updatedAt = updatedAt;
             afterCommit(() -> users.put(replacement.id, replacement));
         }
-    }
-
-    public void saveAccount(Account account) {
-        int updated = jdbc.update("""
-            UPDATE accounts SET name = ?, type = ?, sub_type = ?, bank = ?, account_no = ?, opening_bank = ?, currency = ?,
-                balance = ?, available_balance = ?, credit_limit = ?, frozen_amount = ?, include_in_net_worth = ?,
-                user_id = ?, ledger_id = ?, status = ?, opened_at = ?, last_reconciled_at = ?, owner_name = ?,
-                purpose = ?, reconciliation_status = ?, risk_level = ?, created_at = ?, updated_at = ?, company_id = ?,
-                version = version + 1 WHERE id = ? AND version = ?
-            """, account.name, account.type, account.subType, account.bank, account.accountNo, account.openingBank,
-            account.currency, moneyText(account.balance), moneyText(account.availableBalance), moneyText(account.creditLimit),
-            moneyText(account.frozenAmount), intBool(account.includeInNetWorth), account.userId, account.ledgerId,
-            account.status, account.openedAt, account.lastReconciledAt, account.ownerName, account.purpose,
-            account.reconciliationStatus, account.riskLevel, account.createdAt, account.updatedAt, account.companyId,
-            account.id, account.version);
-        if (updated != 1) {
-            throw new OptimisticLockingFailureException("Account was changed by another request: " + account.id);
-        }
-        account.version++;
-        afterCommit(() -> accounts.put(account.id, account));
     }
 
     public void saveCategory(Category category) {
@@ -914,11 +926,6 @@ public class InMemoryStore {
         });
     }
 
-    public void deleteAccount(long id) {
-        jdbc.update("DELETE FROM accounts WHERE id = ?", id);
-        afterCommit(() -> accounts.remove(id));
-    }
-
     public void deleteCategory(long id) {
         jdbc.update("DELETE FROM categories WHERE id = ?", id);
         afterCommit(() -> categories.remove(id));
@@ -932,11 +939,6 @@ public class InMemoryStore {
     public void deleteRecurring(String id) {
         jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
         afterCommit(() -> recurringItems.remove(id));
-    }
-
-    public void deleteLedgerMember(long ledgerId, long userId) {
-        jdbc.update("DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?", ledgerId, userId);
-        afterCommit(() -> ledgerMembers.values().removeIf(member -> member.ledgerId == ledgerId && member.userId == userId));
     }
 
     public Optional<User> currentUser(String authorizationHeader) {
@@ -1001,15 +1003,8 @@ public class InMemoryStore {
         return jdbc.query("SELECT * FROM users ORDER BY id", (rs, rowNum) -> mapUser(rs));
     }
 
-    public Optional<Account> findAccount(long id) {
+    private Optional<Account> findAccount(long id) {
         return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
-    }
-
-    public List<Account> queryAccounts(long userId, long companyId) {
-        return jdbc.query(
-            "SELECT * FROM accounts WHERE user_id = ? AND company_id = ? ORDER BY id",
-            (rs, rowNum) -> mapAccount(rs), userId, companyId
-        );
     }
 
     public Optional<Category> findCategory(long id) {
@@ -1052,31 +1047,14 @@ public class InMemoryStore {
             """, (rs, rowNum) -> mapTransactionWithRelations(rs), userId, companyId);
     }
 
-    public Optional<Ledger> findLedger(long id) {
+    private Optional<Ledger> findLedger(long id) {
         return jdbc.query("SELECT * FROM ledgers WHERE id = ?", (rs, rowNum) -> mapLedger(rs), id).stream().findFirst();
     }
 
-    public List<Ledger> queryLedgers(long ownerId, long companyId) {
+    private List<Ledger> queryLedgers(long ownerId, long companyId) {
         return jdbc.query(
             "SELECT * FROM ledgers WHERE owner_id = ? AND company_id = ? ORDER BY is_default DESC, id",
             (rs, rowNum) -> mapLedger(rs), ownerId, companyId
-        );
-    }
-
-    public List<Ledger> queryAccessibleLedgers(long userId, long companyId) {
-        return jdbc.query("""
-            SELECT DISTINCT ledger.*
-            FROM ledgers ledger
-            LEFT JOIN ledger_members member ON member.ledger_id = ledger.id AND member.user_id = ?
-            WHERE ledger.company_id = ? AND (ledger.owner_id = ? OR member.user_id IS NOT NULL)
-            ORDER BY ledger.id
-            """, (rs, rowNum) -> mapLedger(rs), userId, companyId, userId);
-    }
-
-    public List<LedgerMember> queryLedgerMembers(long ledgerId) {
-        return jdbc.query(
-            "SELECT * FROM ledger_members WHERE ledger_id = ? ORDER BY id",
-            (rs, rowNum) -> mapLedgerMember(rs), ledgerId
         );
     }
 
@@ -1101,11 +1079,6 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public Optional<Account> accountForUpdate(long id) {
-        List<Account> matches = jdbc.query("SELECT * FROM accounts WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapAccount(rs), id);
-        return matches.stream().findFirst();
-    }
-
     public Optional<Category> categoryForUpdate(long id) {
         List<Category> matches = jdbc.query("SELECT * FROM categories WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapCategory(rs), id);
         return matches.stream().findFirst();
@@ -1116,26 +1089,12 @@ public class InMemoryStore {
         return matches.stream().findFirst();
     }
 
-    public Optional<Ledger> ledgerForUpdate(long id) {
-        List<Ledger> matches = jdbc.query("SELECT * FROM ledgers WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapLedger(rs), id);
-        return matches.stream().findFirst();
-    }
-
-    public boolean ledgerMemberExists(long ledgerId, long userId) {
+    private boolean ledgerMemberExists(long ledgerId, long userId) {
         Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
             Integer.class,
             ledgerId,
             userId
-        );
-        return count != null && count > 0;
-    }
-
-    public boolean accountHasTransactions(long accountId) {
-        Integer count = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM transactions WHERE account_id = ?",
-            Integer.class,
-            accountId
         );
         return count != null && count > 0;
     }
