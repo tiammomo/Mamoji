@@ -10,10 +10,10 @@ import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.OutboxEvent;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TaxItem;
-import com.mamoji.domain.Models.User;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
-import com.mamoji.platform.tenant.CompanyMembershipRepository;
+import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -29,13 +29,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
 
 @Service
 public class NotificationService {

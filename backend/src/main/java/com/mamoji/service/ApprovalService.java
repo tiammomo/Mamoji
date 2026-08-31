@@ -1,15 +1,15 @@
 package com.mamoji.service;
 
-import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.approval.domain.ApprovalWorkflow.Action;
 import com.mamoji.approval.domain.ApprovalWorkflow.Transition;
+import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.domain.Models.User;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
+import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;

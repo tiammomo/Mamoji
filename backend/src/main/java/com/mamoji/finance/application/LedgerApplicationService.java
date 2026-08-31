@@ -2,10 +2,10 @@ package com.mamoji.finance.application;
 
 import com.mamoji.common.PayloadReader;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.User;
 import com.mamoji.finance.application.FinanceRepository.MemberProfile;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
+import com.mamoji.platform.identity.User;
 import com.mamoji.service.support.AccessControlService;
 import java.time.OffsetDateTime;
 import java.util.List;
