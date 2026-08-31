@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -277,6 +278,64 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void approvalCommandValidationRejectsInvalidWritesAndPreservesIdempotency() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Approval Contract " + System.nanoTime());
+        int requestsBefore = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?", Integer.class, companyId
+        );
+
+        ApiResponse invalid = request("POST", "/api/v1/approvals", Map.of(
+            "companyId", companyId,
+            "requestType", "unsupported",
+            "entityId", -1,
+            "title", "x".repeat(161),
+            "amount", "-0.01",
+            "assigneeUserId", -1,
+            "description", "x".repeat(1001),
+            "comment", "x".repeat(501)
+        ), token);
+
+        assertValidationFields(invalid, Set.of(
+            "requestType", "entityId", "title", "amount", "assigneeUserId", "description", "comment"
+        ));
+        assertEquals(requestsBefore, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        Map<String, Object> command = Map.of(
+            "companyId", companyId,
+            "requestType", "other",
+            "entityType", "other",
+            "title", "Typed approval command"
+        );
+        Map<String, String> headers = Map.of("Idempotency-Key", "approval-contract-" + System.nanoTime());
+        ApiResponse created = request("POST", "/api/v1/approvals", command, token, headers);
+        ApiResponse replayed = request("POST", "/api/v1/approvals", command, token, headers);
+        assertEquals(200, created.status(), created.body());
+        assertEquals(200, replayed.status(), replayed.body());
+        long approvalId = approvalId(created);
+        assertEquals(approvalId, approvalId(replayed));
+        assertEquals(requestsBefore + 1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse invalidDecision = request(
+            "POST",
+            "/api/v1/approvals/" + approvalId + "/reject",
+            Map.of("comment", "x".repeat(501)),
+            token
+        );
+        assertValidationFields(invalidDecision, Set.of("comment"));
+        assertEquals("pending", jdbc.queryForObject(
+            "SELECT status FROM approval_requests WHERE id = ?", String.class, approvalId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_actions WHERE request_id = ?", Integer.class, approvalId
+        ));
+    }
+
+    @Test
     void globalSearchReturnsCompanyScopedBusinessRecords() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Search Flow " + System.nanoTime());
@@ -529,6 +588,21 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             String.class,
             failedId
         ));
+    }
+
+    private long approvalId(ApiResponse response) throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> approval = (Map<String, Object>) parseMap(response.body()).get("request");
+        return ((Number) approval.get("id")).longValue();
+    }
+
+    private void assertValidationFields(ApiResponse response, Set<String> expectedFields) throws Exception {
+        assertEquals(400, response.status(), response.body());
+        Map<String, Object> problem = parseMap(response.body());
+        assertEquals("validation_failed", problem.get("code"));
+        assertTrue(problem.get("fields") instanceof Map<?, ?>, response.body());
+        Map<?, ?> fields = (Map<?, ?>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(expectedFields), response.body());
     }
 
     private Connection holdApprovalLease(String leaseKey) throws Exception {
