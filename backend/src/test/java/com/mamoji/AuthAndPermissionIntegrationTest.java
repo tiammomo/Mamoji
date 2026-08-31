@@ -163,6 +163,59 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void adminUserManagementOwnsItsProjectionAndProtectsTheLastAdministrator() throws Exception {
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long administratorId = ((Number) parseMap(request(
+            "GET", "/api/v1/auth/me", null, adminToken
+        ).body()).get("id")).longValue();
+
+        ApiResponse lastAdministrator = request(
+            "PUT", "/api/v1/admin/users/" + administratorId, Map.of("role", 2), adminToken
+        );
+        assertEquals(409, lastAdministrator.status(), lastAdministrator.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT role FROM users WHERE id = ?", Integer.class, administratorId
+        ));
+
+        String email = uniqueEmail("managed-user");
+        String memberToken = registerInvitedUser(email);
+        long memberId = ((Number) parseMap(request(
+            "GET", "/api/v1/auth/me", null, memberToken
+        ).body()).get("id")).longValue();
+        ApiResponse searched = request(
+            "GET", "/api/v1/admin/users?keyword=" + email + "&page=0&size=1", null, adminToken
+        );
+        assertEquals(200, searched.status(), searched.body());
+        Map<String, Object> page = parseMap(searched.body());
+        assertEquals(1, ((Number) page.get("totalElements")).intValue());
+        assertFalse(searched.body().contains("passwordHash"));
+
+        ApiResponse invalid = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("permissions", 16), adminToken
+        );
+        assertEquals(400, invalid.status(), invalid.body());
+
+        ApiResponse promoted = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("role", 1, "permissions", 3), adminToken
+        );
+        assertEquals(200, promoted.status(), promoted.body());
+        assertEquals(1, ((Number) parseMap(promoted.body()).get("role")).intValue());
+        assertEquals(3, ((Number) parseMap(promoted.body()).get("permissions")).intValue());
+        assertEquals(1, coreStore.users.get(memberId).role);
+        assertEquals(3, coreStore.users.get(memberId).permissions);
+
+        ApiResponse demoted = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("role", 2, "permissions", 1), adminToken
+        );
+        assertEquals(200, demoted.status(), demoted.body());
+        assertEquals(200, request("DELETE", "/api/v1/admin/users/" + memberId, null, adminToken).status());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM users WHERE id = ?", Integer.class, memberId
+        ));
+        assertFalse(coreStore.users.containsKey(memberId));
+    }
+
+    @Test
     void notificationPreferencesRejectPrivateWebhookTargets() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
 

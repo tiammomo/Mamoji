@@ -902,6 +902,22 @@ public class InMemoryStore {
         afterCommit(() -> users.put(user.id, user));
     }
 
+    /** Transitional cache hook used while legacy enterprise reads still consume the compatibility user map. */
+    public void synchronizeUserAccessAfterCommit(long id, int role, int permissions, String updatedAt) {
+        afterCommit(() -> users.computeIfPresent(id, (ignored, current) -> {
+            User replacement = copyUser(current);
+            replacement.role = role;
+            replacement.permissions = permissions;
+            replacement.updatedAt = updatedAt;
+            return replacement;
+        }));
+    }
+
+    /** Transitional cache hook used by the access-management repository after a committed deletion. */
+    public void removeUserFromCompatibilityViewAfterCommit(long id) {
+        afterCommit(() -> users.remove(id));
+    }
+
     public void updatePasswordHashIfCurrent(User current, String passwordHash, String updatedAt) {
         int updated = jdbc.update("""
             UPDATE users SET password_hash = ?, updated_at = ?
@@ -1041,11 +1057,6 @@ public class InMemoryStore {
     public void deleteRecurring(String id) {
         jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
         afterCommit(() -> recurringItems.remove(id));
-    }
-
-    public void deleteUser(long id) {
-        jdbc.update("DELETE FROM users WHERE id = ?", id);
-        afterCommit(() -> users.remove(id));
     }
 
     public void deleteLedgerMember(long ledgerId, long userId) {
@@ -1231,12 +1242,6 @@ public class InMemoryStore {
             companyId,
             idempotencyKey
         ).stream().findFirst();
-    }
-
-    public long lockAndCountUsers() {
-        jdbc.execute("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE");
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class);
-        return count == null ? 0 : count;
     }
 
     public Optional<Account> accountForUpdate(long id) {
