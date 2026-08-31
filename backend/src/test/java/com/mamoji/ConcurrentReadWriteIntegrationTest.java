@@ -212,6 +212,54 @@ class ConcurrentReadWriteIntegrationTest {
     }
 
     @Test
+    void concurrentAdministratorDemotionsAlwaysLeaveOneAdministrator() throws Exception {
+        String token = adminToken();
+        long primaryAdministratorId = jdbc.queryForObject(
+            "SELECT id FROM users WHERE email = 'test@mamoji.com'",
+            Long.class
+        );
+        long secondAdministratorId = jdbc.queryForObject("""
+            INSERT INTO users (
+                email, nickname, avatar, family_id, role, permissions, password_hash, created_at, updated_at
+            )
+            SELECT ?, 'Concurrent administrator', avatar, family_id, 1, permissions, password_hash,
+                   created_at, updated_at
+            FROM users
+            WHERE id = ?
+            RETURNING id
+            """, Long.class, "concurrent-admin-" + System.nanoTime() + "@example.invalid", primaryAdministratorId);
+
+        try {
+            CompletableFuture<ApiResponse> first = requestAsync(
+                "PUT", "/api/v1/admin/users/" + primaryAdministratorId, Map.of("role", 2), token
+            );
+            CompletableFuture<ApiResponse> second = requestAsync(
+                "PUT", "/api/v1/admin/users/" + secondAdministratorId, Map.of("role", 2), token
+            );
+
+            ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+            ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+            List<Integer> statuses = List.of(firstResponse.status(), secondResponse.status());
+
+            assertEquals(1, statuses.stream().filter(status -> status == 200).count(),
+                firstResponse.body() + " / " + secondResponse.body());
+            assertTrue(statuses.stream().anyMatch(status -> status == 403 || status == 409),
+                firstResponse.body() + " / " + secondResponse.body());
+            assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE role = 1", Integer.class
+            ));
+        } finally {
+            String restoredAt = java.time.OffsetDateTime.now().toString();
+            jdbc.update("UPDATE users SET role = 1, updated_at = ? WHERE id = ?", restoredAt, primaryAdministratorId);
+            jdbc.update("DELETE FROM users WHERE id = ?", secondAdministratorId);
+            int permissions = jdbc.queryForObject(
+                "SELECT permissions FROM users WHERE id = ?", Integer.class, primaryAdministratorId
+            );
+            coreStore.synchronizeUserAccessAfterCommit(primaryAdministratorId, 1, permissions, restoredAt);
+        }
+    }
+
+    @Test
     void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Concurrent approval");

@@ -12,12 +12,12 @@
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
 | P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：票据仓储、规则、演示种子及 DDL 已迁入 `evidence` |
-| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 待处理 |
+| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 进行中：权限管理用户读写已迁入 `access-management`，旧用户缓存仅在提交后同步 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 进行中：流水创建已迁入 `operations`，创建、更新、删除均接入预算占用生命周期 |
 | P1 | 预算仅按已入账流水事后汇总，并发写入可同时超额 | 引入占用、确认、释放账本，以预算行锁串行化容量检查 | 已落地 |
 | P1 | 审批状态转换依赖应用服务内的字符串条件 | 使用纯领域状态机声明允许的转换、关联状态和意见要求 | 已落地 |
-| P1 | `Models` 聚合多个无关可变模型 | 模型回到所属模块，优先使用不可变值对象 | 待处理 |
-| P1 | 多个写接口使用 `Map<String, Object>` | 强类型 DTO、Bean Validation、统一 Problem Detail | 进行中：创建流水和预算已完成 |
+| P1 | `Models` 聚合多个无关可变模型 | 模型回到所属模块，优先使用不可变值对象 | 进行中：权限管理已使用模块自有不可变 `ManagedUser` |
+| P1 | 多个写接口使用 `Map<String, Object>` | 强类型 DTO、Bean Validation、统一 Problem Detail | 进行中：创建流水、预算和权限更新已完成 |
 | P2 | 启动期兼容建表与 Flyway 并存 | 完成迁移后删除生产兼容 DDL | 待处理 |
 | P2 | 测试集中在少数大文件 | 按模块建立领域单测和 Testcontainers 集成测试 | 待处理 |
 | P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 待处理 |
@@ -54,9 +54,9 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 将权限管理的用户模型与全局 `Models` 解耦；
-2. 继续将流水更新、冲正和账户调整迁出 `AccountingService`；
-3. 删除 `InMemoryStore` 中已迁移模块的兼容读写入口。
+1. 继续将流水更新、冲正和账户调整迁出 `AccountingService`；
+2. 删除 `InMemoryStore` 中已迁移模块的兼容读写入口；
+3. 将大型集成测试按业务模块拆分为独立 PostgreSQL 测试套件。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。
 
