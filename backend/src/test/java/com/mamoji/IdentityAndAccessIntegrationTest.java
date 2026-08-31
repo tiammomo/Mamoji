@@ -51,6 +51,48 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
     }
 
     @Test
+    void authCommandValidationRejectsInvalidPayloadsBeforeWriting() throws Exception {
+        int usersBefore = jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class);
+        ApiResponse invalidRegistration = request("POST", "/api/v1/auth/register", Map.of(
+            "email", "not-an-email",
+            "password", "",
+            "nickname", "x".repeat(101)
+        ), null);
+
+        assertValidationFields(invalidRegistration, Set.of("email", "password", "nickname"));
+        assertEquals(usersBefore, jdbc.queryForObject("SELECT COUNT(*) FROM users", Integer.class));
+
+        ApiResponse invalidLogin = request("POST", "/api/v1/auth/login", Map.of(
+            "email", "test@mamoji.com"
+        ), null);
+        assertValidationFields(invalidLogin, Set.of("password"));
+
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        int invitationsBefore = jdbc.queryForObject("SELECT COUNT(*) FROM registration_invites", Integer.class);
+        ApiResponse invalidInvitation = request("POST", "/api/v1/auth/invitations", Map.of(
+            "email", "invalid",
+            "role", 3,
+            "permissions", com.mamoji.common.Permissions.ALL + 1,
+            "expiresInDays", 31
+        ), adminToken);
+        assertValidationFields(invalidInvitation, Set.of("email", "role", "permissions", "expiresInDays"));
+        assertEquals(invitationsBefore, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM registration_invites", Integer.class
+        ));
+
+        String nicknameBefore = jdbc.queryForObject(
+            "SELECT nickname FROM users WHERE email = 'test@mamoji.com'", String.class
+        );
+        ApiResponse invalidProfile = request("PUT", "/api/v1/auth/profile", Map.of(
+            "nickname", "   "
+        ), adminToken);
+        assertValidationFields(invalidProfile, Set.of("nickname"));
+        assertEquals(nicknameBefore, jdbc.queryForObject(
+            "SELECT nickname FROM users WHERE email = 'test@mamoji.com'", String.class
+        ));
+    }
+
+    @Test
     void inviteModeBlocksPublicRegistrationAndAllowsInvitedRegistration() throws Exception {
         String email = uniqueEmail("invited");
         String password = "Member-Password-123!";
@@ -82,6 +124,15 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             """, email);
         assertEquals("Invited Member", membership.get("nickname"));
         assertEquals("🧭|#123456", membership.get("avatar"));
+    }
+
+    private void assertValidationFields(ApiResponse response, Set<String> expectedFields) throws Exception {
+        assertEquals(400, response.status(), response.body());
+        Map<String, Object> problem = parseMap(response.body());
+        assertEquals("validation_failed", problem.get("code"));
+        assertTrue(problem.get("fields") instanceof Map<?, ?>, response.body());
+        Map<?, ?> fields = (Map<?, ?>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(expectedFields), response.body());
     }
 
     @Test

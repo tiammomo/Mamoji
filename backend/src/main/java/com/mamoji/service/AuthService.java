@@ -7,6 +7,11 @@ import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.api.LoginRequest;
+import com.mamoji.platform.identity.api.PasswordChangeRequest;
+import com.mamoji.platform.identity.api.ProfileUpdateRequest;
+import com.mamoji.platform.identity.api.RegistrationInviteCreateRequest;
+import com.mamoji.platform.identity.api.RegistrationRequest;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -26,7 +31,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import static com.mamoji.common.PayloadReader.intValue;
 import static com.mamoji.common.PayloadReader.text;
 import static com.mamoji.common.PayloadReader.textOr;
 import static com.mamoji.service.support.DomainSupport.touch;
@@ -72,9 +76,9 @@ public class AuthService {
         this.passwordRequireComplexity = passwordRequireComplexity;
     }
 
-    public Map<String, Object> login(Map<String, Object> body, String clientIp) {
-        String email = normalizedEmail(body.get("email"));
-        String password = text(body.get("password"));
+    public Map<String, Object> login(LoginRequest request, String clientIp) {
+        String email = normalizedEmail(request.email());
+        String password = request.password();
         loginSecurityService.requireLoginAllowed(email, clientIp);
         Optional<User> matchedUser = store.findUserByEmail(email)
             .filter(candidate -> passwordHasher.matches(password, candidate.passwordHash));
@@ -94,26 +98,20 @@ public class AuthService {
     }
 
     @Transactional
-    public Map<String, Object> register(Map<String, Object> body) {
-        String email = normalizedEmail(body.get("email"));
-        String password = text(body.get("password"));
-        if (email.isBlank() || password.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
-        }
-        if (!email.contains("@")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email");
-        }
+    public Map<String, Object> register(RegistrationRequest request) {
+        String email = normalizedEmail(request.email());
+        String password = request.password();
         if (store.findUserByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
-        RegistrationInvite invite = invitationForRegistration(email, text(body.get("inviteToken")));
+        RegistrationInvite invite = invitationForRegistration(email, text(request.inviteToken()));
         validateNewPassword(password);
         User user;
         try {
             user = store.user(
                 email,
-                textOr(body.get("nickname"), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
-                textOr(body.get("avatar"), "😊|#3370ff"),
+                textOr(request.nickname(), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
+                textOr(request.avatar(), "😊|#3370ff"),
                 passwordHasher.hash(password),
                 invite == null ? Roles.USER : invite.role,
                 invite == null ? Permissions.ALL : invite.permissions
@@ -174,18 +172,15 @@ public class AuthService {
     }
 
     @Transactional
-    public RegistrationInvite createInvitation(String authorization, Map<String, Object> body) {
+    public RegistrationInvite createInvitation(String authorization, RegistrationInviteCreateRequest request) {
         User actor = accessControl.requireAdmin(authorization);
-        String email = normalizedEmail(body.get("email"));
-        if (email.isBlank() || !email.contains("@")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid email is required");
-        }
+        String email = normalizedEmail(request.email());
         if (store.findUserByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
-        int role = intValue(body.get("role"), Roles.USER);
-        int permissions = intValue(body.get("permissions"), Permissions.ALL) & Permissions.ALL;
-        int expiresInDays = Math.min(30, Math.max(1, intValue(body.get("expiresInDays"), 7)));
+        int role = request.role() == null ? Roles.USER : request.role();
+        int permissions = (request.permissions() == null ? Permissions.ALL : request.permissions()) & Permissions.ALL;
+        int expiresInDays = request.expiresInDays() == null ? 7 : request.expiresInDays();
         RegistrationInvite invite = store.registrationInvite(
             invitationToken(),
             email,
@@ -210,15 +205,15 @@ public class AuthService {
     }
 
     @Transactional
-    public User updateProfile(String authorization, Map<String, Object> body) {
+    public User updateProfile(String authorization, ProfileUpdateRequest request) {
         User current = accessControl.requireUser(authorization);
         User user = store.userForUpdate(current.id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
-        if (body.containsKey("nickname")) {
-            user.nickname = text(body.get("nickname"));
+        if (request.nickname() != null) {
+            user.nickname = request.nickname();
         }
-        if (body.containsKey("avatar")) {
-            user.avatar = text(body.get("avatar"));
+        if (request.avatar() != null) {
+            user.avatar = request.avatar();
         }
         touch(user);
         store.saveUser(user);
@@ -227,14 +222,14 @@ public class AuthService {
     }
 
     @Transactional
-    public Map<String, Object> changePassword(String authorization, Map<String, Object> body) {
+    public Map<String, Object> changePassword(String authorization, PasswordChangeRequest request) {
         User current = accessControl.requireUser(authorization);
         User user = store.userForUpdate(current.id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
-        if (!passwordHasher.matches(text(body.get("oldPassword")), user.passwordHash)) {
+        if (!passwordHasher.matches(request.oldPassword(), user.passwordHash)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Old password is incorrect");
         }
-        String newPassword = text(body.get("newPassword"));
+        String newPassword = request.newPassword();
         validateNewPassword(newPassword);
         user.passwordHash = passwordHasher.hash(newPassword);
         touch(user);
@@ -293,8 +288,8 @@ public class AuthService {
         return UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
     }
 
-    private String normalizedEmail(Object value) {
-        return text(value).trim().toLowerCase(Locale.ROOT);
+    private String normalizedEmail(String value) {
+        return value.trim().toLowerCase(Locale.ROOT);
     }
 
     private void validateNewPassword(String password) {
