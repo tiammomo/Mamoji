@@ -1069,7 +1069,7 @@ public class EnterpriseStore {
         attachDepartmentName(employee);
     }
 
-    public void deleteEmployee(long id) {
+    private void deleteEmployee(long id) {
         jdbc.update("UPDATE departments SET manager_employee_id = NULL WHERE manager_employee_id = ?", id);
         jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", id);
@@ -1257,17 +1257,6 @@ public class EnterpriseStore {
         return transfer;
     }
 
-    public void saveEntityTransfer(EntityTransfer transfer) {
-        entityTransfers.put(transfer.id, transfer);
-        jdbc.update("""
-            UPDATE entity_transfers SET from_entity_id = ?, to_entity_id = ?, transfer_type = ?, amount = ?, currency = ?,
-                transfer_date = ?, note = ?, status = ?, operator_user_id = ?, updated_at = ?
-            WHERE id = ?
-            """, transfer.fromEntityId, transfer.toEntityId, transfer.transferType, moneyText(transfer.amount), transfer.currency,
-            transfer.transferDate, transfer.note, transfer.status, transfer.operatorUserId, transfer.updatedAt, transfer.id);
-        attachEntityTransferNames(transfer);
-    }
-
     public AuditLog auditLog(
         long companyId,
         String entityType,
@@ -1303,7 +1292,7 @@ public class EnterpriseStore {
         return log;
     }
 
-    public void attachDepartmentNames() {
+    private void attachDepartmentNames() {
         employees.values().forEach(this::attachDepartmentName);
     }
 
