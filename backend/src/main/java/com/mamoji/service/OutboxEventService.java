@@ -2,7 +2,8 @@ package com.mamoji.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mamoji.domain.Models.OutboxEvent;
+import com.mamoji.notification.domain.OutboxEvent;
+import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.OutboxEventHandler;
 import java.sql.ResultSet;
@@ -26,6 +27,7 @@ public class OutboxEventService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactionTemplate;
     private final OutboxEventHandler handler;
+    private final OutboxEventStatusRepository statusRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
     private final boolean consumerEnabled;
@@ -37,6 +39,7 @@ public class OutboxEventService {
         JdbcTemplate jdbc,
         TransactionTemplate transactionTemplate,
         OutboxEventHandler handler,
+        OutboxEventStatusRepository statusRepository,
         @Value("${mamoji.outbox.enabled:true}") boolean enabled,
         @Value("${mamoji.outbox.consumer.enabled:true}") boolean consumerEnabled,
         @Value("${mamoji.outbox.consumer.batch-size:20}") int batchSize,
@@ -46,6 +49,7 @@ public class OutboxEventService {
         this.jdbc = jdbc;
         this.transactionTemplate = transactionTemplate;
         this.handler = handler;
+        this.statusRepository = statusRepository;
         this.enabled = enabled;
         this.consumerEnabled = consumerEnabled;
         this.batchSize = Math.max(1, batchSize);
@@ -92,7 +96,7 @@ public class OutboxEventService {
         for (OutboxEvent event : events) {
             try {
                 handler.handle(event);
-                markProcessed(event.id);
+                markProcessed(event);
             } catch (RuntimeException ex) {
                 markFailed(event, ex);
             }
@@ -115,12 +119,13 @@ public class OutboxEventService {
                 event.status = "processing";
                 event.attempts = event.attempts + 1;
                 event.lockedAt = now;
+                event.lockToken = UUID.randomUUID().toString();
                 event.updatedAt = now;
                 jdbc.update("""
                     UPDATE outbox_events
-                    SET status = 'processing', attempts = ?, locked_at = ?, updated_at = ?
+                    SET status = 'processing', attempts = ?, locked_at = ?, lock_token = ?, updated_at = ?
                     WHERE id = ?
-                    """, event.attempts, event.lockedAt, event.updatedAt, event.id);
+                    """, event.attempts, event.lockedAt, event.lockToken, event.updatedAt, event.id);
             }
             return events;
         });
@@ -131,7 +136,7 @@ public class OutboxEventService {
         String staleBefore = OffsetDateTime.now().minusMinutes(staleLockMinutes).toString();
         int recovered = jdbc.update("""
             UPDATE outbox_events
-            SET status = 'failed', next_attempt_at = ?, locked_at = NULL, updated_at = ?,
+            SET status = 'failed', next_attempt_at = ?, locked_at = NULL, lock_token = NULL, updated_at = ?,
                 last_error = 'Recovered stale processing lock'
             WHERE status = 'processing'
               AND locked_at IS NOT NULL
@@ -142,14 +147,15 @@ public class OutboxEventService {
         }
     }
 
-    private void markProcessed(long id) {
+    private void markProcessed(OutboxEvent event) {
         String now = InMemoryStore.now();
-        jdbc.update("""
-            UPDATE outbox_events
-            SET status = 'processed', processed_at = ?, locked_at = NULL, next_attempt_at = NULL,
-                last_error = NULL, updated_at = ?
-            WHERE id = ?
-            """, now, now, id);
+        if (!statusRepository.markProcessed(event.id, event.lockToken, now)) {
+            log.warn(
+                "Ignored processed transition for outbox event id={} because lease {} is no longer current",
+                event.id,
+                event.lockToken
+            );
+        }
     }
 
     private void markFailed(OutboxEvent event, RuntimeException ex) {
@@ -157,11 +163,22 @@ public class OutboxEventService {
         boolean exhausted = event.attempts >= maxAttempts;
         String nextAttemptAt = exhausted ? null : OffsetDateTime.now().plusSeconds(backoffSeconds(event.attempts)).toString();
         String status = exhausted ? "dead" : "failed";
-        jdbc.update("""
-            UPDATE outbox_events
-            SET status = ?, next_attempt_at = ?, locked_at = NULL, last_error = ?, updated_at = ?
-            WHERE id = ?
-            """, status, nextAttemptAt, truncate(errorMessage(ex), 1000), now, event.id);
+        boolean updated = statusRepository.markFailed(
+            event.id,
+            event.lockToken,
+            status,
+            nextAttemptAt,
+            truncate(errorMessage(ex), 1000),
+            now
+        );
+        if (!updated) {
+            log.warn(
+                "Ignored failed transition for outbox event id={} because lease {} is no longer current",
+                event.id,
+                event.lockToken
+            );
+            return;
+        }
         if (exhausted) {
             log.error("Outbox event id={} type={} moved to dead after {} attempts", event.id, event.eventType, event.attempts, ex);
         } else {
@@ -188,6 +205,7 @@ public class OutboxEventService {
         event.attempts = rs.getInt("attempts");
         event.nextAttemptAt = rs.getString("next_attempt_at");
         event.lockedAt = rs.getString("locked_at");
+        event.lockToken = rs.getString("lock_token");
         event.processedAt = rs.getString("processed_at");
         event.lastError = rs.getString("last_error");
         event.createdAt = rs.getString("created_at");

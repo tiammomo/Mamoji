@@ -204,9 +204,16 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("9", jdbc.queryForObject("""
+        assertEquals("10", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'outbox_events'
+              AND column_name = 'lock_token'
+            """, Integer.class));
     }
 
     @Test
