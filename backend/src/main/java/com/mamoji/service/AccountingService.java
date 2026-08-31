@@ -4,13 +4,9 @@ import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.PayloadReader;
 import com.mamoji.budget.application.BudgetApplicationService;
-import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
-import com.mamoji.budget.domain.BudgetReservation;
-import com.mamoji.budget.domain.BudgetReservationCommand;
 import com.mamoji.domain.Models.Account;
 import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.operations.domain.TransactionRiskAssessment;
@@ -380,103 +376,6 @@ public class AccountingService {
         return tx;
     }
 
-    @Transactional
-    public TransactionRecord updateTransaction(String authorization, long id, Map<String, Object> body) {
-        User user = requireUser(authorization);
-        TransactionRecord current = requireTransactionForUpdate(user, id, optionalLong(body.get("companyId")).orElse(null));
-        if (current.type == 3) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Refund transactions cannot be edited");
-        }
-        Company company = accessControl.resolveCompany(user, current.companyId);
-        TransactionRecord tx = copyTransaction(current);
-        if (body.containsKey("amount")) {
-            tx.amount = positiveAmount(body.get("amount"), "amount");
-        }
-        if (body.containsKey("categoryId")) {
-            tx.categoryId = longValue(body.get("categoryId"), tx.categoryId);
-        }
-        if (body.containsKey("accountId")) {
-            tx.accountId = longValue(body.get("accountId"), tx.accountId);
-        }
-        if (body.containsKey("date")) {
-            tx.date = validDate(text(body.get("date")), "date");
-        }
-        if (body.containsKey("note")) {
-            tx.note = text(body.get("note"));
-        }
-        if (current.refundedAmount.compareTo(BigDecimal.ZERO) > 0
-            && (tx.accountId != current.accountId
-                || tx.categoryId != current.categoryId
-                || !Objects.equals(tx.date, current.date))) {
-            throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Account, category, and date cannot change after a transaction has refunds"
-            );
-        }
-        if (tx.refundedAmount.compareTo(tx.amount) > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction amount cannot be lower than refunded amount");
-        }
-        Map<Long, Account> lockedAccounts = lockAccounts(current.accountId, tx.accountId);
-        Account oldAccount = lockedAccounts.get(current.accountId);
-        Account newAccount = lockedAccounts.get(tx.accountId);
-        validateRelationOwnership(user, company.id, tx.accountId, tx.categoryId, newAccount, tx.type);
-        store.attachTransactionRelations(tx);
-        tx.familyId = resolveLedgerId(user, company, newAccount);
-        budgetService.releaseTransactionReservation(current.id, "transaction updated");
-        Optional<BudgetReservation> reservation = reserveUpdatedExpense(company.id, user.id, tx);
-        tx.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
-        tx.isRefundable = tx.type == 2 && tx.refundedAmount.compareTo(tx.amount) < 0;
-        touch(tx);
-        store.saveTransaction(tx);
-        reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), tx.id));
-        if (oldAccount.id == newAccount.id) {
-            Account adjusted = copyAccount(oldAccount);
-            adjustAccount(adjusted, current, -1);
-            adjustAccount(adjusted, tx, 1);
-            store.saveAccount(adjusted);
-        } else {
-            saveAdjustedAccount(oldAccount, current, -1);
-            saveAdjustedAccount(newAccount, tx, 1);
-        }
-        budgetService.refreshCompany(company.id);
-        audit(company.id, "transaction", tx.id, "update", "更新交易: " + tx.note, user);
-        return tx;
-    }
-
-    @Transactional
-    public void deleteTransaction(String authorization, long id) {
-        deleteTransaction(authorization, id, null);
-    }
-
-    @Transactional
-    public void deleteTransaction(String authorization, long id, Long companyId) {
-        User user = requireUser(authorization);
-        TransactionRecord tx = requireTransactionForUpdate(user, id, companyId);
-        Company company = accessControl.resolveCompany(user, tx.companyId);
-        if (tx.type != 3 && store.transactionHasRefunds(tx.id)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction has refunds and cannot be deleted");
-        }
-        TransactionRecord original = null;
-        if (tx.type == 3 && tx.originalTransactionId != null) {
-            original = store.transactionForUpdate(tx.originalTransactionId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Original transaction no longer exists"));
-        }
-        Account account = store.accountForUpdate(tx.accountId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Transaction account no longer exists"));
-        saveAdjustedAccount(account, tx, -1);
-        if (original != null) {
-            TransactionRecord updatedOriginal = copyTransaction(original);
-            updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.subtract(tx.amount).max(BigDecimal.ZERO);
-            updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
-            touch(updatedOriginal);
-            store.saveTransaction(updatedOriginal);
-        }
-        budgetService.releaseTransactionReservation(tx.id, "transaction deleted");
-        store.deleteTransaction(id);
-        budgetService.refreshCompany(company.id);
-        audit(company.id, "transaction", tx.id, "delete", "删除交易: " + tx.note, user);
-    }
-
     public List<TransactionRecord> refundableTransactions(String authorization) {
         return refundableTransactions(authorization, null);
     }
@@ -531,29 +430,6 @@ public class AccountingService {
         budgetService.refreshCompany(company.id);
         audit(company.id, "transaction", refund.id, "refund", "退款交易 #" + original.id, user);
         return Map.of("transaction", refund, "risk", riskFor(refund));
-    }
-
-    private Optional<BudgetReservation> reserveUpdatedExpense(long companyId, long userId, TransactionRecord transaction) {
-        if (transaction.type != 2) {
-            return Optional.empty();
-        }
-        try {
-            return budgetService.reserveExpense(new BudgetReservationCommand(
-                companyId,
-                userId,
-                transaction.familyId,
-                transaction.categoryId,
-                LocalDate.parse(transaction.date),
-                transaction.amount,
-                "transaction-update:" + transaction.id + ":" + (transaction.version + 1),
-                transaction.id
-            ));
-        } catch (BudgetCapacityExceededException ex) {
-            throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Budget capacity exceeded; available amount is " + ex.available().stripTrailingZeros().toPlainString()
-            );
-        }
     }
 
     private void applyAccountFields(Account account, Map<String, Object> body) {
@@ -790,21 +666,6 @@ public class AccountingService {
         return new TransactionRelations(account, category);
     }
 
-    private Map<Long, Account> lockAccounts(long firstId, long secondId) {
-        long low = Math.min(firstId, secondId);
-        long high = Math.max(firstId, secondId);
-        Account first = store.accountForUpdate(low)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
-        Map<Long, Account> result = new LinkedHashMap<>();
-        result.put(first.id, first);
-        if (high != low) {
-            Account second = store.accountForUpdate(high)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
-            result.put(second.id, second);
-        }
-        return result;
-    }
-
     private void saveAdjustedAccount(Account source, TransactionRecord tx, int direction) {
         Account adjusted = copyAccount(source);
         adjustAccount(adjusted, tx, direction);
@@ -848,17 +709,6 @@ public class AccountingService {
             .map(ledger -> ledger.id)
             .findFirst()
             .orElseGet(() -> store.ensureCompanyAccountingWorkspace(user.id, company.id, company.currency, company.name).id);
-    }
-
-    private Long resolveLedgerId(User user, Company company, Account account) {
-        if (account.ledgerId != null) {
-            Ledger ledger = store.findLedger(account.ledgerId).orElse(null);
-            if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Account ledger is outside the selected company");
-            }
-            return ledger.id;
-        }
-        return defaultLedgerId(user, company);
     }
 
     private Company resolveCompany(User user, Map<String, ?> values) {
@@ -969,10 +819,6 @@ public class AccountingService {
 
     private static Optional<Long> optionalLong(Object value) {
         return PayloadReader.optionalLong(value);
-    }
-
-    private static long longValue(Object value, long fallback) {
-        return PayloadReader.longValue(value, fallback);
     }
 
     private static int intValue(Object value, int fallback) {

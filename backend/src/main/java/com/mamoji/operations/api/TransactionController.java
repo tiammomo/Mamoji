@@ -3,6 +3,8 @@ package com.mamoji.operations.api;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionApplicationService;
+import com.mamoji.operations.application.TransactionMutationService;
+import com.mamoji.operations.domain.UpdateTransactionCommand;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.CurrentActor;
 import com.mamoji.service.AccountingService;
@@ -32,15 +34,18 @@ import org.springframework.web.multipart.MultipartFile;
 public class TransactionController {
     private final AccountingService service;
     private final TransactionApplicationService applicationService;
+    private final TransactionMutationService mutationService;
     private final TransactionImportService importService;
 
     public TransactionController(
         AccountingService service,
         TransactionApplicationService applicationService,
+        TransactionMutationService mutationService,
         TransactionImportService importService
     ) {
         this.service = service;
         this.applicationService = applicationService;
+        this.mutationService = mutationService;
         this.importService = importService;
     }
 
@@ -110,23 +115,28 @@ public class TransactionController {
 
     @PutMapping("/{id}")
     public TransactionRecord update(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody TransactionUpdateRequest request
     ) {
-        Map<String, Object> scopedBody = new java.util.LinkedHashMap<>(body);
-        if (companyId != null) scopedBody.put("companyId", companyId);
-        return service.updateTransaction(authorization, id, scopedBody);
+        return mutationService.update(actor, id, new UpdateTransactionCommand(
+            companyId == null ? request.companyId() : companyId,
+            request.amount(),
+            request.categoryId(),
+            request.accountId(),
+            request.date(),
+            request.note()
+        ));
     }
 
     @DeleteMapping("/{id}")
     public void delete(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        service.deleteTransaction(authorization, id, companyId);
+        mutationService.delete(actor, id, companyId);
     }
 
     @GetMapping("/refundable")

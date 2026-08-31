@@ -699,6 +699,40 @@ class AuthAndPermissionIntegrationTest {
     }
 
     @Test
+    void transactionUpdateValidatesTypedFieldsBeforeChangingAccountingData() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Typed Transaction Update " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Typed update account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Typed update expense", "expense");
+        Map<String, Object> created = createTransaction(token, companyId, account, category, "25");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+        long transactionId = ((Number) transaction.get("id")).longValue();
+
+        ApiResponse invalid = request(
+            "PUT",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            Map.of(
+                "amount", 0,
+                "categoryId", 0,
+                "accountId", 0,
+                "note", "x".repeat(2001)
+            ),
+            token
+        );
+
+        assertEquals(400, invalid.status(), invalid.body());
+        Map<String, Object> problem = parseMap(invalid.body());
+        assertEquals("validation_failed", problem.get("code"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fields = (Map<String, Object>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(Set.of("amount", "categoryId", "accountId", "note")));
+        assertEquals("25", jdbc.queryForObject(
+            "SELECT amount FROM transactions WHERE id = ?", String.class, transactionId
+        ));
+    }
+
+    @Test
     void recurringItemCannotPostTwiceOnTheSameDay() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Recurring Lock " + System.nanoTime());
@@ -1214,6 +1248,15 @@ class AuthAndPermissionIntegrationTest {
             Integer.class,
             transactionId
         ));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE entity_type = 'transaction' AND entity_id = ? AND action IN ('update', 'delete')
+            """, Integer.class, transactionId));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE aggregate_type = 'transaction' AND aggregate_id = ?
+              AND event_type IN ('accounting.transaction.update', 'accounting.transaction.delete')
+            """, Integer.class, transactionId));
         assertEquals(0, BigDecimal.ZERO.compareTo(budgetSpent(token, companyId)));
     }
 
