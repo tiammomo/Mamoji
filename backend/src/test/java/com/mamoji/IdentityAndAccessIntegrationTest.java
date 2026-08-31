@@ -1,0 +1,364 @@
+package com.mamoji;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.math.BigDecimal;
+import java.time.YearMonth;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@Testcontainers(disabledWithoutDocker = true)
+class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
+
+    @DynamicPropertySource
+    static void datasourceProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @Test
+    void loginHidesPasswordHashAndLogoutInvalidatesToken() throws Exception {
+        Map<String, Object> session = login("test@mamoji.com", "123456");
+        String token = text(session.get("token"));
+
+        assertTrue(token.length() >= 40);
+        assertFalse(toJson(session).contains("passwordHash"));
+
+        ApiResponse me = request("GET", "/api/v1/auth/me", null, token);
+        assertEquals(200, me.status());
+        assertFalse(me.body().contains("passwordHash"));
+
+        ApiResponse logout = request("POST", "/api/v1/auth/logout", null, token);
+        assertEquals(200, logout.status());
+
+        ApiResponse meAfterLogout = request("GET", "/api/v1/auth/me", null, token);
+        assertEquals(401, meAfterLogout.status());
+    }
+
+    @Test
+    void inviteModeBlocksPublicRegistrationAndAllowsInvitedRegistration() throws Exception {
+        String email = uniqueEmail("invited");
+        String password = "Member-Password-123!";
+
+        ApiResponse blocked = request("POST", "/api/v1/auth/register", Map.of(
+            "email", email,
+            "nickname", "Blocked Member",
+            "password", password
+        ), null);
+        assertEquals(403, blocked.status());
+
+        String inviteToken = createInvite(email, Permissions.USER);
+        ApiResponse registered = request("POST", "/api/v1/auth/register", Map.of(
+            "email", email,
+            "nickname", "Invited Member",
+            "avatar", "🧭|#123456",
+            "password", password,
+            "inviteToken", inviteToken
+        ), null);
+        assertEquals(200, registered.status());
+        Map<String, Object> session = parseMap(registered.body());
+        assertNotNull(session.get("token"));
+        assertFalse(registered.body().contains("passwordHash"));
+        Map<String, Object> membership = jdbc.queryForMap("""
+            SELECT lm.nickname, lm.avatar
+            FROM ledger_members lm
+            JOIN users u ON u.id = lm.user_id
+            WHERE u.email = ?
+            """, email);
+        assertEquals("Invited Member", membership.get("nickname"));
+        assertEquals("🧭|#123456", membership.get("avatar"));
+    }
+
+    @Test
+    void ordinaryUserCannotAccessAdminSurfaces() throws Exception {
+        String token = registerInvitedUser(uniqueEmail("member"));
+
+        assertEquals(403, request("GET", "/api/v1/admin/users", null, token).status());
+        assertEquals(403, request("GET", "/api/v1/backup/status", null, token).status());
+        assertEquals(403, request("GET", "/api/v1/auth/invitations", null, token).status());
+        assertEquals(403, request("GET", "/api/v1/audit-logs?size=1", null, token).status());
+    }
+
+    @Test
+    void adminUserManagementOwnsItsProjectionAndProtectsTheLastAdministrator() throws Exception {
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long administratorId = ((Number) parseMap(request(
+            "GET", "/api/v1/auth/me", null, adminToken
+        ).body()).get("id")).longValue();
+
+        ApiResponse lastAdministrator = request(
+            "PUT", "/api/v1/admin/users/" + administratorId, Map.of("role", 2), adminToken
+        );
+        assertEquals(409, lastAdministrator.status(), lastAdministrator.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT role FROM users WHERE id = ?", Integer.class, administratorId
+        ));
+
+        String email = uniqueEmail("managed-user");
+        String memberToken = registerInvitedUser(email);
+        long memberId = ((Number) parseMap(request(
+            "GET", "/api/v1/auth/me", null, memberToken
+        ).body()).get("id")).longValue();
+        ApiResponse searched = request(
+            "GET", "/api/v1/admin/users?keyword=" + email + "&page=0&size=1", null, adminToken
+        );
+        assertEquals(200, searched.status(), searched.body());
+        Map<String, Object> page = parseMap(searched.body());
+        assertEquals(1, ((Number) page.get("totalElements")).intValue());
+        assertFalse(searched.body().contains("passwordHash"));
+
+        ApiResponse invalid = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("permissions", 16), adminToken
+        );
+        assertEquals(400, invalid.status(), invalid.body());
+
+        ApiResponse promoted = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("role", 1, "permissions", 3), adminToken
+        );
+        assertEquals(200, promoted.status(), promoted.body());
+        assertEquals(1, ((Number) parseMap(promoted.body()).get("role")).intValue());
+        assertEquals(3, ((Number) parseMap(promoted.body()).get("permissions")).intValue());
+        assertEquals(1, coreStore.users.get(memberId).role);
+        assertEquals(3, coreStore.users.get(memberId).permissions);
+
+        ApiResponse demoted = request(
+            "PUT", "/api/v1/admin/users/" + memberId, Map.of("role", 2, "permissions", 1), adminToken
+        );
+        assertEquals(200, demoted.status(), demoted.body());
+        assertEquals(200, request("DELETE", "/api/v1/admin/users/" + memberId, null, adminToken).status());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM users WHERE id = ?", Integer.class, memberId
+        ));
+        assertFalse(coreStore.users.containsKey(memberId));
+    }
+
+    @Test
+    void notificationPreferencesRejectPrivateWebhookTargets() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+
+        ApiResponse response = request("PUT", "/api/v1/notifications/preferences", Map.of(
+            "webhookEnabled", true,
+            "webhookProvider", "generic",
+            "webhookUrl", "http://169.254.169.254/latest/meta-data"
+        ), token);
+
+        assertEquals(400, response.status(), response.body());
+    }
+
+    @Test
+    void freshMigrationProvidesProductionAccountingAndOvertimeColumns() {
+        Set<String> employeeColumns = Set.copyOf(jdbc.queryForList("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'employees'
+            """, String.class));
+        assertTrue(employeeColumns.containsAll(Set.of(
+            "overtime_base",
+            "weekday_overtime_hours",
+            "rest_day_overtime_hours",
+            "holiday_overtime_hours",
+            "overtime_pay",
+            "overtime_policy_note"
+        )));
+
+        Integer scopedTableCount = jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND column_name = 'company_id'
+              AND table_name IN ('accounts', 'categories', 'budgets', 'transactions', 'ledgers', 'recurring_items')
+            """, Integer.class);
+        assertEquals(6, scopedTableCount);
+        Set<String> accountingConstraints = Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname IN (
+                'fk_accounts_company',
+                'fk_categories_company',
+                'fk_transactions_company',
+                'fk_transactions_account',
+                'fk_transactions_category',
+                'fk_transactions_original'
+            )
+            """, String.class));
+        assertEquals(Set.of(
+            "fk_accounts_company",
+            "fk_categories_company",
+            "fk_transactions_company",
+            "fk_transactions_account",
+            "fk_transactions_category",
+            "fk_transactions_original"
+        ), accountingConstraints);
+        assertEquals("9", jdbc.queryForObject("""
+            SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
+            """, String.class));
+    }
+
+    @Test
+    void financeRoleInOneCompanyDoesNotAuthorizeTaxWritesInAnotherCompany() throws Exception {
+        String financeToken = registerInvitedUser(uniqueEmail("finance-scope"));
+        Map<String, Object> financeUser = parseMap(request("GET", "/api/v1/auth/me", null, financeToken).body());
+        long financeUserId = ((Number) financeUser.get("id")).longValue();
+        String financeEmail = text(financeUser.get("email"));
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyA = createCompany(adminToken, "Finance Role A " + System.nanoTime());
+        long companyB = createCompany(adminToken, "Viewer Role B " + System.nanoTime());
+        createEmployee(adminToken, companyA, financeUserId, financeEmail, "finance_admin");
+        createEmployee(adminToken, companyB, financeUserId, financeEmail, "viewer");
+
+        ApiResponse allowed = request("POST", "/api/v1/enterprise/tax-items", Map.of(
+            "companyId", companyA,
+            "name", "Allowed scoped tax",
+            "period", "2026-07",
+            "taxType", "vat",
+            "taxAmount", 1,
+            "dueDate", "2026-07-31"
+        ), financeToken);
+        assertEquals(200, allowed.status(), allowed.body());
+
+        ApiResponse rejected = request("POST", "/api/v1/enterprise/tax-items", Map.of(
+            "companyId", companyB,
+            "name", "Forbidden cross-company tax",
+            "period", "2026-07",
+            "taxType", "vat",
+            "taxAmount", 1,
+            "dueDate", "2026-07-31"
+        ), financeToken);
+        assertEquals(403, rejected.status(), rejected.body());
+    }
+
+    @Test
+    void departedEmployeeImmediatelyLosesCompanyAndFinanceAccess() throws Exception {
+        String employeeToken = registerInvitedUser(uniqueEmail("departed-finance"));
+        Map<String, Object> employeeUser = parseMap(request("GET", "/api/v1/auth/me", null, employeeToken).body());
+        long userId = ((Number) employeeUser.get("id")).longValue();
+        String email = text(employeeUser.get("email"));
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(adminToken, "Departure Access " + System.nanoTime());
+        Map<String, Object> employee = createEmployee(adminToken, companyId, userId, email, "finance_admin");
+        long employeeId = ((Number) employee.get("id")).longValue();
+
+        assertEquals(200, request("GET", "/api/v1/enterprise/company?companyId=" + companyId, null, employeeToken).status());
+        ApiResponse departure = request("PUT", "/api/v1/enterprise/employees/" + employeeId, Map.of(
+            "status", "departed",
+            "leaveDate", "2026-07-14"
+        ), adminToken);
+        assertEquals(200, departure.status(), departure.body());
+
+        assertEquals(403, request("GET", "/api/v1/enterprise/company?companyId=" + companyId, null, employeeToken).status());
+        ApiResponse taxWrite = request("POST", "/api/v1/enterprise/tax-items", Map.of(
+            "companyId", companyId,
+            "name", "Must remain forbidden after departure",
+            "period", "2026-07",
+            "taxType", "vat",
+            "taxAmount", 1,
+            "dueDate", "2026-07-31"
+        ), employeeToken);
+        assertEquals(403, taxWrite.status(), taxWrite.body());
+    }
+
+    @Test
+    void readonlyFinanceRoleCannotUseCompanyWideWritePermissions() throws Exception {
+        String employeeToken = registerInvitedUser(uniqueEmail("readonly-finance"));
+        Map<String, Object> employeeUser = parseMap(request("GET", "/api/v1/auth/me", null, employeeToken).body());
+        long userId = ((Number) employeeUser.get("id")).longValue();
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(adminToken, "Readonly Finance " + System.nanoTime());
+        createEmployee(
+            adminToken,
+            companyId,
+            userId,
+            text(employeeUser.get("email")),
+            "finance_admin",
+            "readonly"
+        );
+
+        ApiResponse taxWrite = request("POST", "/api/v1/enterprise/tax-items", Map.of(
+            "companyId", companyId,
+            "name", "Readonly role must not write",
+            "period", "2026-07",
+            "taxType", "vat",
+            "taxAmount", 1,
+            "dueDate", "2026-07-31"
+        ), employeeToken);
+        assertEquals(403, taxWrite.status(), taxWrite.body());
+    }
+
+    @Test
+    void workspaceAppliesDepartmentScopeInsideAggregateQueries() throws Exception {
+        YearMonth currentPeriod = YearMonth.now();
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(adminToken, "Workspace Scope " + System.nanoTime());
+        long departmentA = createDepartment(adminToken, companyId, "Workspace A");
+        long departmentB = createDepartment(adminToken, companyId, "Workspace B");
+
+        String managerToken = registerInvitedUser(uniqueEmail("workspace-manager"));
+        Map<String, Object> manager = parseMap(request("GET", "/api/v1/auth/me", null, managerToken).body());
+        createEmployee(adminToken, companyId, ((Number) manager.get("id")).longValue(), text(manager.get("email")),
+            "department_manager", "department", departmentA);
+
+        String peerToken = registerInvitedUser(uniqueEmail("workspace-peer"));
+        Map<String, Object> peer = parseMap(request("GET", "/api/v1/auth/me", null, peerToken).body());
+        createEmployee(adminToken, companyId, ((Number) peer.get("id")).longValue(), text(peer.get("email")),
+            "employee", "self", departmentA);
+
+        String outsiderToken = registerInvitedUser(uniqueEmail("workspace-outsider"));
+        Map<String, Object> outsider = parseMap(request("GET", "/api/v1/auth/me", null, outsiderToken).body());
+        createEmployee(adminToken, companyId, ((Number) outsider.get("id")).longValue(), text(outsider.get("email")),
+            "employee", "self", departmentB);
+
+        Map<String, Object> peerAccount = createAccount(peerToken, companyId, "Department A account", "1000");
+        Map<String, Object> peerCategory = createCategory(peerToken, companyId, "Department A expense", "expense");
+        createTransaction(peerToken, companyId, peerAccount, peerCategory, "40", currentPeriod.atDay(14).toString());
+
+        Map<String, Object> outsiderAccount = createAccount(outsiderToken, companyId, "Department B account", "1000");
+        Map<String, Object> outsiderCategory = createCategory(outsiderToken, companyId, "Department B expense", "expense");
+        createTransaction(outsiderToken, companyId, outsiderAccount, outsiderCategory, "90", currentPeriod.atDay(14).toString());
+
+        ApiResponse contextResponse = request(
+            "GET", "/api/v1/platform/access-context?companyId=" + companyId, null, managerToken
+        );
+        assertEquals(200, contextResponse.status(), contextResponse.body());
+        assertEquals(departmentA, ((Number) parseMap(contextResponse.body()).get("departmentId")).longValue());
+
+        ApiResponse response = request("GET", "/api/v1/workspace?companyId=" + companyId, null, managerToken);
+        assertEquals(200, response.status(), response.body());
+        Map<String, Object> workspace = parseMap(response.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> metrics = (Map<String, Object>) workspace.get("metrics");
+        assertEquals(0, new BigDecimal("40").compareTo(decimal(metrics.get("monthlyExpense"))));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> recentTransactions = (List<Map<String, Object>>) workspace.get("recentTransactions");
+        assertEquals(1, recentTransactions.size());
+        assertEquals(0, new BigDecimal("40").compareTo(decimal(recentTransactions.getFirst().get("amount"))));
+
+        ApiResponse workforceResponse = request(
+            "GET", "/api/v1/workforce-cost?companyId=" + companyId + "&period=" + currentPeriod, null, managerToken
+        );
+        assertEquals(200, workforceResponse.status(), workforceResponse.body());
+        Map<String, Object> workforce = parseMap(workforceResponse.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> headcount = (Map<String, Object>) workforce.get("headcount");
+        assertEquals(2, ((Number) headcount.get("costed")).intValue());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> costs = (Map<String, Object>) workforce.get("costs");
+        assertEquals(0, new BigDecimal("40").compareTo(decimal(costs.get("operatingExpense"))));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> departments = (List<Map<String, Object>>) workforce.get("departments");
+        assertEquals(1, departments.size());
+        assertEquals(departmentA, ((Number) departments.getFirst().get("departmentId")).longValue());
+    }
+}
