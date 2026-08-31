@@ -10,15 +10,14 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Ledger;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
-import com.mamoji.operations.domain.CreateTransactionCommand;
+import com.mamoji.operations.domain.TransactionRiskAssessment;
+import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -376,67 +375,6 @@ public class AccountingService {
         TransactionRecord tx = requireTransaction(user, id, companyId);
         store.attachTransactionRelations(tx);
         return tx;
-    }
-
-    @Transactional
-    public Map<String, Object> createTransaction(String authorization, Map<String, Object> body) {
-        CreateTransactionCommand command = new CreateTransactionCommand(
-            optionalLong(body.get("companyId")).orElse(null),
-            intValue(body.get("type"), 2),
-            positiveAmount(body.get("amount"), "amount"),
-            requiredId(body.get("categoryId"), "categoryId"),
-            requiredId(body.get("accountId"), "accountId"),
-            LocalDate.parse(validDate(textOr(body.get("date"), LocalDate.now().toString()), "date")),
-            textOr(body.get("note"), ""),
-            idempotencyKey(body.get("idempotencyKey"))
-        );
-        return createTransaction(authorization, command);
-    }
-
-    @Transactional
-    public Map<String, Object> createTransaction(String authorization, CreateTransactionCommand command) {
-        User user = requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, command.companyId());
-        String idempotencyKey = idempotencyKey(command.idempotencyKey());
-        if (idempotencyKey != null) {
-            store.lockTransactionIdempotency(company.id, idempotencyKey);
-            Optional<TransactionRecord> replay = store.findTransactionByIdempotency(company.id, idempotencyKey);
-            if (replay.isPresent()) {
-                TransactionRecord existing = replay.get();
-                store.attachTransactionRelations(existing);
-                return Map.of("transaction", existing, "risk", riskFor(existing), "replayed", true);
-            }
-        }
-        int type = command.type();
-        if (type != 1 && type != 2) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be income(1) or expense(2)");
-        }
-        BigDecimal amount = positiveAmount(command.amount(), "amount");
-        long categoryId = requiredId(command.categoryId(), "categoryId");
-        long accountId = requiredId(command.accountId(), "accountId");
-        String date = validDate(command.date().toString(), "date");
-        Account lockedAccount = store.accountForUpdate(accountId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
-        TransactionRelations relations = validateRelationOwnership(user, company.id, accountId, categoryId, lockedAccount, type);
-        Long ledgerId = resolveLedgerId(user, company, relations.account());
-        TransactionRecord tx = store.transaction(
-            user.id,
-            company.id,
-            ledgerId,
-            type,
-            String.valueOf(amount),
-            categoryId,
-            accountId,
-            date,
-            textOr(command.note(), ""),
-            idempotencyKey
-        );
-        tx.budgetId = budgetService.matchingBudgetId(tx).orElse(null);
-        store.saveTransaction(tx);
-        saveAdjustedAccount(relations.account(), tx, 1);
-        budgetService.refreshCompany(company.id);
-        audit(company.id, "transaction", tx.id, "create", "创建交易: " + tx.note, user);
-        return Map.of("transaction", tx, "risk", riskFor(tx));
     }
 
     @Transactional
@@ -860,83 +798,8 @@ public class AccountingService {
         touch(account);
     }
 
-    private Map<String, Object> riskFor(TransactionRecord tx) {
-        YearMonth month = YearMonth.from(LocalDate.parse(tx.date));
-        YearMonth previousMonth = month.minusMonths(1);
-        BigDecimal income = BigDecimal.ZERO;
-        BigDecimal expense = BigDecimal.ZERO;
-        BigDecimal categoryCurrent = BigDecimal.ZERO;
-        BigDecimal categoryLast = BigDecimal.ZERO;
-        long dailyExpenseCount = 0;
-        long duplicateCount = 0;
-        List<TransactionRecord> riskTransactions = new ArrayList<>(store.queryAllTransactions(tx.userId, tx.companyId));
-        riskTransactions.removeIf(item -> item.id == tx.id);
-        riskTransactions.add(tx);
-        for (TransactionRecord item : riskTransactions) {
-            if (item.userId != tx.userId || !Objects.equals(item.companyId, tx.companyId)) {
-                continue;
-            }
-            boolean currentMonth = sameMonth(item.date, month);
-            if (currentMonth && item.type == 1) {
-                income = income.add(item.amount);
-            }
-            if (currentMonth && item.type == 2) {
-                expense = expense.add(item.amount);
-            } else if (currentMonth && item.type == 3) {
-                expense = expense.subtract(item.amount);
-            }
-            if (item.type == 2 && item.date.equals(tx.date)) {
-                dailyExpenseCount++;
-            }
-            if (item.id != tx.id
-                && item.type == tx.type
-                && item.categoryId == tx.categoryId
-                && item.accountId == tx.accountId
-                && item.amount.compareTo(tx.amount) == 0
-                && item.date.equals(tx.date)) {
-                duplicateCount++;
-            }
-            if (item.categoryId == tx.categoryId && item.type == 2 && currentMonth) {
-                categoryCurrent = categoryCurrent.add(item.amount);
-            } else if (item.categoryId == tx.categoryId && item.type == 3 && currentMonth) {
-                categoryCurrent = categoryCurrent.subtract(item.amount);
-            } else if (item.categoryId == tx.categoryId && item.type == 2 && sameMonth(item.date, previousMonth)) {
-                categoryLast = categoryLast.add(item.amount);
-            } else if (item.categoryId == tx.categoryId && item.type == 3 && sameMonth(item.date, previousMonth)) {
-                categoryLast = categoryLast.subtract(item.amount);
-            }
-        }
-        expense = expense.max(BigDecimal.ZERO);
-        categoryCurrent = categoryCurrent.max(BigDecimal.ZERO);
-        categoryLast = categoryLast.max(BigDecimal.ZERO);
-        List<String> flags = new ArrayList<>();
-        String level = "low";
-        if (tx.amount.compareTo(new BigDecimal("5000")) >= 0 && tx.type == 2) {
-            flags.add("large_transaction");
-            level = "high";
-        }
-        if (duplicateCount > 0) {
-            flags.add("duplicate_candidate");
-            level = level.equals("high") ? "high" : "medium";
-        }
-        double ratio = income.compareTo(BigDecimal.ZERO) == 0 ? 0 : expense.divide(income, 4, RoundingMode.HALF_UP).doubleValue();
-        if (ratio > 0.8) {
-            flags.add("expense_income_ratio_high");
-            level = "high";
-        }
-        String message = flags.isEmpty() ? "交易风险较低" : "交易触发了风控提示";
-        Map<String, Object> risk = new LinkedHashMap<>();
-        risk.put("level", level);
-        risk.put("flags", flags);
-        risk.put("message", message);
-        risk.put("monthlyIncome", income);
-        risk.put("monthlyExpense", expense);
-        risk.put("expenseIncomeRatio", ratio);
-        risk.put("dailyExpenseCount", dailyExpenseCount);
-        risk.put("duplicateCount", duplicateCount);
-        risk.put("categoryCurrentMonth", categoryCurrent);
-        risk.put("categoryLastMonth", categoryLast);
-        return risk;
+    private TransactionRiskAssessment riskFor(TransactionRecord tx) {
+        return TransactionRiskPolicy.assess(tx, store.queryAllTransactions(tx.userId, tx.companyId));
     }
 
     private String transactionSearchText(TransactionRecord tx) {
@@ -989,30 +852,6 @@ public class AccountingService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be positive");
         }
         return amount;
-    }
-
-    private String idempotencyKey(Object value) {
-        String key = nullableText(value);
-        if (key == null) return null;
-        key = key.trim();
-        if (key.isEmpty()) return null;
-        if (key.length() > 128 || !key.matches("[A-Za-z0-9._:-]+")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
-        }
-        return key;
-    }
-
-    private long requiredId(Object value, String field) {
-        final long id;
-        try {
-            id = longValue(value, 0);
-        } catch (NumberFormatException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be a valid id");
-        }
-        if (id <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " is required");
-        }
-        return id;
     }
 
     private String validDate(String value, String field) {
