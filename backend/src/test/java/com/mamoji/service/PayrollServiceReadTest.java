@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.domain.Models.PayrollRunItem;
-import com.mamoji.domain.Models.User;
+import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import java.util.List;
