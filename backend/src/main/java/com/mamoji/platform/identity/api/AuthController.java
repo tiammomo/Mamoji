@@ -1,9 +1,10 @@
-package com.mamoji.controller;
+package com.mamoji.platform.identity.api;
 
 import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
 import com.mamoji.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,13 +25,13 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@RequestBody Map<String, Object> body, HttpServletRequest request) {
-        return service.login(body, clientIp(request));
+    public Map<String, Object> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        return service.login(request, clientIp(httpRequest));
     }
 
     @PostMapping("/register")
-    public Map<String, Object> register(@RequestBody Map<String, Object> body) {
-        return service.register(body);
+    public Map<String, Object> register(@Valid @RequestBody RegistrationRequest request) {
+        return service.register(request);
     }
 
     @GetMapping("/invitations")
@@ -41,9 +42,9 @@ public class AuthController {
     @PostMapping("/invitations")
     public RegistrationInvite createInvitation(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody RegistrationInviteCreateRequest request
     ) {
-        return service.createInvitation(authorization, body);
+        return service.createInvitation(authorization, request);
     }
 
     @PostMapping("/logout")
@@ -59,17 +60,17 @@ public class AuthController {
     @PutMapping("/profile")
     public User updateProfile(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody ProfileUpdateRequest request
     ) {
-        return service.updateProfile(authorization, body);
+        return service.updateProfile(authorization, request);
     }
 
     @PutMapping("/password")
     public Map<String, Object> changePassword(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody PasswordChangeRequest request
     ) {
-        return service.changePassword(authorization, body);
+        return service.changePassword(authorization, request);
     }
 
     private String clientIp(HttpServletRequest request) {
