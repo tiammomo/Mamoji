@@ -8,8 +8,8 @@
 - 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。当前进程内读模型只支持一个后端实例；第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`。完成数据库直读仓储改造后才能解除该限制。
 - 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。它只在首次空库初始化时创建管理员、公司主体和管理员员工档案；系统已有用户后，改密码请走应用内操作。
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会生成测试账号、演示流水、演示员工、演示税费或家庭资产主体。
-- 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；只有排障时才临时关闭。
-- 保持 `MAMOJI_SCHEMA_COMPATIBILITY_ENABLED=false`，生产不依赖启动时兼容补列。
+- 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
+- 应用运行时不具备兼容建表通道；所有 schema 变更必须先以 Flyway migration 发布。
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
 - 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
 - 保持 `MAMOJI_PASSWORD_MIN_LENGTH=12`、`MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`；首次管理员、注册和改密都会执行该策略，复杂度要求至少包含大小写、数字、符号中的三类。

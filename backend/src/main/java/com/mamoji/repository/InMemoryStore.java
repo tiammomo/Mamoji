@@ -60,7 +60,6 @@ public class InMemoryStore {
 
     private final JdbcTemplate jdbc;
     private final PasswordHasher passwordHasher;
-    private final boolean schemaCompatibilityEnabled;
     private final String bootstrapMode;
     private final String bootstrapAdminEmail;
     private final String bootstrapAdminPassword;
@@ -73,7 +72,6 @@ public class InMemoryStore {
         JdbcTemplate jdbc,
         PasswordHasher passwordHasher,
         PlatformTransactionManager transactionManager,
-        @Value("${mamoji.schema.compatibility-enabled:false}") boolean schemaCompatibilityEnabled,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
         @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
@@ -85,7 +83,6 @@ public class InMemoryStore {
         this.passwordHasher = passwordHasher;
         this.requiresNewTransaction = new TransactionTemplate(transactionManager);
         this.requiresNewTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.schemaCompatibilityEnabled = schemaCompatibilityEnabled;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
         this.bootstrapAdminPassword = defaultIfBlank(bootstrapAdminPassword, "123456");
@@ -96,250 +93,12 @@ public class InMemoryStore {
 
     @PostConstruct
     void initialize() {
-        createSchema();
         loadAll();
         if (users.isEmpty()) {
             seedInitialData();
         } else {
             refreshBudgetData();
         }
-    }
-
-    private void createSchema() {
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id BIGSERIAL PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                nickname TEXT NOT NULL,
-                avatar TEXT NOT NULL,
-                family_id INTEGER,
-                role INTEGER NOT NULL,
-                permissions INTEGER NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                sub_type TEXT,
-                bank TEXT,
-                account_no TEXT,
-                opening_bank TEXT,
-                currency TEXT NOT NULL DEFAULT 'CNY',
-                balance TEXT NOT NULL,
-                available_balance TEXT NOT NULL DEFAULT '0',
-                credit_limit TEXT NOT NULL DEFAULT '0',
-                frozen_amount TEXT NOT NULL DEFAULT '0',
-                include_in_net_worth INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                ledger_id INTEGER,
-                status INTEGER NOT NULL,
-                opened_at TEXT,
-                last_reconciled_at TEXT,
-                owner_name TEXT,
-                purpose TEXT,
-                reconciliation_status TEXT NOT NULL DEFAULT 'pending',
-                risk_level TEXT NOT NULL DEFAULT 'low',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("accounts", "account_no", "TEXT");
-        ensureColumn("accounts", "opening_bank", "TEXT");
-        ensureColumn("accounts", "currency", "TEXT NOT NULL DEFAULT 'CNY'");
-        ensureColumn("accounts", "available_balance", "TEXT NOT NULL DEFAULT '0'");
-        ensureColumn("accounts", "credit_limit", "TEXT NOT NULL DEFAULT '0'");
-        ensureColumn("accounts", "frozen_amount", "TEXT NOT NULL DEFAULT '0'");
-        ensureColumn("accounts", "opened_at", "TEXT");
-        ensureColumn("accounts", "last_reconciled_at", "TEXT");
-        ensureColumn("accounts", "owner_name", "TEXT");
-        ensureColumn("accounts", "purpose", "TEXT");
-        ensureColumn("accounts", "reconciliation_status", "TEXT NOT NULL DEFAULT 'pending'");
-        ensureColumn("accounts", "risk_level", "TEXT NOT NULL DEFAULT 'low'");
-        ensureColumn("accounts", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS categories (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER,
-                name TEXT NOT NULL,
-                icon TEXT NOT NULL,
-                color TEXT NOT NULL,
-                type TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("categories", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS budgets (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER,
-                name TEXT NOT NULL,
-                amount TEXT NOT NULL,
-                start_date TEXT NOT NULL,
-                end_date TEXT NOT NULL,
-                warning_threshold INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                spent TEXT NOT NULL,
-                remaining_amount TEXT NOT NULL,
-                usage_rate REAL NOT NULL,
-                warning_reached INTEGER NOT NULL,
-                risk_level TEXT NOT NULL,
-                risk_message TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                ledger_id INTEGER,
-                category_id INTEGER,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("budgets", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER,
-                user_id INTEGER NOT NULL,
-                family_id INTEGER,
-                type INTEGER NOT NULL,
-                amount TEXT NOT NULL,
-                category_id INTEGER NOT NULL,
-                account_id INTEGER NOT NULL,
-                date TEXT NOT NULL,
-                note TEXT NOT NULL,
-                original_transaction_id INTEGER,
-                refunded_amount TEXT NOT NULL,
-                is_refundable INTEGER NOT NULL,
-                budget_id INTEGER,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("transactions", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS ledgers (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL,
-                currency TEXT NOT NULL,
-                owner_id INTEGER NOT NULL,
-                is_default INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        ensureColumn("ledgers", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS ledger_members (
-                id BIGSERIAL PRIMARY KEY,
-                ledger_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                nickname TEXT,
-                avatar TEXT,
-                joined_at TEXT NOT NULL
-            )
-            """);
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS recurring_items (
-                id TEXT PRIMARY KEY,
-                company_id INTEGER,
-                user_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                type INTEGER NOT NULL,
-                amount TEXT NOT NULL,
-                frequency TEXT NOT NULL,
-                interval_value INTEGER NOT NULL,
-                day_of_week INTEGER,
-                day_of_month INTEGER,
-                month_of_year INTEGER,
-                start_date TEXT NOT NULL,
-                end_date TEXT,
-                last_executed TEXT,
-                next_execution TEXT NOT NULL,
-                status INTEGER NOT NULL,
-                execution_count INTEGER NOT NULL,
-                note TEXT
-            )
-            """);
-        ensureColumn("recurring_items", "company_id", "BIGINT");
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS auth_tokens (
-                token TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL
-            )
-            """);
-        jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS registration_invites (
-                id BIGSERIAL PRIMARY KEY,
-                token TEXT NOT NULL UNIQUE,
-                email TEXT NOT NULL,
-                role INTEGER NOT NULL DEFAULT 2,
-                permissions INTEGER NOT NULL DEFAULT 15,
-                expires_at TEXT NOT NULL,
-                accepted_at TEXT,
-                accepted_user_id INTEGER,
-                invited_by_user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """);
-        createIndexes();
-    }
-
-    private void ensureColumn(String tableName, String columnName, String definition) {
-        if (!schemaCompatibilityEnabled) {
-            return;
-        }
-        boolean exists = !jdbc.queryForList("""
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = ?
-              AND column_name = ?
-            """, tableName, columnName).isEmpty();
-        if (exists) {
-            return;
-        }
-        jdbc.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
-    }
-
-    private void createIndexes() {
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_status ON accounts(user_id, status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_type ON accounts(user_id, type)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_reconciliation ON accounts(user_id, reconciliation_status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user_risk ON accounts(user_id, risk_level)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_accounts_company_user_status ON accounts(company_id, user_id, status)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_categories_user_type ON categories(user_id, type)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_categories_company_user_type ON categories(company_id, user_id, type)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_user_status_dates ON budgets(user_id, status, start_date, end_date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_category_dates ON budgets(category_id, start_date, end_date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_budgets_company_user_dates ON budgets(company_id, user_id, start_date, end_date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_type_date ON transactions(user_id, type, date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_category_date ON transactions(category_id, date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_budget ON transactions(budget_id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_transactions_company_user_date ON transactions(company_id, user_id, date)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledgers_owner_default ON ledgers(owner_id, is_default)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledgers_company_owner_default ON ledgers(company_id, owner_id, is_default)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_ledger_members_ledger_user ON ledger_members(ledger_id, user_id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_user_status_next ON recurring_items(user_id, status, next_execution)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_recurring_company_user_status_next ON recurring_items(company_id, user_id, status, next_execution)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_registration_invites_email ON registration_invites(email, accepted_at, expires_at)");
-        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_registration_invites_inviter ON registration_invites(invited_by_user_id, created_at)");
     }
 
     private void loadAll() {

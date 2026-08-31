@@ -22,7 +22,6 @@ public class ProductionReadinessGuard {
     private final String allowedOrigins;
     private final boolean passwordRequireComplexity;
     private final int passwordMinLength;
-    private final boolean schemaCompatibilityEnabled;
     private final boolean flywayEnabled;
     private final boolean outboxEnabled;
     private final boolean outboxConsumerEnabled;
@@ -43,7 +42,6 @@ public class ProductionReadinessGuard {
         @Value("${mamoji.security.cors.allowed-origins:}") String allowedOrigins,
         @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity,
         @Value("${mamoji.security.password.min-length:12}") int passwordMinLength,
-        @Value("${mamoji.schema.compatibility-enabled:true}") boolean schemaCompatibilityEnabled,
         @Value("${spring.flyway.enabled:true}") boolean flywayEnabled,
         @Value("${mamoji.outbox.enabled:true}") boolean outboxEnabled,
         @Value("${mamoji.outbox.consumer.enabled:true}") boolean outboxConsumerEnabled,
@@ -62,7 +60,6 @@ public class ProductionReadinessGuard {
         this.allowedOrigins = value(allowedOrigins);
         this.passwordRequireComplexity = passwordRequireComplexity;
         this.passwordMinLength = passwordMinLength;
-        this.schemaCompatibilityEnabled = schemaCompatibilityEnabled;
         this.flywayEnabled = flywayEnabled;
         this.outboxEnabled = outboxEnabled;
         this.outboxConsumerEnabled = outboxConsumerEnabled;
@@ -92,9 +89,6 @@ public class ProductionReadinessGuard {
         }
         if (passwordMinLength < 12) {
             problems.add("MAMOJI_PASSWORD_MIN_LENGTH must be at least 12");
-        }
-        if (schemaCompatibilityEnabled) {
-            problems.add("MAMOJI_SCHEMA_COMPATIBILITY_ENABLED must be false in production");
         }
         if (!flywayEnabled) {
             problems.add("MAMOJI_FLYWAY_ENABLED must be true");
