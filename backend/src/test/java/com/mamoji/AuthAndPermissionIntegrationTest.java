@@ -219,7 +219,7 @@ class AuthAndPermissionIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("8", jdbc.queryForObject("""
+        assertEquals("9", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
     }
@@ -1078,6 +1078,90 @@ class AuthAndPermissionIntegrationTest {
         ).body());
         assertEquals(0, BigDecimal.ZERO.compareTo(decimal(afterDeleteOriginal.get("refundedAmount"))));
         assertTrue(Boolean.TRUE.equals(afterDeleteOriginal.get("isRefundable")));
+    }
+
+    @Test
+    void transactionUpdateAndDeletionReallocateConfirmedBudgetCapacity() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Budget Reallocation " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Reallocation account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Reallocation expense", "expense");
+        ApiResponse budgetResponse = request("POST", "/api/v1/budgets", Map.of(
+            "companyId", companyId,
+            "name", "Reallocation budget",
+            "amount", 100,
+            "categoryId", category.get("id"),
+            "startDate", "2026-07-01",
+            "endDate", "2026-07-31",
+            "warningThreshold", 85
+        ), token);
+        assertEquals(200, budgetResponse.status(), budgetResponse.body());
+        long budgetId = ((Number) parseMap(budgetResponse.body()).get("id")).longValue();
+
+        Map<String, Object> created = createTransaction(token, companyId, account, category, "70");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+        long transactionId = ((Number) transaction.get("id")).longValue();
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ? AND status = 'confirmed'",
+            Integer.class,
+            transactionId
+        ));
+
+        ApiResponse overCapacity = request(
+            "PUT",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            Map.of("amount", 110),
+            token
+        );
+        assertEquals(409, overCapacity.status(), overCapacity.body());
+        assertEquals("70", jdbc.queryForObject(
+            "SELECT amount FROM transactions WHERE id = ?",
+            String.class,
+            transactionId
+        ));
+
+        ApiResponse updated = request(
+            "PUT",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            Map.of("amount", 80),
+            token
+        );
+        assertEquals(200, updated.status(), updated.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'released'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ? AND status = 'confirmed'",
+            Integer.class,
+            transactionId
+        ));
+
+        ApiResponse deleted = request(
+            "DELETE",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            null,
+            token
+        );
+        assertEquals(200, deleted.status(), deleted.body());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ?",
+            Integer.class,
+            transactionId
+        ));
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'released'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE source_transaction_id = ?",
+            Integer.class,
+            transactionId
+        ));
+        assertEquals(0, BigDecimal.ZERO.compareTo(budgetSpent(token, companyId)));
     }
 
     private long createCompany(String token, String name) throws Exception {
