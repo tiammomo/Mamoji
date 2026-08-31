@@ -200,6 +200,21 @@ abstract class AbstractPostgresIntegrationTest {
         throw new AssertionError("Timed out waiting for blocked " + table + " query");
     }
 
+    protected void awaitBlockedQueries(String queryFragment, int expected) throws Exception {
+        for (int attempt = 0; attempt < 250; attempt++) {
+            Integer blocked = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM pg_stat_activity
+                WHERE wait_event_type = 'Lock' AND query LIKE ?
+                """, Integer.class, "%" + queryFragment + "%");
+            if (blocked != null && blocked >= expected) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("Timed out waiting for " + expected
+            + " blocked queries containing " + queryFragment);
+    }
+
     protected CompletableFuture<ApiResponse> requestAsync(String method, String path, Object body, String token) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -355,6 +370,14 @@ abstract class AbstractPostgresIntegrationTest {
 
     protected String uniqueEmail(String prefix) {
         return prefix + "-" + System.nanoTime() + "@example.invalid";
+    }
+
+    protected String adminToken() throws Exception {
+        return text(login("test@mamoji.com", "123456").get("token"));
+    }
+
+    protected long id(Map<String, Object> value) {
+        return ((Number) value.get("id")).longValue();
     }
 
     protected record ApiResponse(int status, String body, HttpHeaders headers) {

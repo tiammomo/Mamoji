@@ -784,4 +784,196 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             """, Integer.class, transactionId));
         assertEquals(0, BigDecimal.ZERO.compareTo(budgetSpent(token, companyId)));
     }
+
+    @Test
+    void reconciliationUsesLockedDatabaseBalanceInsteadOfStaleReadModel() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Reconciliation consistency");
+        Map<String, Object> account = createAccount(token, companyId, "Authoritative balance", "1000");
+        long accountId = id(account);
+        jdbc.update("UPDATE accounts SET balance = '875', available_balance = '875' WHERE id = ?", accountId);
+
+        ApiResponse response = request("POST", "/api/v1/accounts/" + accountId
+            + "/reconciliations?companyId=" + companyId, Map.of(
+            "statementDate", LocalDate.now().toString(),
+            "statementBalance", 875
+        ), token);
+
+        assertEquals(200, response.status(), response.body());
+        Map<String, Object> record = parseMap(response.body());
+        assertEquals("reconciled", record.get("status"));
+        assertEquals(0, new BigDecimal("875.00").compareTo(decimal(record.get("systemBalance"))));
+        assertEquals(0, BigDecimal.ZERO.compareTo(decimal(record.get("difference"))));
+    }
+
+    @Test
+    void transactionSummaryReadsDatabaseWhenCompatibilityCacheEntryIsMissing() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Database summary");
+        Map<String, Object> account = createAccount(token, companyId, "Summary account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Summary expense", "expense");
+        ApiResponse created = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 42,
+            "accountId", id(account),
+            "categoryId", id(category),
+            "date", LocalDate.now().toString(),
+            "note", "database-summary-row"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) parseMap(created.body()).get("transaction");
+        long transactionId = id(transaction);
+        TransactionRecord cached = coreStore.transactions.remove(transactionId);
+        try {
+            ApiResponse summary = request(
+                "GET",
+                "/api/v1/transactions/summary?companyId=" + companyId + "&keyword=database-summary-row",
+                null,
+                token
+            );
+            assertEquals(200, summary.status(), summary.body());
+            Map<String, Object> totals = parseMap(summary.body());
+            assertEquals(1, ((Number) totals.get("rows")).intValue());
+            assertEquals(0, new BigDecimal("42").compareTo(decimal(totals.get("expense"))));
+            assertEquals(1, ((Number) totals.get("reviewCount")).intValue());
+        } finally {
+            if (cached != null) {
+                coreStore.transactions.put(transactionId, cached);
+            }
+        }
+    }
+
+    @Test
+    void concurrentExpensesCannotConsumeMoreThanOneSharedBudget() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent budget capacity");
+        Map<String, Object> firstAccount = createAccount(token, companyId, "Budget account A", "1000");
+        Map<String, Object> secondAccount = createAccount(token, companyId, "Budget account B", "1000");
+        Map<String, Object> firstCategory = createCategory(token, companyId, "Budget category A", "expense");
+        Map<String, Object> secondCategory = createCategory(token, companyId, "Budget category B", "expense");
+        ApiResponse budget = request("POST", "/api/v1/budgets", Map.of(
+            "companyId", companyId,
+            "name", "Shared operating budget",
+            "amount", 100,
+            "startDate", LocalDate.now().minusDays(1).toString(),
+            "endDate", LocalDate.now().plusDays(1).toString(),
+            "warningThreshold", 80
+        ), token);
+        assertEquals(200, budget.status(), budget.body());
+        long budgetId = id(parseMap(budget.body()));
+
+        CompletableFuture<ApiResponse> first = requestAsync("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 70,
+            "accountId", id(firstAccount),
+            "categoryId", id(firstCategory),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-budget-a"
+        ), token);
+        CompletableFuture<ApiResponse> second = requestAsync("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 70,
+            "accountId", id(secondAccount),
+            "categoryId", id(secondCategory),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-budget-b"
+        ), token);
+
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE company_id = ? AND note LIKE 'concurrent-budget-%'",
+            Integer.class,
+            companyId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'confirmed'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'reserved'",
+            Integer.class,
+            budgetId
+        ));
+        assertEquals(0, new BigDecimal("70").compareTo(jdbc.queryForObject("""
+            SELECT COALESCE(SUM(CAST(amount AS NUMERIC)), 0)
+            FROM transactions
+            WHERE company_id = ? AND note LIKE 'concurrent-budget-%'
+            """, BigDecimal.class, companyId)));
+    }
+
+    @Test
+    void concurrentRefundsCannotExceedRemainingRefundableAmount() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent refund capacity");
+        Map<String, Object> account = createAccount(token, companyId, "Refund concurrency account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Refund concurrency expense", "expense");
+        ApiResponse created = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 100,
+            "accountId", id(account),
+            "categoryId", id(category),
+            "date", LocalDate.now().toString(),
+            "note", "concurrent-refund-original"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> original = (Map<String, Object>) parseMap(created.body()).get("transaction");
+        long originalId = id(original);
+
+        CompletableFuture<ApiResponse> first;
+        CompletableFuture<ApiResponse> second;
+        try (Connection blocker = lockRow("SELECT id FROM transactions WHERE id = ? FOR UPDATE", originalId)) {
+            String path = "/api/v1/transactions/" + originalId + "/refund";
+            Map<String, Object> body = Map.of(
+                "companyId", companyId,
+                "amount", 70,
+                "date", LocalDate.now().toString(),
+                "note", "concurrent-refund"
+            );
+            first = requestAsync("POST", path, body, token);
+            second = requestAsync("POST", path, body, token);
+            awaitBlockedQueries("FROM transactions WHERE id", 2);
+            blocker.commit();
+        }
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        assertEquals(0, new BigDecimal("70").compareTo(jdbc.queryForObject(
+            "SELECT CAST(refunded_amount AS NUMERIC) FROM transactions WHERE id = ?",
+            BigDecimal.class,
+            originalId
+        )));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE original_transaction_id = ?",
+            Integer.class,
+            originalId
+        ));
+        assertEquals("970", jdbc.queryForObject(
+            "SELECT balance FROM accounts WHERE id = ?",
+            String.class,
+            id(account)
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE event_type = 'accounting.transaction.refund' AND company_id = ?
+            """, Integer.class, companyId));
+    }
 }
