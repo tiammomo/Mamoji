@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
-import com.mamoji.domain.Models.Category;
 import com.mamoji.operations.application.CategoryApplicationService;
+import com.mamoji.operations.domain.Category;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
