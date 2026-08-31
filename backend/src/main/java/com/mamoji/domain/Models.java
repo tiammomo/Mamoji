@@ -37,58 +37,6 @@ public final class Models {
         public String updatedAt;
     }
 
-    public static class Budget {
-        public long id;
-        public long version;
-        public Long companyId;
-        public String name;
-        public BigDecimal amount;
-        public String startDate;
-        public String endDate;
-        public int warningThreshold;
-        public int status;
-        public BigDecimal spent;
-        public BigDecimal reservedAmount;
-        public BigDecimal remainingAmount;
-        public BigDecimal availableAmount;
-        public double usageRate;
-        public boolean warningReached;
-        public String riskLevel;
-        public String riskMessage;
-        public long userId;
-        public Long ledgerId;
-        public Long categoryId;
-        public String categoryName;
-        public String categoryIcon;
-        public String createdAt;
-        public String updatedAt;
-    }
-
-    public static class TransactionRecord {
-        public long id;
-        public long version;
-        public String idempotencyKey;
-        public Long companyId;
-        public long userId;
-        public Long familyId;
-        public int type;
-        public BigDecimal amount;
-        public long categoryId;
-        public String categoryName;
-        public String categoryIcon;
-        public String categoryColor;
-        public long accountId;
-        public String accountName;
-        public String date;
-        public String note;
-        public Long originalTransactionId;
-        public BigDecimal refundedAmount;
-        public boolean isRefundable;
-        public Long budgetId;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class RecurringItem {
         public String id;
         public Long companyId;

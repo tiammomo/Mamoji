@@ -1,6 +1,5 @@
 package com.mamoji.operations.domain;
 
-import com.mamoji.domain.Models.TransactionRecord;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;

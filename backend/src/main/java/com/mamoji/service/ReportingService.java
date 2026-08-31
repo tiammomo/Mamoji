@@ -2,10 +2,10 @@ package com.mamoji.service;
 
 import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -60,7 +60,7 @@ public class ReportingService {
         List<TransactionRecord> txs = userTransactions(userId, scope.companyId());
         BigDecimal income = sumTransactions(txs, tx -> tx.type == 1 && sameMonth(tx.date, current));
         BigDecimal expense = netExpense(txs, tx -> sameMonth(tx.date, current));
-        List<com.mamoji.domain.Models.Budget> matchingBudgets = budgetService.companyBudgets(scope.companyId()).stream()
+        List<com.mamoji.budget.domain.Budget> matchingBudgets = budgetService.companyBudgets(scope.companyId()).stream()
             .filter(budget -> budget.status != 0)
             .filter(budget -> budget.startDate.compareTo(current.atEndOfMonth().toString()) <= 0)
             .filter(budget -> budget.endDate.compareTo(current.atDay(1).toString()) >= 0)

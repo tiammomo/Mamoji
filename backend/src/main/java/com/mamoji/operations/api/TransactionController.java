@@ -1,12 +1,12 @@
 package com.mamoji.operations.api;
 
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.operations.application.TransactionApplicationService;
 import com.mamoji.operations.application.TransactionMutationService;
 import com.mamoji.operations.application.TransactionQueryService;
 import com.mamoji.operations.application.TransactionRefundService;
 import com.mamoji.operations.domain.RefundTransactionCommand;
+import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.operations.domain.TransactionSummary;
 import com.mamoji.operations.domain.UpdateTransactionCommand;
 import com.mamoji.platform.identity.ActorContext;
