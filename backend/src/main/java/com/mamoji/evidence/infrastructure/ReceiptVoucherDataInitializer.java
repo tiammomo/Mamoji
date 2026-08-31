@@ -180,9 +180,7 @@ public class ReceiptVoucherDataInitializer {
     }
 
     private void seedReceiptAuditLogs(User owner) {
-        boolean alreadySeeded = enterpriseStore.sortedAuditLogs().stream()
-            .anyMatch(log -> "receipt_voucher".equals(log.entityType));
-        if (alreadySeeded) {
+        if (enterpriseStore.hasAuditLogEntityType("receipt_voucher")) {
             return;
         }
         receiptVouchers.findAll().stream()
