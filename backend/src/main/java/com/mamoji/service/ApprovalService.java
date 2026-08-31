@@ -1,5 +1,7 @@
 package com.mamoji.service;
 
+import com.mamoji.approval.api.ApprovalActionRequest;
+import com.mamoji.approval.api.ApprovalCreateRequest;
 import com.mamoji.approval.domain.ApprovalWorkflow.Action;
 import com.mamoji.approval.domain.ApprovalWorkflow.Transition;
 import com.mamoji.approval.domain.ApprovalWorkflow;
@@ -29,10 +31,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import static com.mamoji.common.PayloadReader.nullableText;
-import static com.mamoji.common.PayloadReader.number;
 import static com.mamoji.common.PayloadReader.optionalLong;
-import static com.mamoji.common.PayloadReader.textOr;
 
 @Service
 public class ApprovalService {
@@ -144,10 +143,17 @@ public class ApprovalService {
     }
 
     @Transactional
-    public ApprovalDetail create(String authorization, Map<String, Object> body) {
+    public ApprovalDetail create(
+        String authorization,
+        ApprovalCreateRequest command,
+        String headerIdempotencyKey
+    ) {
         User user = accessControl.requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
-        String idempotencyKey = idempotencyKey(body.get("idempotencyKey"));
+        Company company = accessControl.resolveCompany(user, command.companyId());
+        String suppliedIdempotencyKey = headerIdempotencyKey == null || headerIdempotencyKey.isBlank()
+            ? command.idempotencyKey()
+            : headerIdempotencyKey;
+        String idempotencyKey = idempotencyKey(suppliedIdempotencyKey);
         if (idempotencyKey != null) {
             jdbc.query(
                 "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
@@ -162,9 +168,9 @@ public class ApprovalService {
             );
             if (!replay.isEmpty()) return get(authorization, replay.getFirst().id);
         }
-        String requestType = allowed(textOr(body.get("requestType"), "other"), REQUEST_TYPES, "requestType");
-        String entityType = allowed(textOr(body.get("entityType"), "other"), ENTITY_TYPES, "entityType");
-        Long entityId = optionalLong(body.get("entityId")).orElse(null);
+        String requestType = allowed(valueOr(command.requestType(), "other"), REQUEST_TYPES, "requestType");
+        String entityType = allowed(valueOr(command.entityType(), "other"), ENTITY_TYPES, "entityType");
+        Long entityId = command.entityId();
         validateEntity(user, company.id, entityType, entityId);
         if (entityId != null) {
             String leaseKey = "approval:" + company.id + ":" + entityType + ":" + entityId;
@@ -181,14 +187,11 @@ public class ApprovalService {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "This entity already has a pending approval request");
             }
         }
-        long assigneeId = optionalLong(body.get("assigneeUserId")).orElse(company.ownerId);
+        long assigneeId = command.assigneeUserId() == null ? company.ownerId : command.assigneeUserId();
         validateAssignee(company, assigneeId);
-        String title = limited(textOr(body.get("title"), "新审批申请"), 160, "title");
-        String description = limitedNullable(nullableText(body.get("description")), 1000, "description");
-        BigDecimal amount = number(body.get("amount"), BigDecimal.ZERO);
-        if (amount.compareTo(BigDecimal.ZERO) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must not be negative");
-        }
+        String title = limited(valueOr(command.title(), "新审批申请"), 160, "title");
+        String description = limitedNullable(blankToNull(command.description()), 1000, "description");
+        BigDecimal amount = command.amount() == null ? BigDecimal.ZERO : command.amount();
         String now = com.mamoji.repository.InMemoryStore.now();
         Transition submission = ApprovalWorkflow.submission();
         ApprovalRequest request = jdbc.queryForObject("""
@@ -205,7 +208,7 @@ public class ApprovalService {
             request.id,
             user.id,
             submission.action().value(),
-            limitedNullable(nullableText(body.get("comment")), 500, "comment")
+            limitedNullable(blankToNull(command.comment()), 500, "comment")
         );
         syncEntity(authorization, request, submission.entityStatus());
         enterpriseStore.auditLog(
@@ -221,7 +224,7 @@ public class ApprovalService {
     }
 
     @Transactional
-    public ApprovalDetail decide(String authorization, long id, String action, Map<String, Object> body) {
+    public ApprovalDetail decide(String authorization, long id, String action, ApprovalActionRequest command) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
         accessControl.resolveCompany(user, request.companyId);
@@ -230,7 +233,7 @@ public class ApprovalService {
         if (user.role != Roles.ADMIN && !Objects.equals(request.assigneeUserId, user.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the assignee or an administrator can decide this request");
         }
-        String comment = limitedNullable(nullableText(body.get("comment")), 500, "comment");
+        String comment = limitedNullable(blankToNull(command.comment()), 500, "comment");
         if (transition.commentRequired() && (comment == null || comment.isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection comment is required");
         }
@@ -252,7 +255,7 @@ public class ApprovalService {
     }
 
     @Transactional
-    public ApprovalDetail withdraw(String authorization, long id, Map<String, Object> body) {
+    public ApprovalDetail withdraw(String authorization, long id, ApprovalActionRequest command) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
         accessControl.resolveCompany(user, request.companyId);
@@ -267,7 +270,7 @@ public class ApprovalService {
             id,
             user.id,
             transition.action().value(),
-            limitedNullable(nullableText(body.get("comment")), 500, "comment")
+            limitedNullable(blankToNull(command.comment()), 500, "comment")
         );
         syncEntity(authorization, request, transition.entityStatus());
         enterpriseStore.auditLog(
@@ -393,8 +396,8 @@ public class ApprovalService {
         return value;
     }
 
-    private String idempotencyKey(Object value) {
-        String key = nullableText(value);
+    private String idempotencyKey(String value) {
+        String key = blankToNull(value);
         if (key == null) return null;
         key = key.trim();
         if (key.isEmpty()) return null;
@@ -402,6 +405,14 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
         }
         return key;
+    }
+
+    private String valueOr(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private ApprovalRequest mapRequest(ResultSet rs, int rowNum) throws SQLException {

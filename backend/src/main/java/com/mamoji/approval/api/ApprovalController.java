@@ -1,7 +1,8 @@
-package com.mamoji.controller;
+package com.mamoji.approval.api;
 
 import com.mamoji.common.PagedResponse;
 import com.mamoji.service.ApprovalService;
+import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,37 +50,35 @@ public class ApprovalController {
     public ApprovalService.ApprovalDetail create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody ApprovalCreateRequest request
     ) {
-        Map<String, Object> command = new java.util.LinkedHashMap<>(body);
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) command.put("idempotencyKey", idempotencyKey);
-        return service.create(authorization, command);
+        return service.create(authorization, request, idempotencyKey);
     }
 
     @PostMapping("/{id}/approve")
     public ApprovalService.ApprovalDetail approve(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
-        @RequestBody(required = false) Map<String, Object> body
+        @Valid @RequestBody(required = false) ApprovalActionRequest request
     ) {
-        return service.decide(authorization, id, "approve", body == null ? Map.of() : body);
+        return service.decide(authorization, id, "approve", request == null ? ApprovalActionRequest.empty() : request);
     }
 
     @PostMapping("/{id}/reject")
     public ApprovalService.ApprovalDetail reject(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
-        @RequestBody(required = false) Map<String, Object> body
+        @Valid @RequestBody(required = false) ApprovalActionRequest request
     ) {
-        return service.decide(authorization, id, "reject", body == null ? Map.of() : body);
+        return service.decide(authorization, id, "reject", request == null ? ApprovalActionRequest.empty() : request);
     }
 
     @PostMapping("/{id}/withdraw")
     public ApprovalService.ApprovalDetail withdraw(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
-        @RequestBody(required = false) Map<String, Object> body
+        @Valid @RequestBody(required = false) ApprovalActionRequest request
     ) {
-        return service.withdraw(authorization, id, body == null ? Map.of() : body);
+        return service.withdraw(authorization, id, request == null ? ApprovalActionRequest.empty() : request);
     }
 }
