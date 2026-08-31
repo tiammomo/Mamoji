@@ -7,6 +7,8 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.evidence.domain.ReceiptVoucherDraft;
+import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -54,6 +56,7 @@ public class ReceiptService {
 
     private final AccessControlService accessControl;
     private final EnterpriseStore enterpriseStore;
+    private final ReceiptVoucherRepository receiptVouchers;
     private final InMemoryStore coreStore;
     private final ObjectStorageService objectStorageService;
     private final OutboxEventService outboxEventService;
@@ -62,6 +65,7 @@ public class ReceiptService {
     public ReceiptService(
         AccessControlService accessControl,
         EnterpriseStore enterpriseStore,
+        ReceiptVoucherRepository receiptVouchers,
         InMemoryStore coreStore,
         ObjectStorageService objectStorageService,
         OutboxEventService outboxEventService,
@@ -69,6 +73,7 @@ public class ReceiptService {
     ) {
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
+        this.receiptVouchers = receiptVouchers;
         this.coreStore = coreStore;
         this.objectStorageService = objectStorageService;
         this.outboxEventService = outboxEventService;
@@ -78,7 +83,7 @@ public class ReceiptService {
     public PagedResponse<ReceiptVoucher> list(String authorization, Map<String, String> params) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        List<ReceiptVoucher> vouchers = enterpriseStore.sortedReceiptVouchers(company.id).stream()
+        List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id).stream()
             .filter(voucher -> filterVoucher(voucher, params))
             .toList();
         return PagedResponse.of(vouchers, PageRequest.from(params));
@@ -87,7 +92,7 @@ public class ReceiptService {
     public Map<String, Object> summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<ReceiptVoucher> vouchers = enterpriseStore.sortedReceiptVouchers(company.id);
+        List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id);
         BigDecimal totalAmount = BigDecimal.ZERO;
         BigDecimal salesInvoiceAmount = BigDecimal.ZERO;
         BigDecimal purchaseInvoiceAmount = BigDecimal.ZERO;
@@ -192,7 +197,7 @@ public class ReceiptService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Approval status is managed by the approval workflow");
         }
         requireReceiptCreatePermission(user, company.id, voucherType);
-        ReceiptVoucher voucher = enterpriseStore.receiptVoucher(
+        ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
             validateTransaction(user, optionalLong(body.get("transactionId")).orElse(null), company.id).map(tx -> tx.id).orElse(null),
             textOr(body.get("voucherNo"), nextVoucherNo()),
@@ -200,8 +205,8 @@ public class ReceiptService {
             voucherType,
             normalizeDirection(textOr(body.get("direction"), "expense")),
             textOr(body.get("counterparty"), "待补充"),
-            String.valueOf(number(body.get("amount"), BigDecimal.ZERO)),
-            String.valueOf(number(body.get("taxAmount"), BigDecimal.ZERO)),
+            number(body.get("amount"), BigDecimal.ZERO),
+            number(body.get("taxAmount"), BigDecimal.ZERO),
             validateDate("issueDate", textOr(body.get("issueDate"), LocalDate.now().toString())),
             validateOptionalDate("dueDate", nullableText(body.get("dueDate"))),
             normalizeStatus(textOr(body.get("status"), "pending_review")),
@@ -211,10 +216,10 @@ public class ReceiptService {
             "low",
             nullableText(body.get("note")),
             user.id
-        );
+        ));
         applyVoucherFields(user, voucher, body);
         voucher.riskLevel = riskFor(voucher);
-        enterpriseStore.saveReceiptVoucher(voucher);
+        receiptVouchers.save(voucher);
         logVoucher(user, voucher, "create", "创建票据凭证「" + voucher.title + "」");
         return voucher;
     }
@@ -229,7 +234,7 @@ public class ReceiptService {
         applyVoucherFields(user, voucher, body);
         voucher.riskLevel = riskFor(voucher);
         touch(voucher);
-        enterpriseStore.saveReceiptVoucher(voucher);
+        receiptVouchers.save(voucher);
         String summary = updateSummary(previousSnapshot, voucher);
         logVoucher(user, voucher, "update", summary);
         return voucher;
@@ -248,7 +253,7 @@ public class ReceiptService {
         applyVoucherFields(user, voucher, Map.of("approvalStatus", approvalStatus));
         voucher.riskLevel = riskFor(voucher);
         touch(voucher);
-        enterpriseStore.saveReceiptVoucher(voucher);
+        receiptVouchers.save(voucher);
         logVoucher(user, voucher, "approval_workflow", updateSummary(previousSnapshot, voucher));
         return voucher;
     }
@@ -281,7 +286,7 @@ public class ReceiptService {
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage upload failed");
         }
-        ReceiptVoucher voucher = enterpriseStore.receiptVoucher(
+        ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
             validateTransaction(user, longParam(params, "transactionId", 0), company.id).map(tx -> tx.id).orElse(null),
             params.getOrDefault("voucherNo", nextVoucherNo()),
@@ -289,8 +294,8 @@ public class ReceiptService {
             voucherType,
             normalizeDirection(params.getOrDefault("direction", "expense")),
             params.getOrDefault("counterparty", "待补充"),
-            String.valueOf(decimalParam(params, "amount", BigDecimal.ZERO)),
-            String.valueOf(decimalParam(params, "taxAmount", BigDecimal.ZERO)),
+            decimalParam(params, "amount", BigDecimal.ZERO),
+            decimalParam(params, "taxAmount", BigDecimal.ZERO),
             validateDate("issueDate", params.getOrDefault("issueDate", LocalDate.now().toString())),
             validateOptionalDate("dueDate", params.get("dueDate")),
             normalizeStatus(params.getOrDefault("status", "pending_review")),
@@ -300,7 +305,7 @@ public class ReceiptService {
             "low",
             params.get("note"),
             user.id
-        );
+        ));
         voucher.taxRate = decimalParam(params, "taxRate", voucher.taxRate);
         if (params.containsKey("taxPeriod")) {
             voucher.taxPeriod = nullableText(params.get("taxPeriod"));
@@ -315,7 +320,7 @@ public class ReceiptService {
         voucher.fileObjectKey = storedObject.objectKey();
         voucher.fileUrl = storedObject.url();
         voucher.riskLevel = riskFor(voucher);
-        enterpriseStore.saveReceiptVoucher(voucher);
+        receiptVouchers.save(voucher);
         jdbc.update("""
             INSERT INTO receipt_file_hashes (company_id, voucher_id, sha256, file_name, file_size, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -636,16 +641,16 @@ public class ReceiptService {
     }
 
     private String nextVoucherNo() {
-        return "RC-" + LocalDate.now().toString().replace("-", "") + "-" + (enterpriseStore.countReceiptVouchers() + 1);
+        return "RC-" + LocalDate.now().toString().replace("-", "") + "-" + (receiptVouchers.count() + 1);
     }
 
     private ReceiptVoucher requireReceiptVoucher(long id) {
-        return enterpriseStore.findReceiptVoucher(id)
+        return receiptVouchers.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt voucher not found"));
     }
 
     private ReceiptVoucher requireReceiptVoucherForUpdate(long id) {
-        return enterpriseStore.findReceiptVoucherForUpdate(id)
+        return receiptVouchers.findByIdForUpdate(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt voucher not found"));
     }
 
