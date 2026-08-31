@@ -11,11 +11,11 @@ import com.mamoji.operations.domain.TransactionRiskAssessment;
 import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,20 +34,26 @@ public class TransactionRefundService {
         .reversed()
         .thenComparingLong(transaction -> transaction.id);
 
-    private final InMemoryStore store;
+    private final TransactionWriteRepository transactions;
+    private final TransactionQueryRepository transactionQueries;
+    private final TransactionAccountingGateway accounting;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
 
     public TransactionRefundService(
-        InMemoryStore store,
+        TransactionWriteRepository transactions,
+        TransactionQueryRepository transactionQueries,
+        TransactionAccountingGateway accounting,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
     ) {
-        this.store = store;
+        this.transactions = transactions;
+        this.transactionQueries = transactionQueries;
+        this.accounting = accounting;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
@@ -58,7 +64,7 @@ public class TransactionRefundService {
     public List<TransactionRecord> refundable(ActorContext actor, Long companyId) {
         User user = accessControl.requireUser(actor.legacyAuthorization());
         Company company = accessControl.resolveCompany(user, companyId);
-        return store.queryAllTransactions(user.id, company.id).stream()
+        return transactionQueries.findAll(user.id, company.id).stream()
             .filter(transaction -> transaction.type == 2 && transaction.isRefundable)
             .sorted(TRANSACTION_ORDER)
             .toList();
@@ -68,7 +74,7 @@ public class TransactionRefundService {
     public Map<String, Object> refund(ActorContext actor, long id, RefundTransactionCommand command) {
         User user = accessControl.requireUser(actor.legacyAuthorization());
         validateCommand(command);
-        TransactionRecord original = store.transactionForUpdate(id)
+        TransactionRecord original = transactions.findForUpdate(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transaction not found"));
         Company company = accessControl.resolveCompany(
             user,
@@ -90,24 +96,15 @@ public class TransactionRefundService {
                 "Refund date cannot be before original transaction date"
             );
         }
-        Account account = store.accountForUpdate(original.accountId)
+        Account account = accounting.findAccountForUpdate(original.accountId)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.CONFLICT,
                 "Transaction account no longer exists"
             ));
-        validateRelations(user, company.id, original, account);
+        Category category = validateRelations(user, company.id, original, account);
 
-        TransactionRecord refund = store.transaction(
-            user.id,
-            company.id,
-            original.familyId,
-            3,
-            command.amount().toString(),
-            original.categoryId,
-            original.accountId,
-            refundDate.toString(),
-            refundNote(command.note(), original.id)
-        );
+        TransactionRecord refund = newRefund(user, company, original, command, refundDate, category, account);
+        transactions.insert(refund);
         refund.originalTransactionId = original.id;
         refund.isRefundable = false;
         refund.budgetId = original.budgetId;
@@ -115,9 +112,9 @@ public class TransactionRefundService {
         TransactionRecord updatedOriginal = copyTransaction(original);
         updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.add(command.amount());
         updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
-        updatedOriginal.updatedAt = InMemoryStore.now();
-        store.saveTransaction(refund);
-        store.saveTransaction(updatedOriginal);
+        updatedOriginal.updatedAt = OffsetDateTime.now().toString();
+        transactions.update(refund);
+        transactions.update(updatedOriginal);
         saveAdjustedAccount(account, refund);
         budgetService.refreshCompany(company.id);
         audit(company.id, refund.id, original.id, user);
@@ -136,14 +133,20 @@ public class TransactionRefundService {
         }
     }
 
-    private void validateRelations(User user, long companyId, TransactionRecord original, Account account) {
+    private Category validateRelations(
+        User user,
+        long companyId,
+        TransactionRecord original,
+        Account account
+    ) {
         assertScopedOwner(account.userId, account.companyId, user.id, companyId);
-        Category category = store.categoryForUpdate(original.categoryId)
+        Category category = accounting.findCategoryForUpdate(original.categoryId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
         assertScopedOwner(category.userId, category.companyId, user.id, companyId);
         if (!"expense".equals(category.type)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Category type does not match transaction type");
         }
+        return category;
     }
 
     private void saveAdjustedAccount(Account source, TransactionRecord refund) {
@@ -151,8 +154,8 @@ public class TransactionRefundService {
         adjusted.balance = adjusted.balance.add(refund.amount);
         adjusted.availableBalance = nullToZero(adjusted.availableBalance).add(refund.amount);
         adjusted.riskLevel = accountRisk(adjusted);
-        adjusted.updatedAt = InMemoryStore.now();
-        store.saveAccount(adjusted);
+        adjusted.updatedAt = OffsetDateTime.now().toString();
+        accounting.updateAccount(adjusted);
     }
 
     private String accountRisk(Account account) {
@@ -186,8 +189,37 @@ public class TransactionRefundService {
     private TransactionRiskAssessment riskFor(TransactionRecord transaction) {
         return TransactionRiskPolicy.assess(
             transaction,
-            store.queryAllTransactions(transaction.userId, transaction.companyId)
+            transactionQueries.findAll(transaction.userId, transaction.companyId)
         );
+    }
+
+    private TransactionRecord newRefund(
+        User user,
+        Company company,
+        TransactionRecord original,
+        RefundTransactionCommand command,
+        LocalDate refundDate,
+        Category category,
+        Account account
+    ) {
+        TransactionRecord refund = new TransactionRecord();
+        refund.userId = user.id;
+        refund.companyId = company.id;
+        refund.familyId = original.familyId;
+        refund.type = 3;
+        refund.amount = command.amount();
+        refund.categoryId = original.categoryId;
+        refund.categoryName = category.name;
+        refund.categoryIcon = category.icon;
+        refund.categoryColor = category.color;
+        refund.accountId = original.accountId;
+        refund.accountName = account.name;
+        refund.date = refundDate.toString();
+        refund.note = refundNote(command.note(), original.id);
+        refund.refundedAmount = BigDecimal.ZERO;
+        refund.createdAt = OffsetDateTime.now().toString();
+        refund.updatedAt = refund.createdAt;
+        return refund;
     }
 
     private void audit(long companyId, long refundId, long originalId, User user) {

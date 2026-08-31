@@ -16,11 +16,11 @@ import com.mamoji.operations.domain.TransactionRiskAssessment;
 import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -39,20 +39,26 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Service
 public class TransactionApplicationService {
-    private final InMemoryStore store;
+    private final TransactionWriteRepository transactions;
+    private final TransactionQueryRepository transactionQueries;
+    private final TransactionAccountingGateway accounting;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
 
     public TransactionApplicationService(
-        InMemoryStore store,
+        TransactionWriteRepository transactions,
+        TransactionQueryRepository transactionQueries,
+        TransactionAccountingGateway accounting,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
     ) {
-        this.store = store;
+        this.transactions = transactions;
+        this.transactionQueries = transactionQueries;
+        this.accounting = accounting;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
@@ -93,12 +99,11 @@ public class TransactionApplicationService {
         LocalDate transactionDate = command.date() == null ? LocalDate.now() : command.date();
         String idempotencyKey = validIdempotencyKey(command.idempotencyKey());
         if (idempotencyKey != null) {
-            store.lockTransactionIdempotency(company.id, idempotencyKey);
-            Optional<TransactionRecord> replay = store.findTransactionByIdempotency(company.id, idempotencyKey);
+            transactions.lockIdempotency(company.id, idempotencyKey);
+            Optional<TransactionRecord> replay = transactions.findByIdempotency(company.id, idempotencyKey);
             if (replay.isPresent()) {
                 TransactionRecord existing = replay.get();
                 requireMatchingReplay(existing, command, user.id);
-                store.attachTransactionRelations(existing);
                 return Map.of(
                     "transaction", existing,
                     "risk", riskFor(existing),
@@ -106,9 +111,9 @@ public class TransactionApplicationService {
                 );
             }
         }
-        Account account = store.accountForUpdate(command.accountId())
+        Account account = accounting.findAccountForUpdate(command.accountId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
-        validateRelations(user, company.id, account, command);
+        Category category = validateRelations(user, company.id, account, command);
         Long ledgerId = resolveLedgerId(user, company, account);
         Optional<BudgetReservation> reservation = reserveBudget(
             company.id,
@@ -118,20 +123,19 @@ public class TransactionApplicationService {
             command,
             idempotencyKey
         );
-        TransactionRecord transaction = store.transaction(
-            user.id,
-            company.id,
+        TransactionRecord transaction = newTransaction(
+            user,
+            company,
             ledgerId,
-            command.type(),
-            command.amount().toString(),
-            command.categoryId(),
-            command.accountId(),
-            transactionDate.toString(),
-            command.note() == null ? "" : command.note(),
-            idempotencyKey
+            transactionDate,
+            command,
+            idempotencyKey,
+            category,
+            account
         );
+        transactions.insert(transaction);
         transaction.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
-        store.saveTransaction(transaction);
+        transactions.update(transaction);
         reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), transaction.id));
         saveAdjustedAccount(account, transaction);
         budgetService.refreshCompany(company.id);
@@ -208,8 +212,13 @@ public class TransactionApplicationService {
         }
     }
 
-    private void validateRelations(User user, long companyId, Account account, CreateTransactionCommand command) {
-        Category category = store.categoryForUpdate(command.categoryId())
+    private Category validateRelations(
+        User user,
+        long companyId,
+        Account account,
+        CreateTransactionCommand command
+    ) {
+        Category category = accounting.findCategoryForUpdate(command.categoryId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid categoryId is required"));
         assertScopedOwner(account.userId, account.companyId, user.id, companyId);
         assertScopedOwner(category.userId, category.companyId, user.id, companyId);
@@ -217,20 +226,21 @@ public class TransactionApplicationService {
         if (!expectedCategoryType.equals(category.type)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Category type does not match transaction type");
         }
+        return category;
     }
 
     private Long resolveLedgerId(User user, Company company, Account account) {
         if (account.ledgerId != null) {
-            Ledger ledger = store.findLedger(account.ledgerId).orElse(null);
+            Ledger ledger = accounting.findLedger(account.ledgerId).orElse(null);
             if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Account ledger is outside the selected company");
             }
             return ledger.id;
         }
-        return store.queryLedgers(user.id, company.id).stream()
+        return accounting.findLedgers(user.id, company.id).stream()
             .map(ledger -> ledger.id)
             .findFirst()
-            .orElseGet(() -> store.ensureCompanyAccountingWorkspace(
+            .orElseGet(() -> accounting.ensureCompanyAccountingWorkspace(
                 user.id,
                 company.id,
                 company.currency,
@@ -249,8 +259,8 @@ public class TransactionApplicationService {
             account.availableBalance = nullToZero(account.availableBalance).subtract(delta);
         }
         account.riskLevel = accountRisk(account);
-        account.updatedAt = InMemoryStore.now();
-        store.saveAccount(account);
+        account.updatedAt = OffsetDateTime.now().toString();
+        accounting.updateAccount(account);
     }
 
     private String accountRisk(Account account) {
@@ -284,8 +294,40 @@ public class TransactionApplicationService {
     private TransactionRiskAssessment riskFor(TransactionRecord transaction) {
         return TransactionRiskPolicy.assess(
             transaction,
-            store.queryAllTransactions(transaction.userId, transaction.companyId)
+            transactionQueries.findAll(transaction.userId, transaction.companyId)
         );
+    }
+
+    private TransactionRecord newTransaction(
+        User user,
+        Company company,
+        Long ledgerId,
+        LocalDate transactionDate,
+        CreateTransactionCommand command,
+        String idempotencyKey,
+        Category category,
+        Account account
+    ) {
+        TransactionRecord transaction = new TransactionRecord();
+        transaction.userId = user.id;
+        transaction.companyId = company.id;
+        transaction.familyId = ledgerId;
+        transaction.type = command.type();
+        transaction.amount = command.amount();
+        transaction.categoryId = command.categoryId();
+        transaction.categoryName = category.name;
+        transaction.categoryIcon = category.icon;
+        transaction.categoryColor = category.color;
+        transaction.accountId = command.accountId();
+        transaction.accountName = account.name;
+        transaction.date = transactionDate.toString();
+        transaction.note = command.note() == null ? "" : command.note();
+        transaction.idempotencyKey = idempotencyKey;
+        transaction.refundedAmount = BigDecimal.ZERO;
+        transaction.isRefundable = command.type() == 2;
+        transaction.createdAt = OffsetDateTime.now().toString();
+        transaction.updatedAt = transaction.createdAt;
+        return transaction;
     }
 
     private void audit(long companyId, TransactionRecord transaction, User user) {
