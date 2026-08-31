@@ -1,80 +1,56 @@
 package com.mamoji.evidence.infrastructure;
 
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.evidence.domain.ReceiptVoucherDraft;
-import com.mamoji.repository.EnterpriseStore;
-import java.math.BigDecimal;
-import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 class ReceiptVoucherRepositoryTest {
     @Test
-    void mapsTypedDraftToTheCompatibilityAdapter() {
-        EnterpriseStore store = mock(EnterpriseStore.class);
-        ReceiptVoucher expected = new ReceiptVoucher();
-        when(store.receiptVoucher(
-            9,
-            17L,
-            "RC-001",
-            "Office supplies",
-            "purchase_invoice",
-            "expense",
-            "Vendor",
-            "12.30",
-            "1.20",
-            "2026-08-30",
-            null,
-            "pending_review",
-            "receipt.pdf",
-            128,
-            "application/pdf",
-            "low",
-            "business evidence",
-            3
-        )).thenReturn(expected);
-        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(store);
-        ReceiptVoucherDraft draft = new ReceiptVoucherDraft(
-            9,
-            17L,
-            "RC-001",
-            "Office supplies",
-            "purchase_invoice",
-            "expense",
-            "Vendor",
-            new BigDecimal("12.30"),
-            new BigDecimal("1.20"),
-            "2026-08-30",
-            null,
-            "pending_review",
-            "receipt.pdf",
-            128,
-            "application/pdf",
-            "low",
-            "business evidence",
-            3
-        );
+    void returnsDatabaseCount() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class)).thenReturn(7L);
+        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
 
-        ReceiptVoucher actual = repository.insert(draft);
-
-        assertSame(expected, actual);
+        assertEquals(7, repository.count());
     }
 
     @Test
-    void exposesCompanyScopedReadsThroughTheEvidenceBoundary() {
-        EnterpriseStore store = mock(EnterpriseStore.class);
+    void rejectsAStaleVoucherUpdate() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(0);
+        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
         ReceiptVoucher voucher = new ReceiptVoucher();
-        List<ReceiptVoucher> expected = List.of(voucher);
-        when(store.sortedReceiptVouchers(9)).thenReturn(expected);
-        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(store);
+        voucher.id = 42;
+        voucher.version = 3;
 
-        List<ReceiptVoucher> actual = repository.findByCompany(9);
+        OptimisticLockingFailureException exception = assertThrows(
+            OptimisticLockingFailureException.class,
+            () -> repository.save(voucher)
+        );
 
-        assertSame(expected, actual);
-        verify(store).sortedReceiptVouchers(9);
+        assertEquals("Receipt voucher was changed by another request: 42", exception.getMessage());
+        assertEquals(3, voucher.version);
+    }
+
+    @Test
+    void advancesVersionAfterAStoredUpdate() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
+        ReceiptVoucher voucher = new ReceiptVoucher();
+        voucher.id = 42;
+        voucher.version = 3;
+
+        repository.save(voucher);
+
+        assertEquals(4, voucher.version);
     }
 }
