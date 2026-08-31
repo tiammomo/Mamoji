@@ -11,7 +11,7 @@
 | P0 | 默认能力范围过宽 | 默认开放经营、财务、证据和权限核心，其他能力显式启用 | 已落地 |
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
-| P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：票据业务 JDBC 已迁入 `evidence`，兼容种子与 DDL 待移除 |
+| P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：票据仓储、规则、演示种子及 DDL 已迁入 `evidence` |
 | P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 待处理 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 进行中：创建流水已完整迁入 `operations` |
 | P1 | `Models` 聚合多个无关可变模型 | 模型回到所属模块，优先使用不可变值对象 | 待处理 |
@@ -52,10 +52,9 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 将票据演示种子和兼容 DDL 从 `EnterpriseStore` 迁出或删除，收口票据表的数据所有权；
-2. 为审批状态转换建立纯领域对象和表驱动测试；
-3. 为预算增加占用、确认和释放模型及并发集成测试；
-4. 将权限管理的用户模型与全局 `Models` 解耦；
+1. 为审批状态转换建立纯领域对象和表驱动测试；
+2. 为预算增加占用、确认和释放模型及并发集成测试；
+3. 将权限管理的用户模型与全局 `Models` 解耦；
 5. 继续将流水更新、冲正和账户调整迁出 `AccountingService`。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。

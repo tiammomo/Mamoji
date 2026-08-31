@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Evidence-owned JDBC persistence for receipt vouchers. */
 @Repository
@@ -60,6 +61,24 @@ public class ReceiptVoucherRepository {
     public long count() {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class);
         return count == null ? 0 : count;
+    }
+
+    @Transactional
+    public int repairLegacyDefaults() {
+        List<ReceiptVoucher> vouchers = jdbc.query(
+            "SELECT * FROM receipt_vouchers ORDER BY id",
+            (rs, rowNum) -> mapStoredReceiptVoucher(rs)
+        );
+        int repaired = 0;
+        LocalDate today = LocalDate.now();
+        for (ReceiptVoucher voucher : vouchers) {
+            if (ReceiptVoucherPolicy.hydrate(voucher, today)) {
+                voucher.updatedAt = OffsetDateTime.now().toString();
+                save(voucher);
+                repaired++;
+            }
+        }
+        return repaired;
     }
 
     public ReceiptVoucher insert(ReceiptVoucherDraft draft) {
@@ -124,6 +143,12 @@ public class ReceiptVoucherRepository {
     }
 
     private ReceiptVoucher mapReceiptVoucher(ResultSet rs) throws SQLException {
+        ReceiptVoucher voucher = mapStoredReceiptVoucher(rs);
+        ReceiptVoucherPolicy.hydrate(voucher, LocalDate.now());
+        return voucher;
+    }
+
+    private ReceiptVoucher mapStoredReceiptVoucher(ResultSet rs) throws SQLException {
         ReceiptVoucher voucher = new ReceiptVoucher();
         voucher.id = rs.getLong("id");
         voucher.version = rs.getLong("version");
@@ -165,7 +190,6 @@ public class ReceiptVoucherRepository {
         voucher.operatorUserId = rs.getLong("operator_user_id");
         voucher.createdAt = rs.getString("created_at");
         voucher.updatedAt = rs.getString("updated_at");
-        ReceiptVoucherPolicy.hydrate(voucher, LocalDate.now());
         return voucher;
     }
 
