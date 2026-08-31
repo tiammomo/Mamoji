@@ -5,6 +5,8 @@ import com.mamoji.domain.Models.Category;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.domain.Models.User;
+import com.mamoji.operations.application.TransactionApplicationService;
+import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -38,18 +40,18 @@ public class TransactionImportService {
 
     private final AccessControlService accessControl;
     private final InMemoryStore store;
-    private final AccountingService accountingService;
+    private final TransactionApplicationService transactionApplicationService;
     private final TransactionTemplate writeTransaction;
 
     public TransactionImportService(
         AccessControlService accessControl,
         InMemoryStore store,
-        AccountingService accountingService,
+        TransactionApplicationService transactionApplicationService,
         PlatformTransactionManager transactionManager
     ) {
         this.accessControl = accessControl;
         this.store = store;
-        this.accountingService = accountingService;
+        this.transactionApplicationService = transactionApplicationService;
         this.writeTransaction = new TransactionTemplate(transactionManager);
     }
 
@@ -104,15 +106,17 @@ public class TransactionImportService {
                 skipped += 1;
                 continue;
             }
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("companyId", context.company().id);
-            body.put("type", row.type());
-            body.put("amount", row.amount());
-            body.put("categoryId", row.categoryId());
-            body.put("accountId", row.accountId());
-            body.put("date", row.date());
-            body.put("note", row.note());
-            Map<String, Object> created = accountingService.createTransaction(authorization, body);
+            CreateTransactionCommand command = new CreateTransactionCommand(
+                context.company().id,
+                row.type(),
+                row.amount(),
+                row.categoryId(),
+                row.accountId(),
+                LocalDate.parse(row.date()),
+                row.note(),
+                null
+            );
+            Map<String, Object> created = transactionApplicationService.create(authorization, command);
             Object transaction = created.get("transaction");
             if (transaction instanceof TransactionRecord record) ids.add(record.id);
             imported += 1;

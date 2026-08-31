@@ -9,6 +9,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.domain.Models.TransactionRecord;
 import com.mamoji.repository.InMemoryStore;
+import com.mamoji.service.TransactionImportService;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -18,6 +19,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -81,6 +84,9 @@ class AuthAndPermissionIntegrationTest {
 
     @Autowired
     DataSource dataSource;
+
+    @Autowired
+    TransactionImportService transactionImportService;
 
     private final HttpClient client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
@@ -297,9 +303,13 @@ class AuthAndPermissionIntegrationTest {
 
         ApiResponse first = request("POST", "/api/v1/transactions", command, token, headers);
         ApiResponse second = request("POST", "/api/v1/transactions", command, token, headers);
+        Map<String, Object> conflictingCommand = new java.util.LinkedHashMap<>(command);
+        conflictingCommand.put("amount", 50);
+        ApiResponse conflict = request("POST", "/api/v1/transactions", conflictingCommand, token, headers);
 
         assertEquals(200, first.status(), first.body());
         assertEquals(200, second.status(), second.body());
+        assertEquals(409, conflict.status(), conflict.body());
         assertEquals(Boolean.TRUE, parseMap(second.body()).get("replayed"));
         assertEquals(1, transactionCount(token, companyId));
         Map<String, Object> updatedAccount = parseMap(request(
@@ -309,6 +319,39 @@ class AuthAndPermissionIntegrationTest {
             token
         ).body());
         assertEquals(0, new BigDecimal("975").compareTo(decimal(updatedAccount.get("balance"))));
+    }
+
+    @Test
+    void transactionCsvImportUsesTheOperationsWriteBoundary() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "CSV operations boundary " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "CSV account", "1000");
+        createCategory(token, companyId, "CSV expense", "expense");
+        String csv = "date,type,amount,category,account,note\n"
+            + LocalDate.now().minusDays(1) + ",expense,12.34,CSV expense,CSV account,office supplies\n";
+        MockMultipartFile file = new MockMultipartFile(
+            "file",
+            "transactions.csv",
+            "text/csv",
+            csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        );
+
+        Map<String, Object> result = transactionImportService.commit(
+            "Bearer " + token,
+            file,
+            companyId,
+            true
+        );
+
+        assertEquals(1, result.get("importedRows"));
+        assertEquals(1, transactionCount(token, companyId));
+        Map<String, Object> updatedAccount = parseMap(request(
+            "GET",
+            "/api/v1/accounts/" + account.get("id") + "?companyId=" + companyId,
+            null,
+            token
+        ).body());
+        assertEquals(0, new BigDecimal("987.66").compareTo(decimal(updatedAccount.get("balance"))));
     }
 
     @Test
