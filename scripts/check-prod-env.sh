@@ -102,7 +102,6 @@ require_equals MAMOJI_PASSWORD_REQUIRE_COMPLEXITY true
 require_equals MAMOJI_FLYWAY_ENABLED true
 require_equals MAMOJI_OUTBOX_ENABLED true
 require_equals MAMOJI_OUTBOX_CONSUMER_ENABLED true
-require_equals MAMOJI_SCHEMA_COMPATIBILITY_ENABLED false
 require_equals MAMOJI_OBJECT_STORAGE_ENABLED true
 
 require_https_url MAMOJI_PUBLIC_API_BASE_URL

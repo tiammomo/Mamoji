@@ -257,7 +257,7 @@ scripts/deploy-prod.sh
 
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`：只初始化管理员、公司主体和管理员员工档案，不生成演示数据。
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`：启用生产启动 guard，发现演示配置、弱密钥或本地来源会直接拒绝启动。
-- `MAMOJI_SCHEMA_COMPATIBILITY_ENABLED=false`：生产只接受 Flyway 管理的正式 schema，不在启动时做兼容补列。
+- `MAMOJI_FLYWAY_ENABLED=true`：所有环境只由 Flyway 管理正式 schema，应用启动过程不执行建表或兼容补列。
 - `MAMOJI_REGISTRATION_MODE=invite`：生产默认邀请制注册。
 - `MAMOJI_ALLOWED_ORIGINS`：只填写生产前端域名。
 - `MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`：首次管理员、注册、改密均执行强密码策略。

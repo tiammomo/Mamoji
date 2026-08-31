@@ -6,7 +6,7 @@
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`，`scripts/check-prod-env.sh` 已通过，生产启动 guard 未报错。
 - `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`，且部署未配置多个 backend 副本。
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类。
-- `MAMOJI_SCHEMA_COMPATIBILITY_ENABLED=false`，生产只依赖 Flyway migration。
+- 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。
 - `MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`，`MAMOJI_PASSWORD_MIN_LENGTH>=12`。
