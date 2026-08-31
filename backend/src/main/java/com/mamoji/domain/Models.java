@@ -314,16 +314,4 @@ public final class Models {
         public String createdAt;
     }
 
-    public static class AuditLog {
-        public long id;
-        public long companyId;
-        public String entityType;
-        public long entityId;
-        public String action;
-        public String summary;
-        public long actorUserId;
-        public String actorName;
-        public String createdAt;
-    }
-
 }

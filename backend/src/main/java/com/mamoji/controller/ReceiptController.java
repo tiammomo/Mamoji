@@ -1,7 +1,7 @@
 package com.mamoji.controller;
 
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.AuditLog;
+import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.service.ReceiptService;
 import java.nio.charset.StandardCharsets;

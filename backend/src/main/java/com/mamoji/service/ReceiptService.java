@@ -2,7 +2,7 @@ package com.mamoji.service;
 
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.AuditLog;
+import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;

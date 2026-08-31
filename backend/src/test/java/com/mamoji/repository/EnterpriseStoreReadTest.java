@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.platform.audit.application.AuditLogRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,6 +23,7 @@ class EnterpriseStoreReadTest {
         EnterpriseStore store = new EnterpriseStore(
             jdbc,
             mock(InMemoryStore.class),
+            mock(AuditLogRepository.class),
             "demo",
             "Test",
             "",
