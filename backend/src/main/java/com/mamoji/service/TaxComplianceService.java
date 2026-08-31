@@ -4,6 +4,7 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.domain.Models.User;
+import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -43,17 +44,23 @@ public class TaxComplianceService {
 
     private final AccessControlService accessControl;
     private final EnterpriseStore enterpriseStore;
+    private final ReceiptVoucherRepository receiptVouchers;
 
-    public TaxComplianceService(AccessControlService accessControl, EnterpriseStore enterpriseStore) {
+    public TaxComplianceService(
+        AccessControlService accessControl,
+        EnterpriseStore enterpriseStore,
+        ReceiptVoucherRepository receiptVouchers
+    ) {
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
+        this.receiptVouchers = receiptVouchers;
     }
 
     public Map<String, Object> report(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
         List<TaxItem> taxItems = enterpriseStore.sortedTaxItems(company.id);
-        List<ReceiptVoucher> vouchers = enterpriseStore.sortedReceiptVouchers(company.id);
+        List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id);
         Map<String, Object> policyProfile = policyProfile(company);
         List<Map<String, Object>> filingCalendar = filingCalendar(company, taxItems);
         List<Map<String, Object>> riskItems = riskItems(company, taxItems, vouchers, filingCalendar);
