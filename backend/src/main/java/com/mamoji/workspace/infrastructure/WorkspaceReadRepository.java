@@ -113,7 +113,7 @@ public class WorkspaceReadRepository {
                   )
               )
             """, (rs, rowNum) -> new RecurringMetrics(rs.getInt("overdue_count"), rs.getInt("upcoming_count")),
-            today.toString(), today.toString(), weekEnd.toString(), companyId, scope.companyWide(), scope.actorUserId(),
+            today, today, weekEnd, companyId, scope.companyWide(), scope.actorUserId(),
             scope.departmentId(), scope.departmentId());
     }
 
@@ -161,13 +161,16 @@ public class WorkspaceReadRepository {
               )
             ORDER BY item.next_execution, item.id
             LIMIT ?
-            """, (rs, rowNum) -> new UpcomingItem(
-                rs.getString("id"),
-                rs.getString("name"),
-                rs.getString("next_execution"),
-                LocalDate.parse(rs.getString("next_execution")).isBefore(today),
-                "/recurring"
-            ), companyId, today.plusDays(14).toString(), scope.companyWide(), scope.actorUserId(),
+            """, (rs, rowNum) -> {
+                LocalDate nextExecution = rs.getObject("next_execution", LocalDate.class);
+                return new UpcomingItem(
+                    rs.getString("id"),
+                    rs.getString("name"),
+                    nextExecution.toString(),
+                    nextExecution.isBefore(today),
+                    "/recurring"
+                );
+            }, companyId, today.plusDays(14), scope.companyWide(), scope.actorUserId(),
             scope.departmentId(), scope.departmentId(), Math.max(1, Math.min(limit, 20)));
     }
 
