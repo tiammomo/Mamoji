@@ -133,9 +133,8 @@ public class TransactionApplicationService {
             category,
             account
         );
-        transactions.insert(transaction);
         transaction.budgetId = reservation.map(BudgetReservation::budgetId).orElse(null);
-        transactions.update(transaction);
+        transactions.insert(transaction);
         reservation.ifPresent(value -> budgetService.confirmReservation(value.id(), transaction.id));
         saveAdjustedAccount(account, transaction);
         budgetService.refreshCompany(company.id);

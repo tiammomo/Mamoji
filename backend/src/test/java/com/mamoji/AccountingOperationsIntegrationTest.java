@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mamoji.operations.domain.TransactionRecord;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.time.LocalDate;
@@ -266,31 +265,21 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
     }
 
     @Test
-    void accountDeletionChecksCommittedDatabaseReferencesEvenWhenCacheEntryIsMissing() throws Exception {
+    void accountDeletionChecksCommittedDatabaseReferences() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Reference Lock " + System.nanoTime());
         Map<String, Object> account = createAccount(token, companyId, "Referenced account", "1000");
         Map<String, Object> category = createCategory(token, companyId, "Referenced expense", "expense");
-        Map<String, Object> created = createTransaction(token, companyId, account, category, "10");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
-        long transactionId = ((Number) transaction.get("id")).longValue();
+        createTransaction(token, companyId, account, category, "10");
         long accountId = ((Number) account.get("id")).longValue();
-        TransactionRecord cached = coreStore.transactions.remove(transactionId);
-        try {
-            ApiResponse deleted = request(
-                "DELETE",
-                "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
-                null,
-                token
-            );
-            assertEquals(409, deleted.status(), deleted.body());
-            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM accounts WHERE id = ?", Integer.class, accountId));
-        } finally {
-            if (cached != null) {
-                coreStore.transactions.put(transactionId, cached);
-            }
-        }
+        ApiResponse deleted = request(
+            "DELETE",
+            "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
+            null,
+            token
+        );
+        assertEquals(409, deleted.status(), deleted.body());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM accounts WHERE id = ?", Integer.class, accountId));
     }
 
     @Test
@@ -426,9 +415,9 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         @SuppressWarnings("unchecked")
         Map<String, Object> fields = (Map<String, Object>) problem.get("fields");
         assertTrue(fields.keySet().containsAll(Set.of("amount", "categoryId", "accountId", "note")));
-        assertEquals("25", jdbc.queryForObject(
-            "SELECT amount FROM transactions WHERE id = ?", String.class, transactionId
-        ));
+        assertEquals(0, new BigDecimal("25").compareTo(jdbc.queryForObject(
+            "SELECT amount FROM transactions WHERE id = ?", BigDecimal.class, transactionId
+        )));
     }
 
     @Test
@@ -467,9 +456,9 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(409, invalidDate.status(), invalidDate.body());
-        assertEquals("0", jdbc.queryForObject(
-            "SELECT refunded_amount FROM transactions WHERE id = ?", String.class, transactionId
-        ));
+        assertEquals(0, BigDecimal.ZERO.compareTo(jdbc.queryForObject(
+            "SELECT refunded_amount FROM transactions WHERE id = ?", BigDecimal.class, transactionId
+        )));
         assertAccountBalances(
             token,
             companyId,
@@ -710,7 +699,9 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         @SuppressWarnings("unchecked")
         Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
         long transactionId = ((Number) transaction.get("id")).longValue();
-        assertEquals(1, coreStore.transactions.get(transactionId).version);
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT version FROM transactions WHERE id = ?", Long.class, transactionId
+        ));
         assertEquals(1, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ? AND status = 'confirmed'",
             Integer.class,
@@ -724,11 +715,11 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(409, overCapacity.status(), overCapacity.body());
-        assertEquals("70", jdbc.queryForObject(
+        assertEquals(0, new BigDecimal("70").compareTo(jdbc.queryForObject(
             "SELECT amount FROM transactions WHERE id = ?",
-            String.class,
+            BigDecimal.class,
             transactionId
-        ));
+        )));
 
         ApiResponse updated = request(
             "PUT",
@@ -737,8 +728,12 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(200, updated.status(), updated.body());
-        assertEquals(2, coreStore.transactions.get(transactionId).version);
-        assertEquals(0, new BigDecimal("80").compareTo(coreStore.transactions.get(transactionId).amount));
+        assertEquals(1L, jdbc.queryForObject(
+            "SELECT version FROM transactions WHERE id = ?", Long.class, transactionId
+        ));
+        assertEquals(0, new BigDecimal("80").compareTo(jdbc.queryForObject(
+            "SELECT amount FROM transactions WHERE id = ?", BigDecimal.class, transactionId
+        )));
         assertEquals(1, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE budget_id = ? AND status = 'released'",
             Integer.class,
@@ -757,7 +752,9 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(200, deleted.status(), deleted.body());
-        assertFalse(coreStore.transactions.containsKey(transactionId));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE id = ?", Integer.class, transactionId
+        ));
         assertEquals(0, jdbc.queryForObject(
             "SELECT COUNT(*) FROM budget_reservations WHERE transaction_id = ?",
             Integer.class,
@@ -807,7 +804,7 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
     }
 
     @Test
-    void transactionSummaryReadsDatabaseWhenCompatibilityCacheEntryIsMissing() throws Exception {
+    void transactionSummaryReadsAuthoritativeDatabaseProjection() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Database summary");
         Map<String, Object> account = createAccount(token, companyId, "Summary account", "1000");
@@ -822,27 +819,17 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             "note", "database-summary-row"
         ), token);
         assertEquals(200, created.status(), created.body());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> transaction = (Map<String, Object>) parseMap(created.body()).get("transaction");
-        long transactionId = id(transaction);
-        TransactionRecord cached = coreStore.transactions.remove(transactionId);
-        try {
-            ApiResponse summary = request(
-                "GET",
-                "/api/v1/transactions/summary?companyId=" + companyId + "&keyword=database-summary-row",
-                null,
-                token
-            );
-            assertEquals(200, summary.status(), summary.body());
-            Map<String, Object> totals = parseMap(summary.body());
-            assertEquals(1, ((Number) totals.get("rows")).intValue());
-            assertEquals(0, new BigDecimal("42").compareTo(decimal(totals.get("expense"))));
-            assertEquals(1, ((Number) totals.get("reviewCount")).intValue());
-        } finally {
-            if (cached != null) {
-                coreStore.transactions.put(transactionId, cached);
-            }
-        }
+        ApiResponse summary = request(
+            "GET",
+            "/api/v1/transactions/summary?companyId=" + companyId + "&keyword=database-summary-row",
+            null,
+            token
+        );
+        assertEquals(200, summary.status(), summary.body());
+        Map<String, Object> totals = parseMap(summary.body());
+        assertEquals(1, ((Number) totals.get("rows")).intValue());
+        assertEquals(0, new BigDecimal("42").compareTo(decimal(totals.get("expense"))));
+        assertEquals(1, ((Number) totals.get("reviewCount")).intValue());
     }
 
     @Test

@@ -3,11 +3,12 @@ package com.mamoji.operations.infrastructure;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.application.TransactionWriteRepository;
 import com.mamoji.operations.domain.TransactionRecord;
-import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,16 +21,13 @@ import org.springframework.stereotype.Repository;
 public class JdbcTransactionWriteRepository implements TransactionWriteRepository {
     private final JdbcTemplate jdbc;
     private final TransactionQueryRepository queryRepository;
-    private final InMemoryStore compatibilityStore;
 
     public JdbcTransactionWriteRepository(
         JdbcTemplate jdbc,
-        TransactionQueryRepository queryRepository,
-        InMemoryStore compatibilityStore
+        TransactionQueryRepository queryRepository
     ) {
         this.jdbc = jdbc;
         this.queryRepository = queryRepository;
-        this.compatibilityStore = compatibilityStore;
     }
 
     @Override
@@ -91,7 +89,6 @@ public class JdbcTransactionWriteRepository implements TransactionWriteRepositor
             throw new IllegalStateException("Database did not return a generated transaction id");
         }
         transaction.id = key.longValue();
-        compatibilityStore.synchronizeTransactionAfterCommit(transaction);
         return transaction;
     }
 
@@ -108,17 +105,17 @@ public class JdbcTransactionWriteRepository implements TransactionWriteRepositor
             transaction.userId,
             transaction.familyId,
             transaction.type,
-            moneyText(transaction.amount),
+            money(transaction.amount),
             transaction.categoryId,
             transaction.accountId,
-            transaction.date,
+            LocalDate.parse(transaction.date),
             transaction.note,
             transaction.originalTransactionId,
-            moneyText(transaction.refundedAmount),
-            transaction.isRefundable ? 1 : 0,
+            money(transaction.refundedAmount),
+            transaction.isRefundable,
             transaction.budgetId,
-            transaction.createdAt,
-            transaction.updatedAt,
+            OffsetDateTime.parse(transaction.createdAt),
+            OffsetDateTime.parse(transaction.updatedAt),
             transaction.companyId,
             transaction.idempotencyKey,
             transaction.id,
@@ -130,7 +127,6 @@ public class JdbcTransactionWriteRepository implements TransactionWriteRepositor
             );
         }
         transaction.version++;
-        compatibilityStore.synchronizeTransactionAfterCommit(transaction);
     }
 
     @Override
@@ -145,25 +141,24 @@ public class JdbcTransactionWriteRepository implements TransactionWriteRepositor
                 "Transaction was changed by another request: " + transaction.id
             );
         }
-        compatibilityStore.removeTransactionFromCompatibilityViewAfterCommit(transaction.id);
     }
 
     private void bindInsert(PreparedStatement statement, TransactionRecord transaction) throws SQLException {
         statement.setLong(1, transaction.userId);
         setLongOrNull(statement, 2, transaction.familyId);
         statement.setInt(3, transaction.type);
-        statement.setString(4, moneyText(transaction.amount));
+        statement.setBigDecimal(4, money(transaction.amount));
         statement.setLong(5, transaction.categoryId);
         statement.setLong(6, transaction.accountId);
-        statement.setString(7, transaction.date);
+        statement.setObject(7, LocalDate.parse(transaction.date));
         statement.setString(8, transaction.note);
         setLongOrNull(statement, 9, transaction.originalTransactionId);
-        statement.setString(10, moneyText(transaction.refundedAmount));
-        statement.setInt(11, transaction.isRefundable ? 1 : 0);
+        statement.setBigDecimal(10, money(transaction.refundedAmount));
+        statement.setBoolean(11, transaction.isRefundable);
         setLongOrNull(statement, 12, transaction.budgetId);
-        statement.setString(13, transaction.createdAt);
-        statement.setString(14, transaction.updatedAt);
-        setLongOrNull(statement, 15, transaction.companyId);
+        statement.setObject(13, OffsetDateTime.parse(transaction.createdAt));
+        statement.setObject(14, OffsetDateTime.parse(transaction.updatedAt));
+        statement.setLong(15, transaction.companyId);
         statement.setString(16, transaction.idempotencyKey);
     }
 
@@ -175,7 +170,7 @@ public class JdbcTransactionWriteRepository implements TransactionWriteRepositor
         }
     }
 
-    private String moneyText(BigDecimal value) {
-        return (value == null ? BigDecimal.ZERO : value).stripTrailingZeros().toPlainString();
+    private BigDecimal money(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 }
