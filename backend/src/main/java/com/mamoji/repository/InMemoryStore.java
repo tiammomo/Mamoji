@@ -1,6 +1,5 @@
 package com.mamoji.repository;
 
-import com.mamoji.budget.domain.Budget;
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
 import com.mamoji.finance.domain.Account;
@@ -22,12 +21,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.DependsOn;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -40,7 +37,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class InMemoryStore {
     public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
     public final Map<Long, Category> categories = new ConcurrentHashMap<>();
-    public final Map<Long, Budget> budgets = new ConcurrentHashMap<>();
     public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
@@ -83,27 +79,22 @@ public class InMemoryStore {
         loadAll();
         if (userAccounts.count() == 0) {
             seedInitialData();
-        } else {
-            refreshBudgetData();
         }
     }
 
     private void loadAll() {
         accounts.clear();
         categories.clear();
-        budgets.clear();
         transactions.clear();
         ledgers.clear();
         ledgerMembers.clear();
 
         forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
-        forEachRow("SELECT * FROM budgets", rs -> budgets.put(rs.getLong("id"), mapBudget(rs)));
         forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
 
-        budgets.values().forEach(this::attachCategory);
         transactions.values().forEach(this::attachTransactionRelations);
     }
 
@@ -159,9 +150,6 @@ public class InMemoryStore {
         Account bank = account(testUser.id, defaultLedger.id, "公司基本户", "bank", "对公账户", "招商银行", "26300");
         account(testUser.id, defaultLedger.id, "企业信用卡", "credit", "信用卡", "招商银行", "1800");
 
-        Budget monthlyBudget = budget(testUser.id, defaultLedger.id, null, "本月经营预算", "6000",
-            LocalDate.now().withDayOfMonth(1).toString(), LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).toString(), 85);
-
         transaction(testUser.id, defaultLedger.id, 1, "15000", revenue.id, bank.id, LocalDate.now().minusDays(4).toString(), "客户项目回款");
         transaction(testUser.id, defaultLedger.id, 1, "22000", revenue.id, bank.id, LocalDate.now().minusDays(5).toString(), "项目交付待回款：ERP 二期验收，预计下月到账");
         transaction(testUser.id, defaultLedger.id, 2, "68.5", teamMeal.id, cash.id, LocalDate.now().minusDays(1).toString(), "团队工作餐");
@@ -169,10 +157,6 @@ public class InMemoryStore {
         transaction(testUser.id, defaultLedger.id, 2, "899", procurement.id, bank.id, LocalDate.now().minusDays(3).toString(), "办公键盘和配件");
         transaction(testUser.id, defaultLedger.id, 2, "1200", customerRefund.id, bank.id, LocalDate.now().minusDays(2).toString(), "客户退款：交付范围调整，冲减收入");
         transaction(testUser.id, defaultLedger.id, 2, "18000", severance.id, bank.id, LocalDate.now().minusDays(6).toString(), "离职补偿：N+1 经济补偿");
-
-        monthlyBudget.spent = new BigDecimal("992.5");
-        recalculateBudget(monthlyBudget);
-        saveBudget(monthlyBudget);
     }
 
     private void validateBootstrapAdmin() {
@@ -284,40 +268,6 @@ public class InMemoryStore {
             """, ps -> bindCategoryInsert(ps, category));
         afterCommit(() -> categories.put(category.id, category));
         return category;
-    }
-
-    public Budget budget(long userId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
-        Long companyId = ledgerId == null ? null : findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
-        if (companyId == null && categoryId != null) {
-            companyId = findCategory(categoryId).map(category -> category.companyId).orElse(null);
-        }
-        return budget(userId, companyId, ledgerId, categoryId, name, amount, startDate, endDate, warningThreshold);
-    }
-
-    public Budget budget(long userId, Long companyId, Long ledgerId, Long categoryId, String name, String amount, String startDate, String endDate, int warningThreshold) {
-        Budget budget = new Budget();
-        budget.userId = userId;
-        budget.companyId = companyId;
-        budget.ledgerId = ledgerId;
-        budget.categoryId = categoryId;
-        budget.name = name;
-        budget.amount = money(amount);
-        budget.startDate = startDate;
-        budget.endDate = endDate;
-        budget.warningThreshold = warningThreshold;
-        budget.status = 1;
-        budget.spent = BigDecimal.ZERO;
-        attachCategory(budget);
-        recalculateBudget(budget);
-        stamp(budget);
-        budget.id = insert("""
-            INSERT INTO budgets (
-                name, amount, start_date, end_date, warning_threshold, status, spent, remaining_amount,
-                usage_rate, warning_reached, risk_level, risk_message, user_id, ledger_id, category_id, created_at, updated_at, company_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindBudgetInsert(ps, budget));
-        afterCommit(() -> budgets.put(budget.id, budget));
-        return budget;
     }
 
     private TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
@@ -489,23 +439,6 @@ public class InMemoryStore {
         ));
     }
 
-    private void saveBudget(Budget budget) {
-        int updated = jdbc.update("""
-            UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
-                spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?, risk_level = ?, risk_message = ?,
-                user_id = ?, ledger_id = ?, category_id = ?, created_at = ?, updated_at = ?, company_id = ?,
-                version = version + 1 WHERE id = ? AND version = ?
-            """, budget.name, moneyText(budget.amount), budget.startDate, budget.endDate, budget.warningThreshold, budget.status,
-            moneyText(budget.spent), moneyText(budget.remainingAmount), budget.usageRate, intBool(budget.warningReached),
-            budget.riskLevel, budget.riskMessage, budget.userId, budget.ledgerId, budget.categoryId, budget.createdAt, budget.updatedAt,
-            budget.companyId, budget.id, budget.version);
-        if (updated != 1) {
-            throw new OptimisticLockingFailureException("Budget was changed by another request: " + budget.id);
-        }
-        budget.version++;
-        afterCommit(() -> budgets.put(budget.id, budget));
-    }
-
     private Optional<Account> findAccount(long id) {
         return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
     }
@@ -571,37 +504,12 @@ public class InMemoryStore {
         return count != null && count > 0;
     }
 
-    private List<TransactionRecord> sortedTransactions() {
-        return jdbc.query("""
-            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
-                   c.color AS resolved_category_color, a.name AS resolved_account_name
-            FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN accounts a ON a.id = t.account_id
-            ORDER BY t.date DESC, t.id DESC
-            """, (rs, rowNum) -> mapTransactionWithRelations(rs));
-    }
-
     private List<Account> sortedAccounts() {
         return jdbc.query("SELECT * FROM accounts ORDER BY id", (rs, rowNum) -> mapAccount(rs));
     }
 
     private List<Category> sortedCategories() {
         return jdbc.query("SELECT * FROM categories ORDER BY id", (rs, rowNum) -> mapCategory(rs));
-    }
-
-    private List<Budget> sortedBudgets() {
-        return jdbc.query("""
-            SELECT budget.*, category.name AS resolved_category_name, category.icon AS resolved_category_icon
-            FROM budgets budget
-            LEFT JOIN categories category ON category.id = budget.category_id
-            ORDER BY budget.id
-            """, (rs, rowNum) -> {
-                Budget budget = mapBudget(rs);
-                budget.categoryName = rs.getString("resolved_category_name");
-                budget.categoryIcon = rs.getString("resolved_category_icon");
-                return budget;
-            });
     }
 
     /**
@@ -632,18 +540,6 @@ public class InMemoryStore {
                 jdbc.update("UPDATE categories SET company_id = ? WHERE id = ? AND company_id IS NULL", category.companyId, category.id);
             }
         });
-        budgets.values().stream().filter(budget -> budget.companyId == null).forEach(budget -> {
-            budget.companyId = Optional.ofNullable(budget.ledgerId)
-                .map(ledgers::get)
-                .map(ledger -> ledger.companyId)
-                .orElseGet(() -> Optional.ofNullable(budget.categoryId)
-                    .map(categories::get)
-                    .map(category -> category.companyId)
-                    .orElse(defaultCompanyByUser.get(budget.userId)));
-            if (budget.companyId != null) {
-                jdbc.update("UPDATE budgets SET company_id = ? WHERE id = ? AND company_id IS NULL", budget.companyId, budget.id);
-            }
-        });
         transactions.values().stream().filter(tx -> tx.companyId == null).forEach(tx -> {
             tx.companyId = Optional.ofNullable(accounts.get(tx.accountId)).map(account -> account.companyId)
                 .orElseGet(() -> Optional.ofNullable(categories.get(tx.categoryId)).map(category -> category.companyId)
@@ -653,7 +549,6 @@ public class InMemoryStore {
                 jdbc.update("UPDATE transactions SET company_id = ? WHERE id = ? AND company_id IS NULL", tx.companyId, tx.id);
             }
         });
-        refreshBudgetData();
     }
 
     public void afterCommit(Runnable action) {
@@ -666,54 +561,6 @@ public class InMemoryStore {
             @Override
             public void afterCommit() {
                 action.run();
-            }
-        });
-    }
-
-    private void refreshBudgetData() {
-        attachBudgetData(true);
-    }
-
-    private void attachBudgetData(boolean persist) {
-        List<TransactionRecord> expenseTransactions = sortedTransactions().stream()
-            .filter(tx -> tx.type == 2 || tx.type == 3)
-            .toList();
-        sortedBudgets().forEach(budget -> {
-            BigDecimal previousSpent = budget.spent;
-            BigDecimal previousRemaining = budget.remainingAmount;
-            double previousUsageRate = budget.usageRate;
-            boolean previousWarningReached = budget.warningReached;
-            String previousRiskLevel = budget.riskLevel;
-            String previousRiskMessage = budget.riskMessage;
-            int previousStatus = budget.status;
-            String previousCategoryName = budget.categoryName;
-            String previousCategoryIcon = budget.categoryIcon;
-
-            budget.spent = expenseTransactions.stream()
-                .filter(tx -> tx.userId == budget.userId)
-                .filter(tx -> Objects.equals(tx.companyId, budget.companyId))
-                .filter(tx -> budget.ledgerId == null || Objects.equals(budget.ledgerId, tx.familyId))
-                .filter(tx -> budget.categoryId == null || budget.categoryId.equals(tx.categoryId))
-                .filter(tx -> (tx.type == 3 && Objects.equals(tx.budgetId, budget.id))
-                    || (tx.date.compareTo(budget.startDate) >= 0 && tx.date.compareTo(budget.endDate) <= 0))
-                .map(tx -> tx.type == 3 ? tx.amount.negate() : tx.amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .max(BigDecimal.ZERO);
-            attachCategory(budget);
-            recalculateBudget(budget);
-            if (persist && budgetComputedDataChanged(
-                budget,
-                previousSpent,
-                previousRemaining,
-                previousUsageRate,
-                previousWarningReached,
-                previousRiskLevel,
-                previousRiskMessage,
-                previousStatus,
-                previousCategoryName,
-                previousCategoryIcon
-            )) {
-                saveBudget(budget);
             }
         });
     }
@@ -732,79 +579,6 @@ public class InMemoryStore {
                 tx.categoryColor = rs.getString("category_color");
                 tx.accountName = rs.getString("account_name");
             }, tx.id);
-    }
-
-    private void attachCategory(Budget budget) {
-        if (budget.categoryId == null) {
-            budget.categoryName = null;
-            budget.categoryIcon = null;
-            return;
-        }
-        findCategory(budget.categoryId).ifPresent(category -> {
-            budget.categoryName = category.name;
-            budget.categoryIcon = category.icon;
-        });
-    }
-
-    private void recalculateBudget(Budget budget) {
-        if (budget.amount == null || budget.amount.compareTo(BigDecimal.ZERO) <= 0) {
-            budget.remainingAmount = BigDecimal.ZERO;
-            budget.usageRate = 0;
-        } else {
-            budget.remainingAmount = budget.amount.subtract(nullToZero(budget.spent));
-            budget.usageRate = nullToZero(budget.spent).divide(budget.amount, 4, java.math.RoundingMode.HALF_UP).doubleValue();
-        }
-        budget.warningReached = budget.usageRate * 100 >= budget.warningThreshold;
-        if (budget.usageRate >= 1) {
-            budget.riskLevel = "critical";
-            budget.riskMessage = "预算已超支";
-            budget.status = 3;
-        } else if (budget.usageRate * 100 >= budget.warningThreshold) {
-            if (budget.status == 3) {
-                budget.status = 1;
-            }
-            budget.riskLevel = "high";
-            budget.riskMessage = "接近预算上限";
-        } else if (budget.usageRate >= 0.6) {
-            if (budget.status == 3) {
-                budget.status = 1;
-            }
-            budget.riskLevel = "medium";
-            budget.riskMessage = "使用进度正常偏高";
-        } else {
-            if (budget.status == 3) {
-                budget.status = 1;
-            }
-            budget.riskLevel = "low";
-            budget.riskMessage = "预算健康";
-        }
-    }
-
-    private boolean budgetComputedDataChanged(
-        Budget budget,
-        BigDecimal previousSpent,
-        BigDecimal previousRemaining,
-        double previousUsageRate,
-        boolean previousWarningReached,
-        String previousRiskLevel,
-        String previousRiskMessage,
-        int previousStatus,
-        String previousCategoryName,
-        String previousCategoryIcon
-    ) {
-        return !sameMoney(previousSpent, budget.spent)
-            || !sameMoney(previousRemaining, budget.remainingAmount)
-            || Double.compare(previousUsageRate, budget.usageRate) != 0
-            || previousWarningReached != budget.warningReached
-            || previousStatus != budget.status
-            || !Objects.equals(previousRiskLevel, budget.riskLevel)
-            || !Objects.equals(previousRiskMessage, budget.riskMessage)
-            || !Objects.equals(previousCategoryName, budget.categoryName)
-            || !Objects.equals(previousCategoryIcon, budget.categoryIcon);
-    }
-
-    private boolean sameMoney(BigDecimal left, BigDecimal right) {
-        return nullToZero(left).compareTo(nullToZero(right)) == 0;
     }
 
     private Account mapAccount(ResultSet rs) throws SQLException {
@@ -852,31 +626,6 @@ public class InMemoryStore {
         category.createdAt = rs.getString("created_at");
         category.updatedAt = rs.getString("updated_at");
         return category;
-    }
-
-    private Budget mapBudget(ResultSet rs) throws SQLException {
-        Budget budget = new Budget();
-        budget.id = rs.getLong("id");
-        budget.version = rs.getLong("version");
-        budget.companyId = nullableLong(rs, "company_id");
-        budget.name = rs.getString("name");
-        budget.amount = money(rs.getString("amount"));
-        budget.startDate = rs.getString("start_date");
-        budget.endDate = rs.getString("end_date");
-        budget.warningThreshold = rs.getInt("warning_threshold");
-        budget.status = rs.getInt("status");
-        budget.spent = money(rs.getString("spent"));
-        budget.remainingAmount = money(rs.getString("remaining_amount"));
-        budget.usageRate = rs.getDouble("usage_rate");
-        budget.warningReached = rs.getInt("warning_reached") == 1;
-        budget.riskLevel = rs.getString("risk_level");
-        budget.riskMessage = rs.getString("risk_message");
-        budget.userId = rs.getLong("user_id");
-        budget.ledgerId = nullableLong(rs, "ledger_id");
-        budget.categoryId = nullableLong(rs, "category_id");
-        budget.createdAt = rs.getString("created_at");
-        budget.updatedAt = rs.getString("updated_at");
-        return budget;
     }
 
     private TransactionRecord mapTransaction(ResultSet rs) throws SQLException {
@@ -1011,27 +760,6 @@ public class InMemoryStore {
         ps.setString(7, category.createdAt);
         ps.setString(8, category.updatedAt);
         setLongOrNull(ps, 9, category.companyId);
-    }
-
-    private void bindBudgetInsert(PreparedStatement ps, Budget budget) throws SQLException {
-        ps.setString(1, budget.name);
-        ps.setString(2, moneyText(budget.amount));
-        ps.setString(3, budget.startDate);
-        ps.setString(4, budget.endDate);
-        ps.setInt(5, budget.warningThreshold);
-        ps.setInt(6, budget.status);
-        ps.setString(7, moneyText(budget.spent));
-        ps.setString(8, moneyText(budget.remainingAmount));
-        ps.setDouble(9, budget.usageRate);
-        ps.setInt(10, intBool(budget.warningReached));
-        ps.setString(11, budget.riskLevel);
-        ps.setString(12, budget.riskMessage);
-        ps.setLong(13, budget.userId);
-        setLongOrNull(ps, 14, budget.ledgerId);
-        setLongOrNull(ps, 15, budget.categoryId);
-        ps.setString(16, budget.createdAt);
-        ps.setString(17, budget.updatedAt);
-        setLongOrNull(ps, 18, budget.companyId);
     }
 
     private void bindTransactionInsert(PreparedStatement ps, TransactionRecord tx) throws SQLException {
