@@ -50,8 +50,6 @@ public interface FinanceRepository {
 
     Optional<Ledger> findLedgerForUpdate(long id);
 
-    List<Ledger> findOwnedLedgers(long ownerId, long companyId);
-
     List<Ledger> findAccessibleLedgers(long userId, long companyId);
 
     Ledger insertLedger(Ledger ledger);
@@ -66,7 +64,7 @@ public interface FinanceRepository {
 
     LedgerMember insertLedgerMember(LedgerMember member);
 
-    void deleteLedgerMember(long ledgerId, long userId);
+    boolean deleteLedgerMember(long ledgerId, long userId);
 
     record MemberProfile(long userId, String nickname, String avatar) {
     }

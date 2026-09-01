@@ -16,6 +16,8 @@ public interface TransactionAccountingGateway {
 
     List<Ledger> findLedgers(long userId, long companyId);
 
+    boolean ledgerMemberExists(long ledgerId, long userId);
+
     Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName);
 
     void updateAccount(Account account);

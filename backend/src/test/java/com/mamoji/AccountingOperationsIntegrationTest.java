@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.finance.application.FinanceRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.time.LocalDate;
@@ -12,7 +13,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -24,6 +27,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
+
+    @Autowired
+    FinanceRepository finances;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -143,6 +149,111 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             Long.class,
             accountId
         ));
+    }
+
+    @Test
+    void ledgerCommandsValidateTypedInputCompanyMembershipAndFinancePermission() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Ledger validation " + System.nanoTime());
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledgers WHERE company_id = ?",
+            Integer.class,
+            companyId
+        );
+
+        ApiResponse invalidLedger = request("POST", "/api/v1/ledgers", Map.of(
+            "companyId", companyId,
+            "name", "   ",
+            "currency", "CN"
+        ), token);
+
+        assertValidationFields(invalidLedger, Set.of("name", "currency"));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledgers WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/ledgers", Map.of(
+            "companyId", companyId,
+            "name", "  Treasury ledger  ",
+            "description", "  Working capital  ",
+            "currency", "usd"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> ledger = parseMap(created.body());
+        long ledgerId = ((Number) ledger.get("id")).longValue();
+        assertEquals("Treasury ledger", ledger.get("name"));
+        assertEquals("Working capital", ledger.get("description"));
+        assertEquals("USD", ledger.get("currency"));
+
+        String outsiderEmail = uniqueEmail("ledger-outsider");
+        String outsiderToken = registerInvitedUser(outsiderEmail);
+        long outsiderId = ((Number) parseMap(
+            request("GET", "/api/v1/auth/me", null, outsiderToken).body()
+        ).get("id")).longValue();
+
+        ApiResponse invalidRole = request(
+            "POST",
+            "/api/v1/ledgers/" + ledgerId + "/members",
+            Map.of("userId", outsiderId, "role", "owner"),
+            token
+        );
+        assertValidationFields(invalidRole, Set.of("role"));
+
+        ApiResponse crossCompanyMember = request(
+            "POST",
+            "/api/v1/ledgers/" + ledgerId + "/members",
+            Map.of("userId", outsiderId, "role", "viewer"),
+            token
+        );
+        assertEquals(409, crossCompanyMember.status(), crossCompanyMember.body());
+        assertEquals(0, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM ledger_members
+            WHERE ledger_id = ? AND user_id = ?
+            """, Integer.class, ledgerId, outsiderId));
+
+        createEmployee(token, companyId, outsiderId, outsiderEmail, "viewer", "readonly");
+        ApiResponse forbiddenCreate = request("POST", "/api/v1/ledgers", Map.of(
+            "companyId", companyId,
+            "name", "Forbidden ledger"
+        ), outsiderToken);
+        assertEquals(403, forbiddenCreate.status(), forbiddenCreate.body());
+    }
+
+    @Test
+    void concurrentAccountingWorkspaceCreationProducesOneDefaultLedgerAndOwnerMember() throws Exception {
+        String token = adminToken();
+        long userId = ((Number) parseMap(request("GET", "/api/v1/auth/me", null, token).body()).get("id"))
+            .longValue();
+        long companyId = createCompany(token, "Ledger race " + System.nanoTime());
+        jdbc.update("DELETE FROM ledgers WHERE company_id = ?", companyId);
+
+        List<CompletableFuture<Long>> attempts = IntStream.range(0, 8)
+            .mapToObj(ignored -> CompletableFuture.supplyAsync(() -> finances.ensureAccountingLedger(
+                userId,
+                companyId,
+                "CNY",
+                "Concurrent company"
+            ).id))
+            .toList();
+        CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+
+        assertEquals(1, attempts.stream().map(CompletableFuture::join).distinct().count());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledgers WHERE company_id = ? AND is_default",
+            Integer.class,
+            companyId
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM ledger_members member
+            JOIN ledgers ledger ON ledger.id = member.ledger_id
+            WHERE member.company_id = ?
+              AND member.user_id = ?
+              AND member.role = 'owner'
+              AND ledger.owner_id = member.user_id
+            """, Integer.class, companyId, userId));
     }
 
     @Test
@@ -271,7 +382,7 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
     }
 
     @Test
-    void financeWritesKeepAccountsInPostgresAndSynchronizeRemainingCompatibilityViews() throws Exception {
+    void financeWritesUsePostgresAsTheSingleSourceForAccountsLedgersAndMembers() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long userId = ((Number) parseMap(request("GET", "/api/v1/auth/me", null, token).body()).get("id"))
             .longValue();
@@ -284,9 +395,15 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         ), token);
         assertEquals(200, ledgerResponse.status(), ledgerResponse.body());
         long ledgerId = ((Number) parseMap(ledgerResponse.body()).get("id")).longValue();
-        assertEquals("Finance-owned ledger", coreStore.ledgers.get(ledgerId).name);
-        assertTrue(coreStore.ledgerMembers.values().stream()
-            .anyMatch(member -> member.ledgerId == ledgerId && member.userId == userId));
+        assertEquals("Finance-owned ledger", jdbc.queryForObject(
+            "SELECT name FROM ledgers WHERE id = ?",
+            String.class,
+            ledgerId
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM ledger_members
+            WHERE company_id = ? AND ledger_id = ? AND user_id = ? AND role = 'owner'
+            """, Integer.class, companyId, ledgerId, userId));
 
         Map<String, Object> created = createAccount(token, companyId, "Finance-owned account", "1000");
         long accountId = ((Number) created.get("id")).longValue();
@@ -327,15 +444,76 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             accountId
         ));
 
-        ApiResponse memberDeleted = request(
+        ApiResponse ownerDeletion = request(
             "DELETE",
             "/api/v1/ledgers/" + ledgerId + "/members/" + userId,
             null,
             token
         );
+        assertEquals(409, ownerDeletion.status(), ownerDeletion.body());
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM ledger_members
+            WHERE ledger_id = ? AND user_id = ?
+            """, Integer.class, ledgerId, userId));
+
+        String memberEmail = uniqueEmail("ledger-member");
+        String memberToken = registerInvitedUser(memberEmail);
+        long memberUserId = ((Number) parseMap(
+            request("GET", "/api/v1/auth/me", null, memberToken).body()
+        ).get("id")).longValue();
+        createEmployee(token, companyId, memberUserId, memberEmail, "finance_admin");
+
+        ApiResponse memberAdded = request(
+            "POST",
+            "/api/v1/ledgers/" + ledgerId + "/members",
+            Map.of("userId", memberUserId, "role", "editor"),
+            token
+        );
+        assertEquals(200, memberAdded.status(), memberAdded.body());
+        assertEquals("editor", jdbc.queryForObject("""
+            SELECT role FROM ledger_members
+            WHERE company_id = ? AND ledger_id = ? AND user_id = ?
+            """, String.class, companyId, ledgerId, memberUserId));
+
+        Map<String, Object> memberAccount = createAccount(
+            memberToken,
+            companyId,
+            "Shared default ledger account",
+            "500"
+        );
+        long sharedLedgerId = jdbc.queryForObject(
+            "SELECT ledger_id FROM accounts WHERE id = ?",
+            Long.class,
+            id(memberAccount)
+        );
+        assertEquals(userId, jdbc.queryForObject(
+            "SELECT owner_id FROM ledgers WHERE id = ?",
+            Long.class,
+            sharedLedgerId
+        ));
+        assertEquals("admin", jdbc.queryForObject("""
+            SELECT role FROM ledger_members
+            WHERE ledger_id = ? AND user_id = ?
+            """, String.class, sharedLedgerId, memberUserId));
+        Map<String, Object> memberCategory = createCategory(
+            memberToken,
+            companyId,
+            "Shared ledger expense",
+            "expense"
+        );
+        createTransaction(memberToken, companyId, memberAccount, memberCategory, "25");
+
+        ApiResponse memberDeleted = request(
+            "DELETE",
+            "/api/v1/ledgers/" + ledgerId + "/members/" + memberUserId,
+            null,
+            token
+        );
         assertEquals(200, memberDeleted.status(), memberDeleted.body());
-        assertFalse(coreStore.ledgerMembers.values().stream()
-            .anyMatch(member -> member.ledgerId == ledgerId && member.userId == userId));
+        assertEquals(0, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM ledger_members
+            WHERE ledger_id = ? AND user_id = ?
+            """, Integer.class, ledgerId, memberUserId));
     }
 
     @Test
@@ -1036,5 +1214,14 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             SELECT COUNT(*) FROM outbox_events
             WHERE event_type = 'accounting.transaction.refund' AND company_id = ?
             """, Integer.class, companyId));
+    }
+
+    private void assertValidationFields(ApiResponse response, Set<String> expectedFields) throws Exception {
+        assertEquals(400, response.status(), response.body());
+        Map<String, Object> problem = parseMap(response.body());
+        assertEquals("validation_failed", problem.get("code"));
+        assertTrue(problem.get("fields") instanceof Map<?, ?>, response.body());
+        Map<?, ?> fields = (Map<?, ?>) problem.get("fields");
+        assertTrue(fields.keySet().containsAll(expectedFields), response.body());
     }
 }

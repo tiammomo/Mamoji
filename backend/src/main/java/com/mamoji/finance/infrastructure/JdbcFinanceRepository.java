@@ -5,7 +5,6 @@ import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.AccountReconciliation;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
-import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -21,6 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /** PostgreSQL adapter for finance-owned account and ledger persistence. */
 @Repository
@@ -48,11 +48,9 @@ public class JdbcFinanceRepository implements FinanceRepository {
         """;
 
     private final JdbcTemplate jdbc;
-    private final InMemoryStore compatibilityStore;
 
-    public JdbcFinanceRepository(JdbcTemplate jdbc, InMemoryStore compatibilityStore) {
+    public JdbcFinanceRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.compatibilityStore = compatibilityStore;
     }
 
     @Override
@@ -254,21 +252,14 @@ public class JdbcFinanceRepository implements FinanceRepository {
     }
 
     @Override
-    public List<Ledger> findOwnedLedgers(long ownerId, long companyId) {
-        return jdbc.query(
-            "SELECT * FROM ledgers WHERE owner_id = ? AND company_id = ? ORDER BY is_default DESC, id",
-            this::mapLedger,
-            ownerId,
-            companyId
-        );
-    }
-
-    @Override
     public List<Ledger> findAccessibleLedgers(long userId, long companyId) {
         return jdbc.query("""
             SELECT DISTINCT ledger.*
             FROM ledgers ledger
-            LEFT JOIN ledger_members member ON member.ledger_id = ledger.id AND member.user_id = ?
+            LEFT JOIN ledger_members member
+              ON member.ledger_id = ledger.id
+             AND member.company_id = ledger.company_id
+             AND member.user_id = ?
             WHERE ledger.company_id = ? AND (ledger.owner_id = ? OR member.user_id IS NOT NULL)
             ORDER BY ledger.id
             """, this::mapLedger, userId, companyId, userId);
@@ -288,29 +279,34 @@ public class JdbcFinanceRepository implements FinanceRepository {
             statement.setString(2, ledger.description);
             statement.setString(3, ledger.currency);
             statement.setLong(4, ledger.ownerId);
-            statement.setInt(5, ledger.isDefault ? 1 : 0);
+            statement.setBoolean(5, ledger.isDefault);
             statement.setInt(6, ledger.status);
-            statement.setString(7, ledger.createdAt);
-            statement.setString(8, ledger.updatedAt);
-            setLongOrNull(statement, 9, ledger.companyId);
+            statement.setObject(7, timestamp(ledger.createdAt));
+            statement.setObject(8, timestamp(ledger.updatedAt));
+            statement.setLong(9, ledger.companyId);
             return statement;
         }, keyHolder);
         ledger.id = generatedId(keyHolder, "ledger");
-        compatibilityStore.synchronizeLedgerAfterCommit(ledger);
         return ledger;
     }
 
     @Override
+    @Transactional
     public Ledger ensureAccountingLedger(long ownerId, long companyId, String currency, String subjectName) {
-        List<Ledger> ledgers = findOwnedLedgers(ownerId, companyId);
+        List<Ledger> ledgers = findCompanyLedgers(companyId);
         Ledger ledger = ledgers.stream()
             .filter(candidate -> candidate.isDefault)
             .min(Comparator.comparingLong(candidate -> candidate.id))
             .or(() -> ledgers.stream().min(Comparator.comparingLong(candidate -> candidate.id)))
-            .orElseGet(() -> insertLedger(newLedger(ownerId, companyId, currency, subjectName, true)));
+            .orElseGet(() -> insertDefaultLedgerIfAbsent(
+                newLedger(ownerId, companyId, currency, subjectName, true)
+            ).orElseGet(() -> findCompanyLedgers(companyId).stream()
+                .min(Comparator.comparingLong(candidate -> candidate.id))
+                .orElseThrow(() -> new IllegalStateException("Default ledger conflict did not return a ledger"))));
         if (!ledgerMemberExists(ledger.id, ownerId)) {
             MemberProfile profile = findMemberProfile(ownerId).orElse(new MemberProfile(ownerId, null, null));
-            insertLedgerMember(newMember(ledger.id, profile, "owner"));
+            String role = ledger.ownerId == ownerId ? "owner" : "admin";
+            ensureLedgerMember(newMember(companyId, ledger.id, profile, role));
         }
         return ledger;
     }
@@ -353,26 +349,29 @@ public class JdbcFinanceRepository implements FinanceRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO ledger_members (ledger_id, user_id, role, nickname, avatar, joined_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO ledger_members (company_id, ledger_id, user_id, role, nickname, avatar, joined_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, new String[] { "id" });
-            statement.setLong(1, member.ledgerId);
-            statement.setLong(2, member.userId);
-            statement.setString(3, member.role);
-            statement.setString(4, member.nickname);
-            statement.setString(5, member.avatar);
-            statement.setString(6, member.joinedAt);
+            statement.setLong(1, member.companyId);
+            statement.setLong(2, member.ledgerId);
+            statement.setLong(3, member.userId);
+            statement.setString(4, member.role);
+            statement.setString(5, member.nickname);
+            statement.setString(6, member.avatar);
+            statement.setObject(7, timestamp(member.joinedAt));
             return statement;
         }, keyHolder);
         member.id = generatedId(keyHolder, "ledger member");
-        compatibilityStore.synchronizeLedgerMemberAfterCommit(member);
         return member;
     }
 
     @Override
-    public void deleteLedgerMember(long ledgerId, long userId) {
-        jdbc.update("DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?", ledgerId, userId);
-        compatibilityStore.removeLedgerMemberFromCompatibilityViewAfterCommit(ledgerId, userId);
+    public boolean deleteLedgerMember(long ledgerId, long userId) {
+        return jdbc.update(
+            "DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
+            ledgerId,
+            userId
+        ) == 1;
     }
 
     private Account mapAccountWithMetrics(ResultSet rs, int rowNum) throws SQLException {
@@ -422,27 +421,28 @@ public class JdbcFinanceRepository implements FinanceRepository {
     private Ledger mapLedger(ResultSet rs, int rowNum) throws SQLException {
         Ledger ledger = new Ledger();
         ledger.id = rs.getLong("id");
-        ledger.companyId = nullableLong(rs, "company_id");
+        ledger.companyId = rs.getLong("company_id");
         ledger.name = rs.getString("name");
         ledger.description = rs.getString("description");
         ledger.currency = rs.getString("currency");
         ledger.ownerId = rs.getLong("owner_id");
-        ledger.isDefault = rs.getInt("is_default") == 1;
+        ledger.isDefault = rs.getBoolean("is_default");
         ledger.status = rs.getInt("status");
-        ledger.createdAt = rs.getString("created_at");
-        ledger.updatedAt = rs.getString("updated_at");
+        ledger.createdAt = rs.getObject("created_at", OffsetDateTime.class).toString();
+        ledger.updatedAt = rs.getObject("updated_at", OffsetDateTime.class).toString();
         return ledger;
     }
 
     private LedgerMember mapLedgerMember(ResultSet rs, int rowNum) throws SQLException {
         LedgerMember member = new LedgerMember();
         member.id = rs.getLong("id");
+        member.companyId = rs.getLong("company_id");
         member.ledgerId = rs.getLong("ledger_id");
         member.userId = rs.getLong("user_id");
         member.role = rs.getString("role");
         member.nickname = rs.getString("nickname");
         member.avatar = rs.getString("avatar");
-        member.joinedAt = rs.getString("joined_at");
+        member.joinedAt = rs.getObject("joined_at", OffsetDateTime.class).toString();
         return member;
     }
 
@@ -510,8 +510,14 @@ public class JdbcFinanceRepository implements FinanceRepository {
         return ledger;
     }
 
-    private LedgerMember newMember(long ledgerId, MemberProfile profile, String role) {
+    private LedgerMember newMember(
+        long companyId,
+        long ledgerId,
+        MemberProfile profile,
+        String role
+    ) {
         LedgerMember member = new LedgerMember();
+        member.companyId = companyId;
         member.ledgerId = ledgerId;
         member.userId = profile.userId();
         member.nickname = profile.nickname();
@@ -519,6 +525,52 @@ public class JdbcFinanceRepository implements FinanceRepository {
         member.role = role;
         member.joinedAt = OffsetDateTime.now().toString();
         return member;
+    }
+
+    private List<Ledger> findCompanyLedgers(long companyId) {
+        return jdbc.query(
+            "SELECT * FROM ledgers WHERE company_id = ? ORDER BY is_default DESC, id",
+            this::mapLedger,
+            companyId
+        );
+    }
+
+    private Optional<Ledger> insertDefaultLedgerIfAbsent(Ledger ledger) {
+        return jdbc.query("""
+            INSERT INTO ledgers (
+                name, description, currency, owner_id, is_default, status,
+                created_at, updated_at, company_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (company_id) WHERE is_default DO NOTHING
+            RETURNING *
+            """, this::mapLedger,
+            ledger.name,
+            ledger.description,
+            ledger.currency,
+            ledger.ownerId,
+            ledger.isDefault,
+            ledger.status,
+            timestamp(ledger.createdAt),
+            timestamp(ledger.updatedAt),
+            ledger.companyId
+        ).stream().findFirst();
+    }
+
+    private void ensureLedgerMember(LedgerMember member) {
+        jdbc.update("""
+            INSERT INTO ledger_members (
+                company_id, ledger_id, user_id, role, nickname, avatar, joined_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ledger_id, user_id) DO NOTHING
+            """,
+            member.companyId,
+            member.ledgerId,
+            member.userId,
+            member.role,
+            member.nickname,
+            member.avatar,
+            timestamp(member.joinedAt)
+        );
     }
 
     private long generatedId(KeyHolder keyHolder, String entity) {
