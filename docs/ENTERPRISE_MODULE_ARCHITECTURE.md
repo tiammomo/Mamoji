@@ -59,7 +59,8 @@ flowchart TB
 | `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
 | `workspace` | 无业务写入 | 跨模块健康度、待办、指标 | SQL 投影 | `GET /workspace` |
 | `approvals` | 提交、通过、驳回、撤回 | 我的申请/待办/轨迹 | `approval_requests/actions` | `/approvals`、Outbox |
-| `operations` | 流水、分类、周期事项 | 趋势、结构、经营风险 | `transactions/categories/recurring_items` | `/transactions`、`/stats` |
+| `operations` | 流水、分类 | 趋势、结构、经营风险 | `transactions/categories` | `/transactions`、`/stats` |
+| `recurring` | 周期规则维护、启停和执行 | 下次执行日、执行次数 | `recurring_items` | `/recurring`、`RecurringItemRepository` |
 | `budget` | 创建、调整、停用预算 | 执行额、使用率、风险 | `budgets` + 流水投影 | `/budgets`、Outbox |
 | `finance` | 账户维护、余额调整、对账 | 可用资金、账户风险 | `accounts/ledgers` | `/accounts`、`/ledgers` |
 | `evidence` | 票据、附件、审批/入账状态 | 凭证缺口、审计链 | `receipt_vouchers`、对象存储 | `/receipts`、Outbox |
@@ -191,6 +192,7 @@ workforce/
 | `registration_invites` | Platform Identity | 邀请仓储按 SHA-256 摘要发行并以行锁单次消费；原始凭证只在创建响应披露一次 |
 | `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
 | `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
+| `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
 | `budgets` | Budget | Operations 只请求匹配预算；Workspace 只读 |
 | `accounts`、`ledgers` | Finance | Operations 通过账户 ID 校验与调整 |
 | `receipt_vouchers` | Evidence | Approval 通过应用服务更新审批状态 |
@@ -212,7 +214,7 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。两套旧 Store 的集合目前只承担演示初始化、兼容恢复和过渡同步。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束；两套旧 Store 的剩余集合目前只承担其他模块的演示初始化、兼容恢复和过渡同步。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 

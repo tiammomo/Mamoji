@@ -12,7 +12,7 @@
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
 | P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：票据仓储、规则、演示种子及 DDL 已迁入 `evidence` |
-| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 进行中：用户账户、权限、流水、分类、账户和账本均已有模块仓储；用户账户进程缓存及模块仓储已替代的兼容入口已移除 |
+| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance、recurring 仓储 | 进行中：用户账户、权限、流水、分类、账户、账本和周期事项均已有模块仓储；用户账户与周期事项进程缓存及其兼容入口已移除 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 已落地：流水和分类归属 `operations`，账户、账本、成员和对账归属 `finance`，旧服务已删除 |
 | P1 | 预算仅按已入账流水事后汇总，并发写入可同时超额 | 引入占用、确认、释放账本，以预算行锁串行化容量检查 | 已落地 |
 | P1 | 审批状态转换依赖应用服务内的字符串条件 | 使用纯领域状态机声明允许的转换、关联状态和意见要求 | 已落地 |
@@ -40,6 +40,7 @@ com.mamoji
   approval/            审批任务与轨迹
   budget/              预算及占用
   operations/          经营流水和分类
+  recurring/           周期规则与执行游标
   finance/             账户、账本和对账
   evidence/            票据及对象存储
   notification/        Outbox、通知和外部投递
@@ -58,7 +59,7 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 继续缩减 `InMemoryStore` 与 `EnterpriseStore` 的公开兼容读模型；
+1. 继续缩减 `InMemoryStore` 与 `EnterpriseStore` 的公开兼容读模型，周期事项已完成数据库单一事实源改造；
 2. 评估通知 Outbox 的外部消息适配层与失败重试边界；
 3. 将剩余 `Models` 企业对象按 HR、税务和通知边界继续拆分。
 
