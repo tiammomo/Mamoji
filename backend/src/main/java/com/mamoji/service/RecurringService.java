@@ -9,9 +9,9 @@ import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.platform.identity.User;
 import com.mamoji.recurring.api.RecurringCreateRequest;
 import com.mamoji.recurring.api.RecurringUpdateRequest;
+import com.mamoji.recurring.application.RecurringItemRepository;
 import com.mamoji.recurring.domain.RecurringItem;
 import com.mamoji.recurring.domain.RecurringSchedule;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.time.LocalDate;
 import java.util.List;
@@ -26,20 +26,20 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class RecurringService {
-    private final InMemoryStore store;
+    private final RecurringItemRepository recurringItems;
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
     private final AccessControlService accessControl;
     private final TransactionApplicationService transactionApplicationService;
 
     public RecurringService(
-        InMemoryStore store,
+        RecurringItemRepository recurringItems,
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
         AccessControlService accessControl,
         TransactionApplicationService transactionApplicationService
     ) {
-        this.store = store;
+        this.recurringItems = recurringItems;
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
         this.accessControl = accessControl;
@@ -53,7 +53,7 @@ public class RecurringService {
     public List<RecurringItem> listRecurring(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        return store.queryRecurring(user.id, company.id);
+        return recurringItems.findByOwnerAndCompany(user.id, company.id);
     }
 
     @Transactional
@@ -79,8 +79,7 @@ public class RecurringService {
         item.status = 1;
         item.executionCount = 0;
         item.nextExecution = nextExecution(item);
-        store.saveRecurring(item);
-        return item;
+        return recurringItems.insert(item);
     }
 
     @Transactional
@@ -98,7 +97,7 @@ public class RecurringService {
         applyUpdate(item, command);
         validateRecurring(item);
         item.nextExecution = nextExecution(item);
-        store.saveRecurring(item);
+        recurringItems.update(item);
         return item;
     }
 
@@ -110,7 +109,7 @@ public class RecurringService {
     @Transactional
     public void deleteRecurring(String authorization, String id, Long companyId) {
         RecurringItem item = requireRecurringForUpdate(authorization, id, companyId);
-        store.deleteRecurring(item.id);
+        recurringItems.delete(item.id);
     }
 
     @Transactional
@@ -122,7 +121,7 @@ public class RecurringService {
     public Map<String, Object> toggleRecurring(String authorization, String id, Long companyId) {
         RecurringItem item = copyRecurring(requireRecurringForUpdate(authorization, id, companyId));
         item.status = item.status == 1 ? 0 : 1;
-        store.saveRecurring(item);
+        recurringItems.update(item);
         return Map.of("success", true, "status", item.status);
     }
 
@@ -165,13 +164,13 @@ public class RecurringService {
         item.lastExecuted = LocalDate.now().toString();
         item.executionCount++;
         item.nextExecution = nextExecution(item);
-        store.saveRecurring(item);
+        recurringItems.update(item);
         return result;
     }
 
     private RecurringItem requireRecurringForUpdate(String authorization, String id, Long companyId) {
         User user = accessControl.requireUser(authorization);
-        RecurringItem item = store.recurringForUpdate(id)
+        RecurringItem item = recurringItems.findByIdForUpdate(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Recurring item not found"));
         Company company = accessControl.resolveCompany(user, companyId == null ? item.companyId : companyId);
         if (item.userId != user.id || !Objects.equals(item.companyId, company.id)) {

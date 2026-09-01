@@ -3,7 +3,6 @@ package com.mamoji.repository;
 import com.mamoji.budget.domain.Budget;
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
-import com.mamoji.recurring.domain.RecurringItem;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
@@ -25,7 +24,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.DependsOn;
@@ -46,7 +44,6 @@ public class InMemoryStore {
     public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
-    public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
     private final LocalUserAccountRepository userAccounts;
@@ -98,7 +95,6 @@ public class InMemoryStore {
         transactions.clear();
         ledgers.clear();
         ledgerMembers.clear();
-        recurringItems.clear();
 
         forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
@@ -106,7 +102,6 @@ public class InMemoryStore {
         forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
-        forEachRow("SELECT * FROM recurring_items", rs -> recurringItems.put(rs.getString("id"), mapRecurringItem(rs)));
 
         budgets.values().forEach(this::attachCategory);
         transactions.values().forEach(this::attachTransactionRelations);
@@ -178,23 +173,6 @@ public class InMemoryStore {
         monthlyBudget.spent = new BigDecimal("992.5");
         recalculateBudget(monthlyBudget);
         saveBudget(monthlyBudget);
-
-        RecurringItem officeRent = new RecurringItem();
-        officeRent.id = UUID.randomUUID().toString();
-        officeRent.userId = testUser.id;
-        officeRent.name = "办公室租金";
-        officeRent.type = 2;
-        officeRent.amount = new BigDecimal("3200");
-        officeRent.frequency = "monthly";
-        officeRent.interval = 1;
-        officeRent.dayOfMonth = 5;
-        officeRent.startDate = LocalDate.now().withDayOfMonth(1).toString();
-        officeRent.nextExecution = LocalDate.now().withDayOfMonth(Math.min(5, LocalDate.now().lengthOfMonth())).plusMonths(1).toString();
-        officeRent.status = 1;
-        officeRent.executionCount = 0;
-        officeRent.note = "每月办公室租金";
-        recurringItems.put(officeRent.id, officeRent);
-        saveRecurring(officeRent);
     }
 
     private void validateBootstrapAdmin() {
@@ -528,30 +506,6 @@ public class InMemoryStore {
         afterCommit(() -> budgets.put(budget.id, budget));
     }
 
-    public void saveRecurring(RecurringItem item) {
-        jdbc.update("""
-            INSERT INTO recurring_items (
-                id, user_id, name, type, amount, frequency, interval_value, day_of_week, day_of_month,
-                month_of_year, start_date, end_date, last_executed, next_execution, status, execution_count, note, company_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                user_id = excluded.user_id, name = excluded.name, type = excluded.type, amount = excluded.amount,
-                frequency = excluded.frequency, interval_value = excluded.interval_value, day_of_week = excluded.day_of_week,
-                day_of_month = excluded.day_of_month, month_of_year = excluded.month_of_year, start_date = excluded.start_date,
-                end_date = excluded.end_date, last_executed = excluded.last_executed, next_execution = excluded.next_execution,
-                status = excluded.status, execution_count = excluded.execution_count, note = excluded.note,
-                company_id = excluded.company_id
-            """, item.id, item.userId, item.name, item.type, moneyText(item.amount), item.frequency, item.interval,
-            item.dayOfWeek, item.dayOfMonth, item.monthOfYear, item.startDate, item.endDate, item.lastExecuted,
-            item.nextExecution, item.status, item.executionCount, item.note, item.companyId);
-        afterCommit(() -> recurringItems.put(item.id, item));
-    }
-
-    public void deleteRecurring(String id) {
-        jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
-        afterCommit(() -> recurringItems.remove(id));
-    }
-
     private Optional<Account> findAccount(long id) {
         return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
     }
@@ -607,13 +561,6 @@ public class InMemoryStore {
         );
     }
 
-    public List<RecurringItem> queryRecurring(long userId, long companyId) {
-        return jdbc.query(
-            "SELECT * FROM recurring_items WHERE user_id = ? AND company_id = ? ORDER BY next_execution, id",
-            (rs, rowNum) -> mapRecurringItem(rs), userId, companyId
-        );
-    }
-
     private boolean ledgerMemberExists(long ledgerId, long userId) {
         Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
@@ -622,15 +569,6 @@ public class InMemoryStore {
             userId
         );
         return count != null && count > 0;
-    }
-
-    public Optional<RecurringItem> recurringForUpdate(String id) {
-        List<RecurringItem> matches = jdbc.query(
-            "SELECT * FROM recurring_items WHERE id = ? FOR UPDATE",
-            (rs, rowNum) -> mapRecurringItem(rs),
-            id
-        );
-        return matches.stream().findFirst();
     }
 
     private List<TransactionRecord> sortedTransactions() {
@@ -713,12 +651,6 @@ public class InMemoryStore {
                         .orElse(defaultCompanyByUser.get(tx.userId))));
             if (tx.companyId != null) {
                 jdbc.update("UPDATE transactions SET company_id = ? WHERE id = ? AND company_id IS NULL", tx.companyId, tx.id);
-            }
-        });
-        recurringItems.values().stream().filter(item -> item.companyId == null).forEach(item -> {
-            item.companyId = defaultCompanyByUser.get(item.userId);
-            if (item.companyId != null) {
-                jdbc.update("UPDATE recurring_items SET company_id = ? WHERE id = ? AND company_id IS NULL", item.companyId, item.id);
             }
         });
         refreshBudgetData();
@@ -1004,29 +936,6 @@ public class InMemoryStore {
         member.avatar = rs.getString("avatar");
         member.joinedAt = rs.getString("joined_at");
         return member;
-    }
-
-    private RecurringItem mapRecurringItem(ResultSet rs) throws SQLException {
-        RecurringItem item = new RecurringItem();
-        item.id = rs.getString("id");
-        item.companyId = nullableLong(rs, "company_id");
-        item.userId = rs.getLong("user_id");
-        item.name = rs.getString("name");
-        item.type = rs.getInt("type");
-        item.amount = money(rs.getString("amount"));
-        item.frequency = rs.getString("frequency");
-        item.interval = rs.getInt("interval_value");
-        item.dayOfWeek = nullableInt(rs, "day_of_week");
-        item.dayOfMonth = nullableInt(rs, "day_of_month");
-        item.monthOfYear = nullableInt(rs, "month_of_year");
-        item.startDate = rs.getString("start_date");
-        item.endDate = rs.getString("end_date");
-        item.lastExecuted = rs.getString("last_executed");
-        item.nextExecution = rs.getString("next_execution");
-        item.status = rs.getInt("status");
-        item.executionCount = rs.getInt("execution_count");
-        item.note = rs.getString("note");
-        return item;
     }
 
     private static void hydrateAccountDefaults(Account account) {

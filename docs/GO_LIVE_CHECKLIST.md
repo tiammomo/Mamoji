@@ -8,6 +8,7 @@
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类。
 - 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
 - 从 V13 及更早版本升级前，已确认 `users` 不存在规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳，V14 预检可以通过。
+- 升级到 V15 前，已确认 `recurring_items` 都有有效用户和公司归属，金额、频率、日期、日历字段及执行游标满足 V15 预检约束。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
 - 已确认邀请原始 token 只在创建时展示一次，并使用受控渠道交付；邀请列表和数据库均不保存可直接使用的明文凭证。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。

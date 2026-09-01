@@ -28,11 +28,13 @@ class LegacyStoreBoundaryTest {
             "registrationInvite",
             "registrationInviteForUpdate",
             "recalculateBudget",
+            "recurringForUpdate",
             "refreshBudgetData",
             "refreshBudgetDataAfterCommit",
             "rememberToken",
             "revokeToken",
             "saveBudget",
+            "saveRecurring",
             "saveRegistrationInvite",
             "saveUser",
             "snapshot",
@@ -43,6 +45,8 @@ class LegacyStoreBoundaryTest {
             "sortedTransactions",
             "sortedUsers",
             "synchronizeUserAccessAfterCommit",
+            "deleteRecurring",
+            "queryRecurring",
             "updatePasswordHashIfCurrent",
             "user",
             "userForUpdate"
@@ -53,6 +57,9 @@ class LegacyStoreBoundaryTest {
         assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("users")),
             "Local user accounts must not return to the process-local compatibility view");
+        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("recurringItems")),
+            "Recurring items must not return to the process-local compatibility view");
     }
 
     @Test
