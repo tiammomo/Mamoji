@@ -11,8 +11,13 @@ import com.mamoji.platform.audit.domain.AuditEvent;
 import com.mamoji.platform.identity.security.application.LoginFailureRepository;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.platform.identity.security.domain.LoginThrottleSubject;
+import com.mamoji.platform.identity.session.application.LocalSessionRepository;
+import com.mamoji.platform.identity.session.application.LocalSessionService;
+import com.mamoji.platform.identity.session.domain.LocalSession;
+import com.mamoji.platform.identity.session.domain.SessionTokenDigest;
 import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -42,6 +48,12 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
     @Autowired
     LoginSecurityService loginSecurityService;
 
+    @Autowired
+    LocalSessionRepository localSessionRepository;
+
+    @Autowired
+    LocalSessionService localSessionService;
+
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
@@ -56,6 +68,16 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
         assertTrue(token.length() >= 40);
         assertFalse(toJson(session).contains("passwordHash"));
+        SessionTokenDigest tokenDigest = SessionTokenDigest.fromRawToken(token);
+        assertEquals(tokenDigest.value(), jdbc.queryForObject(
+            "SELECT token FROM auth_tokens WHERE token = ?",
+            String.class,
+            tokenDigest.value()
+        ));
+        assertFalse(tokenDigest.value().contains(token));
+
+        LocalSessionService restartedSessions = new LocalSessionService(localSessionRepository);
+        assertTrue(restartedSessions.authenticate("Bearer " + token).isPresent());
 
         ApiResponse me = request("GET", "/api/v1/auth/me", null, token);
         assertEquals(200, me.status());
@@ -66,6 +88,39 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
         ApiResponse meAfterLogout = request("GET", "/api/v1/auth/me", null, token);
         assertEquals(401, meAfterLogout.status());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM auth_tokens WHERE token = ?",
+            Integer.class,
+            tokenDigest.value()
+        ));
+    }
+
+    @Test
+    void sessionCleanupRemovesExpiredRowsAndDatabaseRejectsPlaintextTokens() {
+        long administratorId = jdbc.queryForObject(
+            "SELECT id FROM users WHERE email = 'test@mamoji.com'",
+            Long.class
+        );
+        OffsetDateTime now = OffsetDateTime.now();
+        LocalSession expired = new LocalSession(
+            SessionTokenDigest.fromRawToken("e".repeat(43)),
+            administratorId,
+            now.minusHours(2),
+            now.minusHours(1)
+        );
+        localSessionRepository.insert(expired);
+
+        localSessionService.purgeExpiredSessions();
+
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM auth_tokens WHERE token = ?",
+            Integer.class,
+            expired.tokenDigest().value()
+        ));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+            INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
+            VALUES ('plaintext-token', ?, ?, ?)
+            """, administratorId, now, now.plusHours(1)));
     }
 
     @Test
@@ -421,7 +476,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("11", jdbc.queryForObject("""
+        assertEquals("12", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(1, jdbc.queryForObject("""
@@ -453,6 +508,31 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             SELECT conname
             FROM pg_constraint
             WHERE conname LIKE 'ck_login_failure_%'
+            """, String.class)));
+        assertEquals(Map.of(
+            "created_at", "timestamp with time zone",
+            "expires_at", "timestamp with time zone"
+        ), jdbc.query("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'auth_tokens'
+              AND column_name IN ('created_at', 'expires_at')
+            """, rs -> {
+            Map<String, String> types = new java.util.LinkedHashMap<>();
+            while (rs.next()) {
+                types.put(rs.getString("column_name"), rs.getString("data_type"));
+            }
+            return types;
+        }));
+        assertEquals(Set.of(
+            "fk_auth_tokens_user",
+            "ck_auth_tokens_digest",
+            "ck_auth_tokens_expiry"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname IN ('fk_auth_tokens_user', 'ck_auth_tokens_digest', 'ck_auth_tokens_expiry')
             """, String.class)));
     }
 

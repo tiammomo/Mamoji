@@ -13,6 +13,7 @@ import com.mamoji.platform.identity.api.ProfileUpdateRequest;
 import com.mamoji.platform.identity.api.RegistrationInviteCreateRequest;
 import com.mamoji.platform.identity.api.RegistrationRequest;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
+import com.mamoji.platform.identity.session.application.LocalSessionService;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -47,6 +48,7 @@ public class AuthService {
     private final AccessControlService accessControl;
     private final PasswordHasher passwordHasher;
     private final LoginSecurityService loginSecurityService;
+    private final LocalSessionService sessions;
     private final OutboxEventService outboxEventService;
     private final SecureRandom secureRandom = new SecureRandom();
     private final String registrationMode;
@@ -60,6 +62,7 @@ public class AuthService {
         AccessControlService accessControl,
         PasswordHasher passwordHasher,
         LoginSecurityService loginSecurityService,
+        LocalSessionService sessions,
         OutboxEventService outboxEventService,
         @Value("${mamoji.registration.mode:open}") String registrationMode,
         @Value("${mamoji.security.password.min-length:12}") int passwordMinLength,
@@ -71,6 +74,7 @@ public class AuthService {
         this.accessControl = accessControl;
         this.passwordHasher = passwordHasher;
         this.loginSecurityService = loginSecurityService;
+        this.sessions = sessions;
         this.outboxEventService = outboxEventService;
         this.registrationMode = textOr(registrationMode, "open").toLowerCase(Locale.ROOT);
         this.passwordMinLength = Math.max(8, passwordMinLength);
@@ -240,18 +244,19 @@ public class AuthService {
     }
 
     public Map<String, Object> logout(String authorization) {
-        store.currentUser(authorization)
+        sessions.authenticate(authorization)
             .ifPresent(user -> enterpriseStore.auditLog(0, "auth_session", user.id, "logout", "用户退出登录", user.id, user.nickname));
-        store.revokeToken(authorization);
+        sessions.revoke(authorization);
         return Map.of("success", true);
     }
 
     private Map<String, Object> authenticated(User user) {
         String token = sessionToken();
-        String expiresAt = OffsetDateTime.now().plusHours(SESSION_HOURS).toString();
-        store.rememberToken(token, user.id, expiresAt);
+        OffsetDateTime createdAt = OffsetDateTime.now();
+        OffsetDateTime expiresAt = createdAt.plusHours(SESSION_HOURS);
+        sessions.create(token, user.id, createdAt, expiresAt);
         enterpriseStore.auditLog(0, "auth_session", user.id, "login", "用户登录: " + user.email, user.id, user.nickname);
-        return Map.of("token", token, "tokenExpiresAt", expiresAt, "user", user);
+        return Map.of("token", token, "tokenExpiresAt", expiresAt.toString(), "user", user);
     }
 
     private String sessionToken() {
