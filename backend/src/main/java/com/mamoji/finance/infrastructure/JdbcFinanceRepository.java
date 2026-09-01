@@ -140,7 +140,6 @@ public class JdbcFinanceRepository implements FinanceRepository {
             return statement;
         }, keyHolder);
         account.id = generatedId(keyHolder, "account");
-        compatibilityStore.synchronizeAccountAfterCommit(account);
         return account;
     }
 
@@ -162,22 +161,22 @@ public class JdbcFinanceRepository implements FinanceRepository {
             account.accountNo,
             account.openingBank,
             account.currency,
-            moneyText(account.balance),
-            moneyText(account.availableBalance),
-            moneyText(account.creditLimit),
-            moneyText(account.frozenAmount),
-            account.includeInNetWorth ? 1 : 0,
+            money(account.balance),
+            money(account.availableBalance),
+            money(account.creditLimit),
+            money(account.frozenAmount),
+            account.includeInNetWorth,
             account.userId,
             account.ledgerId,
             account.status,
-            account.openedAt,
-            account.lastReconciledAt,
+            date(account.openedAt),
+            date(account.lastReconciledAt),
             account.ownerName,
             account.purpose,
             account.reconciliationStatus,
             account.riskLevel,
-            account.createdAt,
-            account.updatedAt,
+            timestamp(account.createdAt),
+            timestamp(account.updatedAt),
             account.companyId,
             account.id,
             account.version
@@ -186,7 +185,6 @@ public class JdbcFinanceRepository implements FinanceRepository {
             throw new OptimisticLockingFailureException("Account was changed by another request: " + account.id);
         }
         account.version++;
-        compatibilityStore.synchronizeAccountAfterCommit(account);
     }
 
     @Override
@@ -209,7 +207,6 @@ public class JdbcFinanceRepository implements FinanceRepository {
         if (deleted != 1) {
             throw new OptimisticLockingFailureException("Account was changed by another request: " + account.id);
         }
-        compatibilityStore.removeAccountFromCompatibilityViewAfterCommit(account.id);
     }
 
     @Override
@@ -380,11 +377,11 @@ public class JdbcFinanceRepository implements FinanceRepository {
 
     private Account mapAccountWithMetrics(ResultSet rs, int rowNum) throws SQLException {
         Account account = mapAccount(rs, rowNum);
-        account.monthlyIncome = money(rs.getString("monthly_income"));
-        account.monthlyExpense = money(rs.getString("monthly_expense"));
+        account.monthlyIncome = rs.getBigDecimal("monthly_income");
+        account.monthlyExpense = rs.getBigDecimal("monthly_expense");
         account.currentMonthNetFlow = account.monthlyIncome.subtract(account.monthlyExpense);
         account.transactionCount = rs.getLong("transaction_count");
-        account.lastTransactionDate = rs.getString("last_transaction_date");
+        account.lastTransactionDate = nullableDateText(rs, "last_transaction_date");
         return account;
     }
 
@@ -392,7 +389,7 @@ public class JdbcFinanceRepository implements FinanceRepository {
         Account account = new Account();
         account.id = rs.getLong("id");
         account.version = rs.getLong("version");
-        account.companyId = nullableLong(rs, "company_id");
+        account.companyId = rs.getLong("company_id");
         account.name = rs.getString("name");
         account.type = rs.getString("type");
         account.subType = rs.getString("sub_type");
@@ -400,22 +397,22 @@ public class JdbcFinanceRepository implements FinanceRepository {
         account.accountNo = rs.getString("account_no");
         account.openingBank = rs.getString("opening_bank");
         account.currency = textOr(rs.getString("currency"), "CNY");
-        account.balance = money(rs.getString("balance"));
-        account.availableBalance = money(rs.getString("available_balance"));
-        account.creditLimit = money(rs.getString("credit_limit"));
-        account.frozenAmount = money(rs.getString("frozen_amount"));
-        account.includeInNetWorth = rs.getInt("include_in_net_worth") == 1;
+        account.balance = rs.getBigDecimal("balance");
+        account.availableBalance = rs.getBigDecimal("available_balance");
+        account.creditLimit = rs.getBigDecimal("credit_limit");
+        account.frozenAmount = rs.getBigDecimal("frozen_amount");
+        account.includeInNetWorth = rs.getBoolean("include_in_net_worth");
         account.userId = rs.getLong("user_id");
         account.ledgerId = nullableLong(rs, "ledger_id");
         account.status = rs.getInt("status");
-        account.openedAt = rs.getString("opened_at");
-        account.lastReconciledAt = rs.getString("last_reconciled_at");
+        account.openedAt = nullableDateText(rs, "opened_at");
+        account.lastReconciledAt = nullableDateText(rs, "last_reconciled_at");
         account.ownerName = rs.getString("owner_name");
         account.purpose = rs.getString("purpose");
         account.reconciliationStatus = textOr(rs.getString("reconciliation_status"), "pending");
         account.riskLevel = textOr(rs.getString("risk_level"), "low");
-        account.createdAt = rs.getString("created_at");
-        account.updatedAt = rs.getString("updated_at");
+        account.createdAt = rs.getObject("created_at", OffsetDateTime.class).toString();
+        account.updatedAt = rs.getObject("updated_at", OffsetDateTime.class).toString();
         account.monthlyIncome = BigDecimal.ZERO;
         account.monthlyExpense = BigDecimal.ZERO;
         account.currentMonthNetFlow = BigDecimal.ZERO;
@@ -474,23 +471,23 @@ public class JdbcFinanceRepository implements FinanceRepository {
         statement.setString(5, account.accountNo);
         statement.setString(6, account.openingBank);
         statement.setString(7, account.currency);
-        statement.setString(8, moneyText(account.balance));
-        statement.setString(9, moneyText(account.availableBalance));
-        statement.setString(10, moneyText(account.creditLimit));
-        statement.setString(11, moneyText(account.frozenAmount));
-        statement.setInt(12, account.includeInNetWorth ? 1 : 0);
+        statement.setBigDecimal(8, money(account.balance));
+        statement.setBigDecimal(9, money(account.availableBalance));
+        statement.setBigDecimal(10, money(account.creditLimit));
+        statement.setBigDecimal(11, money(account.frozenAmount));
+        statement.setBoolean(12, account.includeInNetWorth);
         statement.setLong(13, account.userId);
         setLongOrNull(statement, 14, account.ledgerId);
         statement.setInt(15, account.status);
-        statement.setString(16, account.openedAt);
-        statement.setString(17, account.lastReconciledAt);
+        setDateOrNull(statement, 16, account.openedAt);
+        setDateOrNull(statement, 17, account.lastReconciledAt);
         statement.setString(18, account.ownerName);
         statement.setString(19, account.purpose);
         statement.setString(20, account.reconciliationStatus);
         statement.setString(21, account.riskLevel);
-        statement.setString(22, account.createdAt);
-        statement.setString(23, account.updatedAt);
-        setLongOrNull(statement, 24, account.companyId);
+        statement.setObject(22, timestamp(account.createdAt));
+        statement.setObject(23, timestamp(account.updatedAt));
+        statement.setLong(24, account.companyId);
     }
 
     private Ledger newLedger(
@@ -538,6 +535,28 @@ public class JdbcFinanceRepository implements FinanceRepository {
     private void setLongOrNull(PreparedStatement statement, int index, Long value) throws SQLException {
         if (value == null) statement.setNull(index, Types.BIGINT);
         else statement.setLong(index, value);
+    }
+
+    private void setDateOrNull(PreparedStatement statement, int index, String value) throws SQLException {
+        if (value == null || value.isBlank()) statement.setNull(index, Types.DATE);
+        else statement.setObject(index, LocalDate.parse(value));
+    }
+
+    private LocalDate date(String value) {
+        return value == null || value.isBlank() ? null : LocalDate.parse(value);
+    }
+
+    private OffsetDateTime timestamp(String value) {
+        return OffsetDateTime.parse(value);
+    }
+
+    private String nullableDateText(ResultSet result, String column) throws SQLException {
+        LocalDate value = result.getObject(column, LocalDate.class);
+        return value == null ? null : value.toString();
+    }
+
+    private BigDecimal money(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private BigDecimal money(String value) {

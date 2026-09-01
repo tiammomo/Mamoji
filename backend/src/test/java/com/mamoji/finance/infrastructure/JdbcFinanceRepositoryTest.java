@@ -5,8 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.finance.domain.Account;
@@ -31,11 +30,11 @@ class JdbcFinanceRepositoryTest {
 
         assertEquals("Account was changed by another request: 42", exception.getMessage());
         assertEquals(3, account.version);
-        verify(compatibilityStore, never()).synchronizeAccountAfterCommit(account);
+        verifyNoInteractions(compatibilityStore);
     }
 
     @Test
-    void advancesVersionAndSynchronizesCompatibilityViewAfterAccountUpdate() {
+    void advancesVersionWithoutWritingToTheLegacyCompatibilityStore() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         InMemoryStore compatibilityStore = mock(InMemoryStore.class);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
@@ -45,7 +44,7 @@ class JdbcFinanceRepositoryTest {
         repository.updateAccount(account);
 
         assertEquals(4, account.version);
-        verify(compatibilityStore).synchronizeAccountAfterCommit(account);
+        verifyNoInteractions(compatibilityStore);
     }
 
     @Test
@@ -60,11 +59,11 @@ class JdbcFinanceRepositoryTest {
             () -> repository.deleteAccount(account(42, 3))
         );
 
-        verify(compatibilityStore, never()).removeAccountFromCompatibilityViewAfterCommit(42);
+        verifyNoInteractions(compatibilityStore);
     }
 
     @Test
-    void removesCompatibilityViewAfterAccountDeletion() {
+    void deletesWithoutWritingToTheLegacyCompatibilityStore() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         InMemoryStore compatibilityStore = mock(InMemoryStore.class);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
@@ -72,13 +71,15 @@ class JdbcFinanceRepositoryTest {
 
         repository.deleteAccount(account(42, 3));
 
-        verify(compatibilityStore).removeAccountFromCompatibilityViewAfterCommit(42);
+        verifyNoInteractions(compatibilityStore);
     }
 
     private Account account(long id, long version) {
         Account account = new Account();
         account.id = id;
         account.version = version;
+        account.createdAt = "2026-09-01T09:00:00Z";
+        account.updatedAt = "2026-09-01T10:00:00Z";
         return account;
     }
 }
