@@ -12,7 +12,7 @@
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
 | P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：票据仓储、规则、演示种子及 DDL 已迁入 `evidence` |
-| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 进行中：权限、流水、分类、账户和账本均已有模块仓储；模块仓储已替代的预算写入口和无调用企业写入口已移除，内部兼容投影不再公开 |
+| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance 仓储 | 进行中：用户账户、权限、流水、分类、账户和账本均已有模块仓储；用户账户进程缓存及模块仓储已替代的兼容入口已移除 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 已落地：流水和分类归属 `operations`，账户、账本、成员和对账归属 `finance`，旧服务已删除 |
 | P1 | 预算仅按已入账流水事后汇总，并发写入可同时超额 | 引入占用、确认、释放账本，以预算行锁串行化容量检查 | 已落地 |
 | P1 | 审批状态转换依赖应用服务内的字符串条件 | 使用纯领域状态机声明允许的转换、关联状态和意见要求 | 已落地 |
@@ -23,6 +23,7 @@
 | P2 | 登录失败计数仅保存在单进程内存 | PostgreSQL 原子计数、重启保留、代理来源显式信任 | 已落地 |
 | P2 | 本地会话读写混在 `InMemoryStore` 且保留明文兼容回退 | Platform Identity 专属仓储、摘要约束、过期清理和恢复撤销 | 已落地 |
 | P2 | 注册邀请由 `InMemoryStore` 缓存且数据库/列表暴露可用明文凭证 | 专属邀请仓储、一次披露、摘要存储和并发单次消费 | 已落地 |
+| P2 | 本地用户账户同时存在 PostgreSQL 与进程缓存两份权威状态 | Platform Identity 专属仓储、数据库直读、比较更新和完整性约束 | 已落地 |
 | P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 进行中：消费租约已增加唯一令牌和终态 fencing，外部发布适配器待接入 |
 
 ## 目标包边界

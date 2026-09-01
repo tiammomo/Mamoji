@@ -12,6 +12,7 @@ import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.notification.domain.OutboxEvent;
 import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
@@ -40,7 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class NotificationService {
     private final JdbcTemplate jdbc;
-    private final InMemoryStore store;
+    private final UserDirectory userDirectory;
     private final EnterpriseStore enterpriseStore;
     private final ReceiptVoucherRepository receiptVouchers;
     private final AccessControlService accessControl;
@@ -57,7 +58,7 @@ public class NotificationService {
 
     public NotificationService(
         JdbcTemplate jdbc,
-        InMemoryStore store,
+        UserDirectory userDirectory,
         EnterpriseStore enterpriseStore,
         ReceiptVoucherRepository receiptVouchers,
         AccessControlService accessControl,
@@ -72,7 +73,7 @@ public class NotificationService {
         @Value("${mamoji.notifications.reminder.receipt-lookahead-days:7}") int receiptLookaheadDays
     ) {
         this.jdbc = jdbc;
-        this.store = store;
+        this.userDirectory = userDirectory;
         this.enterpriseStore = enterpriseStore;
         this.receiptVouchers = receiptVouchers;
         this.accessControl = accessControl;
@@ -460,7 +461,7 @@ public class NotificationService {
     }
 
     private void notifyUser(long userId, NotificationDraft draft) {
-        if (store.findUser(userId).isEmpty()) {
+        if (userDirectory.findById(userId).isEmpty()) {
             return;
         }
         NotificationPreference preference = preferenceFor(userId);
@@ -526,16 +527,16 @@ public class NotificationService {
 
     private Set<Long> adminRecipients() {
         Set<Long> recipients = new LinkedHashSet<>();
-        store.sortedUsers().stream()
-            .filter(user -> user.role == Roles.ADMIN)
-            .map(user -> user.id)
+        userDirectory.findAll().stream()
+            .filter(user -> user.role() == Roles.ADMIN)
+            .map(UserDirectory.Entry::id)
             .forEach(recipients::add);
         return recipients;
     }
 
     private Set<Long> actorOnly(long actorUserId) {
         Set<Long> recipients = new LinkedHashSet<>();
-        if (actorUserId > 0 && store.findUser(actorUserId).isPresent()) {
+        if (actorUserId > 0 && userDirectory.findById(actorUserId).isPresent()) {
             recipients.add(actorUserId);
         }
         return recipients;
@@ -543,7 +544,7 @@ public class NotificationService {
 
     private Set<Long> withActor(Set<Long> recipients, long actorUserId) {
         Set<Long> all = new LinkedHashSet<>(recipients);
-        if (actorUserId > 0 && store.findUser(actorUserId).isPresent()) {
+        if (actorUserId > 0 && userDirectory.findById(actorUserId).isPresent()) {
             all.add(actorUserId);
         }
         return all;
