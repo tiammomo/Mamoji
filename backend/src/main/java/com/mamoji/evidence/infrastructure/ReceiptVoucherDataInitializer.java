@@ -3,9 +3,8 @@ package com.mamoji.evidence.infrastructure;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
-import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.util.Comparator;
@@ -20,18 +19,18 @@ import org.springframework.stereotype.Component;
 public class ReceiptVoucherDataInitializer {
     private final ReceiptVoucherRepository receiptVouchers;
     private final EnterpriseStore enterpriseStore;
-    private final InMemoryStore coreStore;
+    private final UserDirectory userDirectory;
     private final String bootstrapMode;
 
     public ReceiptVoucherDataInitializer(
         ReceiptVoucherRepository receiptVouchers,
         EnterpriseStore enterpriseStore,
-        InMemoryStore coreStore,
+        UserDirectory userDirectory,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.receiptVouchers = receiptVouchers;
         this.enterpriseStore = enterpriseStore;
-        this.coreStore = coreStore;
+        this.userDirectory = userDirectory;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -44,15 +43,16 @@ public class ReceiptVoucherDataInitializer {
         Optional<Company> company = enterpriseStore.sortedCompanies().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
-        Optional<User> owner = coreStore.sortedUsers().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.sortedUsers().stream().min(Comparator.comparing(user -> user.id)));
+        java.util.List<UserDirectory.Entry> users = userDirectory.findAll();
+        Optional<UserDirectory.Entry> owner = users.stream()
+            .filter(user -> user.role() == 1)
+            .min(Comparator.comparing(UserDirectory.Entry::id))
+            .or(() -> users.stream().min(Comparator.comparing(UserDirectory.Entry::id)));
         if (company.isEmpty() || owner.isEmpty()) {
             return;
         }
         long companyId = company.get().id;
-        long ownerId = owner.get().id;
+        long ownerId = owner.get().id();
         if (receiptVouchers.findByCompany(companyId).isEmpty()) {
             seedReceiptVouchers(companyId, ownerId);
         }
@@ -179,7 +179,7 @@ public class ReceiptVoucherDataInitializer {
         return voucher;
     }
 
-    private void seedReceiptAuditLogs(User owner) {
+    private void seedReceiptAuditLogs(UserDirectory.Entry owner) {
         if (enterpriseStore.hasAuditLogEntityType("receipt_voucher")) {
             return;
         }
@@ -191,8 +191,8 @@ public class ReceiptVoucherDataInitializer {
                 voucher.id,
                 "seed",
                 "系统初始化票据「" + voucher.title + "」",
-                owner.id,
-                owner.nickname
+                owner.id(),
+                owner.nickname()
             ));
     }
 }

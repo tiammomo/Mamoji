@@ -12,7 +12,7 @@ import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
 import com.mamoji.platform.audit.domain.AuditLog;
-import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -93,6 +93,7 @@ public class EnterpriseStore {
 
     private final JdbcTemplate jdbc;
     private final InMemoryStore coreStore;
+    private final UserDirectory userDirectory;
     private final AuditLogRepository auditLogRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
@@ -104,6 +105,7 @@ public class EnterpriseStore {
     public EnterpriseStore(
         JdbcTemplate jdbc,
         InMemoryStore coreStore,
+        UserDirectory userDirectory,
         AuditLogRepository auditLogRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
@@ -114,6 +116,7 @@ public class EnterpriseStore {
     ) {
         this.jdbc = jdbc;
         this.coreStore = coreStore;
+        this.userDirectory = userDirectory;
         this.auditLogRepository = auditLogRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
@@ -173,6 +176,14 @@ public class EnterpriseStore {
         ensureSeedData();
     }
 
+    private Optional<UserDirectory.Entry> initialOwner() {
+        List<UserDirectory.Entry> users = userDirectory.findAll();
+        return users.stream()
+            .filter(user -> user.role() == 1)
+            .min(Comparator.comparing(UserDirectory.Entry::id))
+            .or(() -> users.stream().min(Comparator.comparing(UserDirectory.Entry::id)));
+    }
+
     private void initializeAccountingCompanyScopes() {
         Map<Long, Long> defaultCompanyByUser = new HashMap<>();
         sortedCompanies().forEach(company -> defaultCompanyByUser.putIfAbsent(company.ownerId, company.id));
@@ -190,16 +201,12 @@ public class EnterpriseStore {
     }
 
     private void ensureBootstrapEnterpriseData() {
-        User owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
-            .orElse(null);
+        UserDirectory.Entry owner = initialOwner().orElse(null);
         if (owner == null) {
             return;
         }
         Company company = company(
-            owner.id,
+            owner.id(),
             bootstrapCompanyName,
             bootstrapCompanyCreditCode,
             bootstrapCompanyIndustry,
@@ -214,10 +221,10 @@ public class EnterpriseStore {
         Department management = department(company.id, "管理层", "MGMT", "0");
         Employee founder = employee(
             company.id,
-            owner.id,
+            owner.id(),
             management.id,
-            owner.nickname,
-            owner.email,
+            owner.nickname(),
+            owner.email(),
             null,
             "系统管理员",
             "full_time",
@@ -233,36 +240,32 @@ public class EnterpriseStore {
             "0",
             null
         );
-        event(company.id, founder.id, "onboard", founder.hireDate, "生产环境初始化管理员员工档案", owner.id);
-        auditLog(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id, owner.nickname);
+        event(company.id, founder.id, "onboard", founder.hireDate, "生产环境初始化管理员员工档案", owner.id());
+        auditLog(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id(), owner.nickname());
     }
 
     private void ensureSeedData() {
         if (!companies.isEmpty()) {
             return;
         }
-        User owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
-            .orElse(null);
+        UserDirectory.Entry owner = initialOwner().orElse(null);
         if (owner == null) {
             return;
         }
 
-        Company company = company(owner.id, "深圳市示例电商科技有限公司", DEMO_COMPANY_CREDIT_CODE, "软件与信息技术服务", "小规模纳税人", "CNY");
+        Company company = company(owner.id(), "深圳市示例电商科技有限公司", DEMO_COMPANY_CREDIT_CODE, "软件与信息技术服务", "小规模纳税人", "CNY");
         Department management = department(company.id, "管理层", "CEO", "30000");
         Department finance = department(company.id, "财务行政", "FIN-ADMIN", "42000");
         Department product = department(company.id, "产品研发", "RND", "120000");
         Department sales = department(company.id, "市场销售", "SALES", "65000");
 
-        Employee founder = employee(company.id, owner.id, management.id, owner.nickname, owner.email, "13800000001",
+        Employee founder = employee(company.id, owner.id(), management.id, owner.nickname(), owner.email(), "13800000001",
             "创始人 / CEO", "full_time", "active", "founder", "company", "2026-01-05", null,
             "40000", "6993.99", "4800", "4550.86", "51793.99", "李女士 13800000009");
-        Optional<User> member = coreStore.users.values().stream()
-            .filter(user -> user.id != owner.id)
-            .min(Comparator.comparing(user -> user.id));
-        member.ifPresent(user -> employee(company.id, user.id, finance.id, user.nickname, user.email, "13800000002",
+        Optional<UserDirectory.Entry> member = userDirectory.findAll().stream()
+            .filter(user -> user.id() != owner.id())
+            .min(Comparator.comparing(UserDirectory.Entry::id));
+        member.ifPresent(user -> employee(company.id, user.id(), finance.id, user.nickname(), user.email(), "13800000002",
             "财务与人事负责人", "full_time", "active", "hr_admin", "company", "2026-02-10", null,
             "18000", "2700", "2160", "1200", "24060", "王先生 13800000010"));
         employee(company.id, null, product.id, "陈一鸣", "chen.yiming@mamoji.local", "13800000003",
@@ -281,13 +284,13 @@ public class EnterpriseStore {
             "市场运营", "full_time", "departed", "viewer", "self", "2026-02-15", "2026-06-03",
             "14000", "2100", "1680", "500", "18280", "吴先生 13800000014");
 
-        event(company.id, founder.id, "onboard", founder.hireDate, "公司创始人账号初始化", owner.id);
+        event(company.id, founder.id, "onboard", founder.hireDate, "公司创始人账号初始化", owner.id());
         employees.values().stream()
             .filter(employee -> employee.companyId == company.id && employee.id != founder.id)
-            .forEach(employee -> event(company.id, employee.id, "onboard", employee.hireDate, "演示员工入职", owner.id));
+            .forEach(employee -> event(company.id, employee.id, "onboard", employee.hireDate, "演示员工入职", owner.id()));
         employees.values().stream()
             .filter(employee -> employee.companyId == company.id && "departed".equals(employee.status))
-            .forEach(employee -> event(company.id, employee.id, "offboard", employee.leaveDate, "演示员工离职交接完成", owner.id));
+            .forEach(employee -> event(company.id, employee.id, "offboard", employee.leaveDate, "演示员工离职交接完成", owner.id()));
 
         taxItem(company.id, "2026-Q2 增值税申报", "2026-Q2", "vat", "17800", "0", "0", "2026-07-15", "estimated", "深圳小规模创业团队季度零税款申报口径");
         taxItem(company.id, "2026-Q2 企业所得税预缴", "2026-Q2", "corporate_income_tax", "45200", "2260", "0", "2026-07-15", "pending", "按季度利润估算");
@@ -307,9 +310,12 @@ public class EnterpriseStore {
             .filter(department -> "薪酬样例".equals(department.name))
             .min(Comparator.comparing(department -> department.id))
             .orElseGet(() -> department(company.id, "薪酬样例", "PAY-SAMPLE", "780000"));
-        long operatorUserId = coreStore.users.containsKey(company.ownerId)
+        long operatorUserId = userDirectory.findById(company.ownerId).isPresent()
             ? company.ownerId
-            : coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)).map(user -> user.id).orElse(0L);
+            : userDirectory.findAll().stream()
+                .min(Comparator.comparing(UserDirectory.Entry::id))
+                .map(UserDirectory.Entry::id)
+                .orElse(0L);
 
         for (int i = 0; i < COMPENSATION_BENCHMARK_SALARIES.length; i += 1) {
             int salary = COMPENSATION_BENCHMARK_SALARIES[i];
@@ -380,15 +386,11 @@ public class EnterpriseStore {
         if (hasHousehold) {
             return;
         }
-        User owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
-            .orElse(null);
+        UserDirectory.Entry owner = initialOwner().orElse(null);
         if (owner == null) {
             return;
         }
-        Company household = company(owner.id, "演示家庭资产主体", "household", null, "家庭资产管理", "非经营主体", "CNY");
+        Company household = company(owner.id(), "演示家庭资产主体", "household", null, "家庭资产管理", "非经营主体", "CNY");
         household.province = "广东省";
         household.city = "深圳市";
         household.operatingRegion = regionLabel(household);
@@ -415,23 +417,19 @@ public class EnterpriseStore {
         if (hasPairTransfer) {
             return;
         }
-        User owner = coreStore.users.values().stream()
-            .filter(user -> user.role == 1)
-            .min(Comparator.comparing(user -> user.id))
-            .or(() -> coreStore.users.values().stream().min(Comparator.comparing(user -> user.id)))
-            .orElse(null);
+        UserDirectory.Entry owner = initialOwner().orElse(null);
         if (owner == null) {
             return;
         }
         String currency = isBlank(company.get().currency) ? "CNY" : company.get().currency;
         entityTransfer(householdId, companyId, "shareholder_advance", "50000", currency, "2026-02-01",
-            "家庭资金垫付公司启动备用金", "recorded", owner.id);
+            "家庭资金垫付公司启动备用金", "recorded", owner.id());
         entityTransfer(companyId, householdId, "advance_repayment", "12000", currency, "2026-04-15",
-            "公司归还部分家庭垫资", "recorded", owner.id);
+            "公司归还部分家庭垫资", "recorded", owner.id());
         entityTransfer(householdId, companyId, "expense_reimbursement", "2680", currency, "2026-05-08",
-            "家庭账户代垫 SaaS 订阅和办公采购", "recorded", owner.id);
+            "家庭账户代垫 SaaS 订阅和办公采购", "recorded", owner.id());
         entityTransfer(companyId, householdId, "reimbursement_payment", "2680", currency, "2026-05-20",
-            "公司报销家庭代垫支出", "recorded", owner.id);
+            "公司报销家庭代垫支出", "recorded", owner.id());
     }
 
     private void ensureCompanyPolicyDefaults() {
@@ -477,11 +475,13 @@ public class EnterpriseStore {
     }
 
     private void ensureAccessDefaults() {
+        Map<Long, UserDirectory.Entry> usersById = userDirectory.findAll().stream()
+            .collect(java.util.stream.Collectors.toMap(UserDirectory.Entry::id, user -> user));
         employees.values().forEach(employee -> {
             String role = employee.accessRole == null || employee.accessRole.isBlank() ? "employee" : employee.accessRole;
             String scope = employee.accessScope == null || employee.accessScope.isBlank() ? "self" : employee.accessScope;
-            Optional<User> user = Optional.ofNullable(employee.userId).map(coreStore.users::get);
-            if (user.map(candidate -> candidate.role == 1).orElse(false)) {
+            Optional<UserDirectory.Entry> user = Optional.ofNullable(employee.userId).map(usersById::get);
+            if (user.map(candidate -> candidate.role() == 1).orElse(false)) {
                 role = "founder";
                 scope = "company";
             } else if (employee.position != null && employee.position.contains("财务")) {

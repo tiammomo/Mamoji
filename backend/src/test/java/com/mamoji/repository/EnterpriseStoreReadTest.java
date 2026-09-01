@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.platform.audit.application.AuditLogRepository;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +24,7 @@ class EnterpriseStoreReadTest {
         EnterpriseStore store = new EnterpriseStore(
             jdbc,
             mock(InMemoryStore.class),
+            mock(UserDirectory.class),
             mock(AuditLogRepository.class),
             "demo",
             "Test",

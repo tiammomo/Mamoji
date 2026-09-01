@@ -12,6 +12,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
+import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import com.mamoji.platform.identity.security.application.LoginFailureRepository;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
@@ -68,6 +71,12 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Autowired
     BackupService backupService;
+
+    @Autowired
+    LocalUserAccountRepository userAccounts;
+
+    @Autowired
+    UserDirectory userDirectory;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -602,6 +611,10 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         Map<String, Object> page = parseMap(searched.body());
         assertEquals(1, ((Number) page.get("totalElements")).intValue());
         assertFalse(searched.body().contains("passwordHash"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> managedUsers = (List<Map<String, Object>>) page.get("content");
+        assertNull(managedUsers.getFirst().get("familyId"));
+        assertNull(userDirectory.findById(memberId).orElseThrow().familyId());
 
         ApiResponse invalid = request(
             "PUT", "/api/v1/admin/users/" + memberId, Map.of("permissions", 16), adminToken
@@ -614,8 +627,12 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         assertEquals(200, promoted.status(), promoted.body());
         assertEquals(1, ((Number) parseMap(promoted.body()).get("role")).intValue());
         assertEquals(3, ((Number) parseMap(promoted.body()).get("permissions")).intValue());
-        assertEquals(1, coreStore.users.get(memberId).role);
-        assertEquals(3, coreStore.users.get(memberId).permissions);
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT role FROM users WHERE id = ?", Integer.class, memberId
+        ));
+        assertEquals(3, jdbc.queryForObject(
+            "SELECT permissions FROM users WHERE id = ?", Integer.class, memberId
+        ));
 
         ApiResponse demoted = request(
             "PUT", "/api/v1/admin/users/" + memberId, Map.of("role", 2, "permissions", 1), adminToken
@@ -625,7 +642,42 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         assertEquals(0, jdbc.queryForObject(
             "SELECT COUNT(*) FROM users WHERE id = ?", Integer.class, memberId
         ));
-        assertFalse(coreStore.users.containsKey(memberId));
+    }
+
+    @Test
+    void localUserPasswordUpgradeUsesDatabaseCompareAndSet() throws Exception {
+        String email = uniqueEmail("password-cas");
+        registerInvitedUser(email);
+        User user = userAccounts.findByEmail(email).orElseThrow();
+        String originalHash = user.passwordHash;
+        String replacementHash = "replacement-hash-" + System.nanoTime();
+
+        assertFalse(userAccounts.updatePasswordHashIfCurrent(
+            user.id,
+            "stale-hash",
+            replacementHash,
+            OffsetDateTime.now().toString()
+        ));
+        assertTrue(userAccounts.updatePasswordHashIfCurrent(
+            user.id,
+            originalHash,
+            replacementHash,
+            OffsetDateTime.now().toString()
+        ));
+        assertFalse(userAccounts.updatePasswordHashIfCurrent(
+            user.id,
+            originalHash,
+            "must-not-win",
+            OffsetDateTime.now().toString()
+        ));
+        assertEquals(replacementHash, userAccounts.findById(user.id).orElseThrow().passwordHash);
+
+        assertTrue(userAccounts.updatePasswordHashIfCurrent(
+            user.id,
+            replacementHash,
+            originalHash,
+            OffsetDateTime.now().toString()
+        ));
     }
 
     @Test
@@ -685,9 +737,27 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("13", jdbc.queryForObject("""
+        assertEquals("14", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
+        assertEquals(Set.of("created_at", "updated_at"), Set.copyOf(jdbc.queryForList("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'users'
+              AND data_type = 'timestamp with time zone'
+            """, String.class)));
+        assertEquals(Set.of(
+            "ck_users_email",
+            "ck_users_role",
+            "ck_users_permissions",
+            "ck_users_password_hash",
+            "ck_users_timestamps"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname LIKE 'ck_users_%'
+            """, String.class)));
         assertEquals(1, jdbc.queryForObject("""
             SELECT COUNT(*)
             FROM information_schema.columns
@@ -965,13 +1035,9 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
                 "SELECT COUNT(*) FROM users WHERE role = 1", Integer.class
             ));
         } finally {
-            String restoredAt = java.time.OffsetDateTime.now().toString();
+            java.time.OffsetDateTime restoredAt = java.time.OffsetDateTime.now();
             jdbc.update("UPDATE users SET role = 1, updated_at = ? WHERE id = ?", restoredAt, primaryAdministratorId);
             jdbc.update("DELETE FROM users WHERE id = ?", secondAdministratorId);
-            int permissions = jdbc.queryForObject(
-                "SELECT permissions FROM users WHERE id = ?", Integer.class, primaryAdministratorId
-            );
-            coreStore.synchronizeUserAccessAfterCommit(primaryAdministratorId, 1, permissions, restoredAt);
         }
     }
 

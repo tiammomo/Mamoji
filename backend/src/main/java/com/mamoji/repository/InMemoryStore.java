@@ -10,6 +10,7 @@ import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.service.support.PasswordHasher;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
@@ -19,7 +20,6 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,7 +40,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Component
 @DependsOn("singleInstanceDatabaseGuard")
 public class InMemoryStore {
-    public final Map<Long, User> users = new ConcurrentHashMap<>();
     public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
     public final Map<Long, Category> categories = new ConcurrentHashMap<>();
     public final Map<Long, Budget> budgets = new ConcurrentHashMap<>();
@@ -50,6 +49,7 @@ public class InMemoryStore {
     public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
+    private final LocalUserAccountRepository userAccounts;
     private final PasswordHasher passwordHasher;
     private final String bootstrapMode;
     private final String bootstrapAdminEmail;
@@ -59,6 +59,7 @@ public class InMemoryStore {
     private final boolean passwordRequireComplexity;
     public InMemoryStore(
         JdbcTemplate jdbc,
+        LocalUserAccountRepository userAccounts,
         PasswordHasher passwordHasher,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
@@ -68,9 +69,12 @@ public class InMemoryStore {
         @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity
     ) {
         this.jdbc = jdbc;
+        this.userAccounts = userAccounts;
         this.passwordHasher = passwordHasher;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
-        this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com");
+        this.bootstrapAdminEmail = defaultIfBlank(bootstrapAdminEmail, "test@mamoji.com")
+            .trim()
+            .toLowerCase(Locale.ROOT);
         this.bootstrapAdminPassword = defaultIfBlank(bootstrapAdminPassword, "123456");
         this.bootstrapAdminNickname = defaultIfBlank(bootstrapAdminNickname, "Mamoji 公司管理员");
         this.passwordMinLength = Math.max(8, passwordMinLength);
@@ -80,7 +84,7 @@ public class InMemoryStore {
     @PostConstruct
     void initialize() {
         loadAll();
-        if (users.isEmpty()) {
+        if (userAccounts.count() == 0) {
             seedInitialData();
         } else {
             refreshBudgetData();
@@ -88,7 +92,6 @@ public class InMemoryStore {
     }
 
     private void loadAll() {
-        users.clear();
         accounts.clear();
         categories.clear();
         budgets.clear();
@@ -97,7 +100,6 @@ public class InMemoryStore {
         ledgerMembers.clear();
         recurringItems.clear();
 
-        forEachRow("SELECT * FROM users", rs -> users.put(rs.getLong("id"), mapUser(rs)));
         forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
         forEachRow("SELECT * FROM budgets", rs -> budgets.put(rs.getLong("id"), mapBudget(rs)));
@@ -231,7 +233,7 @@ public class InMemoryStore {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    public User user(String email, String nickname, String avatar, String password, int role, int permissions) {
+    private User user(String email, String nickname, String avatar, String password, int role, int permissions) {
         User user = new User();
         user.email = email;
         user.nickname = nickname;
@@ -240,12 +242,7 @@ public class InMemoryStore {
         user.permissions = permissions;
         user.passwordHash = password;
         stamp(user);
-        user.id = insert("""
-            INSERT INTO users (email, nickname, avatar, family_id, role, permissions, password_hash, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindUserInsert(ps, user));
-        afterCommit(() -> users.put(user.id, user));
-        return user;
+        return userAccounts.insert(user);
     }
 
     private Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
@@ -425,7 +422,7 @@ public class InMemoryStore {
         member.ledgerId = ledgerId;
         member.userId = userId;
         member.role = role;
-        User memberUser = findUser(userId).orElse(null);
+        User memberUser = userAccounts.findById(userId).orElse(null);
         if (memberUser != null) {
             member.nickname = memberUser.nickname;
             member.avatar = memberUser.avatar;
@@ -465,31 +462,6 @@ public class InMemoryStore {
         if (queryCategories(ownerId, companyId, "expense").isEmpty()) {
             category(ownerId, companyId, "经营支出", "🧾", "#ef4444", "expense");
         }
-    }
-
-    public void saveUser(User user) {
-        jdbc.update("""
-            UPDATE users SET email = ?, nickname = ?, avatar = ?, family_id = ?, role = ?, permissions = ?,
-                password_hash = ?, created_at = ?, updated_at = ? WHERE id = ?
-            """, user.email, user.nickname, user.avatar, user.familyId, user.role, user.permissions,
-            user.passwordHash, user.createdAt, user.updatedAt, user.id);
-        afterCommit(() -> users.put(user.id, user));
-    }
-
-    /** Transitional cache hook used while legacy enterprise reads still consume the compatibility user map. */
-    public void synchronizeUserAccessAfterCommit(long id, int role, int permissions, String updatedAt) {
-        afterCommit(() -> users.computeIfPresent(id, (ignored, current) -> {
-            User replacement = copyUser(current);
-            replacement.role = role;
-            replacement.permissions = permissions;
-            replacement.updatedAt = updatedAt;
-            return replacement;
-        }));
-    }
-
-    /** Transitional cache hook used by the access-management repository after a committed deletion. */
-    public void removeUserFromCompatibilityViewAfterCommit(long id) {
-        afterCommit(() -> users.remove(id));
     }
 
     /** Transitional cache hook for legacy readers after a committed transaction write. */
@@ -539,19 +511,6 @@ public class InMemoryStore {
         ));
     }
 
-    public void updatePasswordHashIfCurrent(User current, String passwordHash, String updatedAt) {
-        int updated = jdbc.update("""
-            UPDATE users SET password_hash = ?, updated_at = ?
-            WHERE id = ? AND password_hash = ?
-            """, passwordHash, updatedAt, current.id, current.passwordHash);
-        if (updated == 1) {
-            User replacement = copyUser(current);
-            replacement.passwordHash = passwordHash;
-            replacement.updatedAt = updatedAt;
-            afterCommit(() -> users.put(replacement.id, replacement));
-        }
-    }
-
     private void saveBudget(Budget budget) {
         int updated = jdbc.update("""
             UPDATE budgets SET name = ?, amount = ?, start_date = ?, end_date = ?, warning_threshold = ?, status = ?,
@@ -591,37 +550,6 @@ public class InMemoryStore {
     public void deleteRecurring(String id) {
         jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
         afterCommit(() -> recurringItems.remove(id));
-    }
-
-    private User copyUser(User source) {
-        User copy = new User();
-        copy.id = source.id;
-        copy.email = source.email;
-        copy.nickname = source.nickname;
-        copy.avatar = source.avatar;
-        copy.familyId = source.familyId;
-        copy.role = source.role;
-        copy.permissions = source.permissions;
-        copy.passwordHash = source.passwordHash;
-        copy.createdAt = source.createdAt;
-        copy.updatedAt = source.updatedAt;
-        return copy;
-    }
-
-    public Optional<User> findUserByEmail(String email) {
-        return jdbc.query(
-            "SELECT * FROM users WHERE LOWER(email) = LOWER(?)",
-            (rs, rowNum) -> mapUser(rs),
-            email
-        ).stream().findFirst();
-    }
-
-    public Optional<User> findUser(long id) {
-        return jdbc.query("SELECT * FROM users WHERE id = ?", (rs, rowNum) -> mapUser(rs), id).stream().findFirst();
-    }
-
-    public List<User> sortedUsers() {
-        return jdbc.query("SELECT * FROM users ORDER BY id", (rs, rowNum) -> mapUser(rs));
     }
 
     private Optional<Account> findAccount(long id) {
@@ -684,11 +612,6 @@ public class InMemoryStore {
             "SELECT * FROM recurring_items WHERE user_id = ? AND company_id = ? ORDER BY next_execution, id",
             (rs, rowNum) -> mapRecurringItem(rs), userId, companyId
         );
-    }
-
-    public Optional<User> userForUpdate(long id) {
-        List<User> matches = jdbc.query("SELECT * FROM users WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapUser(rs), id);
-        return matches.stream().findFirst();
     }
 
     private boolean ledgerMemberExists(long ledgerId, long userId) {
@@ -952,33 +875,6 @@ public class InMemoryStore {
         return nullToZero(left).compareTo(nullToZero(right)) == 0;
     }
 
-    public Map<String, Object> snapshot() {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("users", sortedUsers());
-        data.put("accounts", sortedAccounts());
-        data.put("categories", sortedCategories());
-        data.put("transactions", sortedTransactions());
-        data.put("budgets", sortedBudgets());
-        data.put("ledgers", jdbc.query("SELECT * FROM ledgers ORDER BY id", (rs, rowNum) -> mapLedger(rs)));
-        data.put("recurring", jdbc.query("SELECT * FROM recurring_items ORDER BY id", (rs, rowNum) -> mapRecurringItem(rs)));
-        return data;
-    }
-
-    private User mapUser(ResultSet rs) throws SQLException {
-        User user = new User();
-        user.id = rs.getLong("id");
-        user.email = rs.getString("email");
-        user.nickname = rs.getString("nickname");
-        user.avatar = rs.getString("avatar");
-        user.familyId = nullableLong(rs, "family_id");
-        user.role = rs.getInt("role");
-        user.permissions = rs.getInt("permissions");
-        user.passwordHash = rs.getString("password_hash");
-        user.createdAt = rs.getString("created_at");
-        user.updatedAt = rs.getString("updated_at");
-        return user;
-    }
-
     private Account mapAccount(ResultSet rs) throws SQLException {
         Account account = new Account();
         account.id = rs.getLong("id");
@@ -1131,18 +1027,6 @@ public class InMemoryStore {
         item.executionCount = rs.getInt("execution_count");
         item.note = rs.getString("note");
         return item;
-    }
-
-    private void bindUserInsert(PreparedStatement ps, User user) throws SQLException {
-        ps.setString(1, user.email);
-        ps.setString(2, user.nickname);
-        ps.setString(3, user.avatar);
-        setLongOrNull(ps, 4, user.familyId);
-        ps.setInt(5, user.role);
-        ps.setInt(6, user.permissions);
-        ps.setString(7, user.passwordHash);
-        ps.setString(8, user.createdAt);
-        ps.setString(9, user.updatedAt);
     }
 
     private static void hydrateAccountDefaults(Account account) {

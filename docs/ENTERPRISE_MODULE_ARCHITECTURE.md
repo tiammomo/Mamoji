@@ -52,7 +52,7 @@ flowchart TB
 
 | 边界 | 命令职责 | 查询职责 | 主要数据 | 对外契约 |
 | --- | --- | --- | --- | --- |
-| `platform.identity` | 解析当前人员、本地会话与注册邀请生命周期 | 当前 Actor、邀请摘要 | `auth_tokens/registration_invites`/外部身份声明 | `ActorContext`、`@CurrentActor` |
+| `platform.identity` | 本地账户、凭证、资料、会话与注册邀请生命周期 | 当前 Actor、账户、邀请摘要 | `users/auth_tokens/registration_invites`/外部身份声明 | `ActorContext`、`@CurrentActor` |
 | `platform.tenant` | 同步成员关系 | 公司、角色、部门、范围 | `company_memberships` | `CompanyMembershipRepository` |
 | `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
 | `access-management` | 公司成员和角色维护 | 成员、角色、数据范围 | `users/company_memberships` | `/admin/users` |
@@ -185,6 +185,7 @@ workforce/
 
 | 表或投影 | 所属模块 | 其他模块如何使用 |
 | --- | --- | --- |
+| `users` | Platform Identity | 认证与资料通过本地账户仓储读写；Access Management 仅使用不含密码的权限管理投影，禁止维护进程内用户副本 |
 | `company_memberships` | Platform Tenant | 只通过成员仓储读取 |
 | `auth_tokens` | Platform Identity | 本地身份适配器按令牌摘要创建、认证、撤销和清理，其他模块不得直接访问 |
 | `registration_invites` | Platform Identity | 邀请仓储按 SHA-256 摘要发行并以行锁单次消费；原始凭证只在创建响应披露一次 |
