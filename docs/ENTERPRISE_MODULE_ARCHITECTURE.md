@@ -125,9 +125,10 @@ budget/
   api/BudgetController
   api/BudgetCreateRequest
   api/BudgetUpdateRequest
+  application/BudgetRepository
   application/BudgetApplicationService
   domain/BudgetPolicy
-  infrastructure/BudgetRepository
+  infrastructure/JdbcBudgetRepository
 ```
 
 拆分下一个模块时，应复制结构原则，而不是复制具体实现。
@@ -193,7 +194,7 @@ workforce/
 | `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
 | `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
 | `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
-| `budgets` | Budget | Operations 只请求匹配预算；Workspace 只读 |
+| `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers` | Finance | Operations 通过账户 ID 校验与调整 |
 | `receipt_vouchers` | Evidence | Approval 通过应用服务更新审批状态 |
 | `departments`、`employees`、`employment_events` | People Core | Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
@@ -214,7 +215,7 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束；两套旧 Store 的剩余集合目前只承担其他模块的演示初始化、兼容恢复和过渡同步。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。两套旧 Store 的剩余集合只承担其他模块的演示初始化、兼容恢复和过渡同步。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
