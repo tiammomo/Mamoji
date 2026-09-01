@@ -20,6 +20,7 @@
 | P1 | 多个接口使用 `Map<String, Object>` | 强类型 DTO、Bean Validation、统一 Problem Detail | 进行中：流水读写、预算、权限、身份认证、审批和周期事项写命令已完成 |
 | P2 | 启动期兼容建表与 Flyway 并存 | 完成迁移后删除生产兼容 DDL | 已落地：运行时 DDL 与兼容开关已删除，所有环境统一由 Flyway 管理 schema |
 | P2 | 测试集中在少数大文件 | 按模块建立领域单测和 Testcontainers 集成测试 | 已落地：跨域套件已拆为身份访问、会计经营和企业工作流三组独立 PostgreSQL 测试 |
+| P2 | 登录失败计数仅保存在单进程内存 | PostgreSQL 原子计数、重启保留、代理来源显式信任 | 已落地 |
 | P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 进行中：消费租约已增加唯一令牌和终态 fencing，外部发布适配器待接入 |
 
 ## 目标包边界
