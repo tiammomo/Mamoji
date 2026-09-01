@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -12,7 +13,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.PreparedStatement;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -20,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -39,7 +45,13 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class BackupService {
     private static final String FORMAT = "mamoji-structured-backup";
-    private static final String VERSION = "2.0";
+    private static final String VERSION = "2.1";
+    private static final String LEGACY_VERSION = "2.0";
+    private static final Set<String> SUPPORTED_VERSIONS = Set.of(LEGACY_VERSION, VERSION);
+    private static final Set<String> LEGACY_OPTIONAL_TABLES = Set.of(
+        "company_memberships",
+        "budget_reservations"
+    );
     private static final String RESTORE_CONFIRMATION = "RESTORE";
     private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
@@ -55,6 +67,7 @@ public class BackupService {
         "registration_invites",
         "companies",
         "departments",
+        "company_memberships",
         "employees",
         "employee_certificates",
         "employee_experiences",
@@ -66,6 +79,7 @@ public class BackupService {
         "categories",
         "budgets",
         "transactions",
+        "budget_reservations",
         "recurring_items",
         "tax_items",
         "entity_transfers",
@@ -201,6 +215,9 @@ public class BackupService {
             restoreTable(table, parsed.data().get(table));
             resetSequence(table);
         }
+        if (LEGACY_VERSION.equals(parsed.version())) {
+            rebuildLegacyMemberships();
+        }
 
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -224,6 +241,8 @@ public class BackupService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("restored", true);
         result.put("message", "结构化业务数据已恢复；全部登录会话已撤销。附件文件请使用配套 MinIO 备份恢复。" );
+        result.put("sourceVersion", parsed.version());
+        result.put("targetVersion", VERSION);
         result.put("counts", datasetCounts(parsed.data()));
         result.put("restoredAt", OffsetDateTime.now().toString());
         return result;
@@ -253,6 +272,12 @@ public class BackupService {
         if (value == null || value instanceof Boolean) {
             return value;
         }
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toInstant().toString();
+        }
+        if (value instanceof java.sql.Date date) {
+            return date.toLocalDate().toString();
+        }
         if (value instanceof byte[] bytes) {
             return java.util.Base64.getEncoder().encodeToString(bytes);
         }
@@ -273,7 +298,8 @@ public class BackupService {
         }
         try {
             Map<String, Object> payload = objectMapper.readValue(file.getBytes(), new TypeReference<>() {});
-            if (!FORMAT.equals(payload.get("format")) || !VERSION.equals(payload.get("version"))) {
+            String sourceVersion = Objects.toString(payload.get("version"), "");
+            if (!FORMAT.equals(payload.get("format")) || !SUPPORTED_VERSIONS.contains(sourceVersion)) {
                 throw new IllegalArgumentException("备份格式或版本不兼容。" );
             }
             Object rawData = payload.get("data");
@@ -283,9 +309,13 @@ public class BackupService {
             Map<String, Object> data = new LinkedHashMap<>();
             rawMap.forEach((key, value) -> data.put(String.valueOf(key), value));
             for (String table : BACKUP_TABLES) {
-                if (!(data.get(table) instanceof List<?>)) {
-                    throw new IllegalArgumentException("备份缺少数据集: " + table);
+                if (data.get(table) instanceof List<?>) {
+                    continue;
                 }
+                if (LEGACY_VERSION.equals(sourceVersion) && LEGACY_OPTIONAL_TABLES.contains(table)) {
+                    continue;
+                }
+                throw new IllegalArgumentException("备份缺少数据集: " + table);
             }
             if (((List<?>) data.get("users")).isEmpty() || ((List<?>) data.get("companies")).isEmpty()) {
                 throw new IllegalArgumentException("备份必须至少包含一个用户和一个主体。" );
@@ -298,7 +328,11 @@ public class BackupService {
             )) {
                 throw new IllegalArgumentException("备份校验和不匹配，文件可能不完整或已被修改。" );
             }
-            return new ParsedBackup(data, actualChecksum);
+            LEGACY_OPTIONAL_TABLES.forEach(table -> data.putIfAbsent(table, List.of()));
+            if (VERSION.equals(sourceVersion) && ((List<?>) data.get("company_memberships")).isEmpty()) {
+                throw new IllegalArgumentException("当前版本备份必须至少包含一个公司成员关系。" );
+            }
+            return new ParsedBackup(data, actualChecksum, sourceVersion);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -317,7 +351,8 @@ public class BackupService {
         result.put("restorable", valid);
         result.put("dryRun", dryRun);
         result.put("format", FORMAT);
-        result.put("version", VERSION);
+        result.put("version", parsed.version());
+        result.put("targetVersion", VERSION);
         result.put("message", message);
         result.put("counts", datasetCounts(parsed.data()));
         result.put("checksum", parsed.checksum());
@@ -374,6 +409,15 @@ public class BackupService {
         }
         Map<String, Object> row = new LinkedHashMap<>();
         map.forEach((key, value) -> row.put(String.valueOf(key), value));
+        if ("registration_invites".equals(table) && row.get("token") != null) {
+            try {
+                row.put("token", InvitationTokenDigest.fromStoredOrLegacyToken(
+                    String.valueOf(row.get("token"))
+                ).value());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException("Invalid invitation token in structured backup");
+            }
+        }
         return row;
     }
 
@@ -392,6 +436,9 @@ public class BackupService {
             case "boolean" -> statement.setBoolean(index, Boolean.parseBoolean(value));
             case "bytea" -> statement.setBytes(index, java.util.Base64.getDecoder().decode(value));
             case "json", "jsonb" -> statement.setObject(index, value, Types.OTHER);
+            case "date" -> statement.setObject(index, LocalDate.parse(value));
+            case "timestamp without time zone" -> statement.setObject(index, parseLocalDateTime(value));
+            case "timestamp with time zone" -> statement.setObject(index, parseOffsetDateTime(value));
             default -> statement.setString(index, value);
         }
     }
@@ -405,8 +452,23 @@ public class BackupService {
             case "double precision" -> Types.DOUBLE;
             case "boolean" -> Types.BOOLEAN;
             case "bytea" -> Types.BINARY;
+            case "date" -> Types.DATE;
+            case "timestamp without time zone" -> Types.TIMESTAMP;
+            case "timestamp with time zone" -> Types.TIMESTAMP_WITH_TIMEZONE;
             default -> Types.VARCHAR;
         };
+    }
+
+    private LocalDateTime parseLocalDateTime(String value) {
+        return LocalDateTime.parse(value.replace(' ', 'T'));
+    }
+
+    private OffsetDateTime parseOffsetDateTime(String value) {
+        try {
+            return OffsetDateTime.parse(value);
+        } catch (DateTimeParseException ignored) {
+            return parseLocalDateTime(value).atZone(ZoneId.systemDefault()).toOffsetDateTime();
+        }
     }
 
     private Map<String, String> columnTypes(String table) {
@@ -445,5 +507,47 @@ public class BackupService {
         return count == null ? 0 : count;
     }
 
-    private record ParsedBackup(Map<String, Object> data, String checksum) {}
+    private void rebuildLegacyMemberships() {
+        jdbc.update("""
+            INSERT INTO company_memberships (company_id, user_id, role, scope, status)
+            SELECT company.id, company.owner_id, 'founder', 'company', 'active'
+            FROM companies company
+            JOIN users owner_user ON owner_user.id = company.owner_id
+            ON CONFLICT (company_id, user_id) DO NOTHING
+            """);
+        jdbc.update("""
+            INSERT INTO company_memberships (
+                company_id, user_id, department_id, role, scope, status
+            )
+            SELECT employee.company_id, employee.user_id, employee.department_id,
+                   employee.access_role, employee.access_scope,
+                   CASE WHEN employee.status = 'departed' THEN 'inactive' ELSE 'active' END
+            FROM employees employee
+            JOIN users employee_user ON employee_user.id = employee.user_id
+            WHERE employee.user_id IS NOT NULL
+            ON CONFLICT (company_id, user_id) DO UPDATE SET
+                department_id = EXCLUDED.department_id,
+                role = CASE
+                    WHEN company_memberships.role = 'founder' THEN company_memberships.role
+                    ELSE EXCLUDED.role
+                END,
+                scope = CASE
+                    WHEN company_memberships.role = 'founder' THEN company_memberships.scope
+                    ELSE EXCLUDED.scope
+                END,
+                status = EXCLUDED.status,
+                updated_at = CURRENT_TIMESTAMP
+            """);
+        Integer membershipCount = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM company_memberships",
+            Integer.class
+        );
+        if (membershipCount == null || membershipCount == 0) {
+            throw new IllegalArgumentException(
+                "Legacy backup could not rebuild an administrator company membership"
+            );
+        }
+    }
+
+    private record ParsedBackup(Map<String, Object> data, String checksum, String version) {}
 }

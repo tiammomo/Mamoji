@@ -25,14 +25,15 @@ export interface RegisterDTO {
 
 export interface RegistrationInvite {
   id: number;
-  token: string;
+  /** Present only in the response that creates the invitation. */
+  token: string | null;
   email: string;
   role: number;
   permissions: number;
   expiresAt: string;
   acceptedAt?: string | null;
   acceptedUserId?: number | null;
-  invitedByUserId: number;
+  invitedByUserId: number | null;
   createdAt: string;
   updatedAt: string;
 }

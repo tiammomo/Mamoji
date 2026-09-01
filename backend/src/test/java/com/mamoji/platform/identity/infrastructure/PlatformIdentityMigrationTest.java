@@ -1,9 +1,11 @@
-package com.mamoji.platform.identity.session.infrastructure;
+package com.mamoji.platform.identity.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -17,14 +19,15 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
-class LocalSessionMigrationTest {
+class PlatformIdentityMigrationTest {
     private static final String VALID_DIGEST = "sha256:" + "a".repeat(43);
+    private static final String LEGACY_INVITATION_TOKEN = "1".repeat(64);
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
 
     @Test
-    void v12DiscardsUnsafeLegacySessionsBeforeAddingConstraints() throws Exception {
+    void identityMigrationsHardenLegacySessionsAndInvitations() throws Exception {
         migrateToVersionEleven();
 
         try (Connection connection = connection()) {
@@ -34,6 +37,30 @@ class LocalSessionMigrationTest {
             insertSession(connection, "sha256:" + "b".repeat(43), userId, "not-a-time", "2026-09-01T11:00:00Z");
             insertSession(connection, "sha256:" + "c".repeat(43), userId, "2026-09-01T12:00:00Z", "2026-09-01T11:00:00Z");
             insertSession(connection, "sha256:" + "d".repeat(43), userId + 9999, "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z");
+            insertInvitation(
+                connection,
+                LEGACY_INVITATION_TOKEN,
+                userId,
+                "migration-invite@mamoji.test",
+                "2026-09-01T10:00:00Z",
+                "2026-09-02T10:00:00Z"
+            );
+            insertInvitation(
+                connection,
+                "2".repeat(64),
+                userId,
+                "invalid-time@mamoji.test",
+                "not-a-time",
+                "2026-09-02T10:00:00Z"
+            );
+            insertInvitation(
+                connection,
+                "3".repeat(64),
+                userId + 9999,
+                "orphan-inviter@mamoji.test",
+                "2026-09-01T10:00:00Z",
+                "2026-09-02T10:00:00Z"
+            );
         }
 
         migrateLatest();
@@ -44,16 +71,43 @@ class LocalSessionMigrationTest {
                 assertEquals(VALID_DIGEST, sessions.getString("token"));
                 assertFalse(sessions.next());
             }
+            try (ResultSet invitations = statement.executeQuery("""
+                SELECT token, email, invited_by_user_id, pg_typeof(expires_at)::TEXT AS expiry_type
+                FROM registration_invites
+                ORDER BY email
+                """)) {
+                invitations.next();
+                assertEquals(
+                    InvitationTokenDigest.fromRawToken(LEGACY_INVITATION_TOKEN).value(),
+                    invitations.getString("token")
+                );
+                assertEquals("timestamp with time zone", invitations.getString("expiry_type"));
+                invitations.next();
+                assertEquals("orphan-inviter@mamoji.test", invitations.getString("email"));
+                assertEquals(
+                    InvitationTokenDigest.fromRawToken("3".repeat(64)).value(),
+                    invitations.getString("token")
+                );
+                assertNull(invitations.getObject("invited_by_user_id"));
+                assertFalse(invitations.next());
+            }
             try (ResultSet version = statement.executeQuery("""
                 SELECT version FROM flyway_schema_history
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("12", version.getString("version"));
+                assertEquals("13", version.getString("version"));
             }
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
                 SELECT 'plaintext', id, NOW(), NOW() + INTERVAL '1 hour' FROM users LIMIT 1
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO registration_invites (
+                    token, email, role, permissions, expires_at, invited_by_user_id,
+                    created_at, updated_at
+                ) SELECT 'plaintext', 'new@mamoji.test', 2, 15, NOW() + INTERVAL '1 day', id, NOW(), NOW()
+                  FROM users LIMIT 1
                 """));
         }
     }
@@ -117,6 +171,30 @@ class LocalSessionMigrationTest {
             statement.setLong(2, userId);
             statement.setString(3, createdAt);
             statement.setString(4, expiresAt);
+            statement.executeUpdate();
+        }
+    }
+
+    private void insertInvitation(
+        Connection connection,
+        String token,
+        long invitedByUserId,
+        String email,
+        String createdAt,
+        String expiresAt
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO registration_invites (
+                token, email, role, permissions, expires_at, accepted_at,
+                accepted_user_id, invited_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, 2, 15, ?, NULL, NULL, ?, ?, ?)
+            """)) {
+            statement.setString(1, token);
+            statement.setString(2, email);
+            statement.setString(3, expiresAt);
+            statement.setLong(4, invitedByUserId);
+            statement.setString(5, createdAt);
+            statement.setString(6, createdAt);
             statement.executeUpdate();
         }
     }
