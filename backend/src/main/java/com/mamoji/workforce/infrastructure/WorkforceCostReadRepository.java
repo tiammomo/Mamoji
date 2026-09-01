@@ -161,8 +161,8 @@ public class WorkforceCostReadRepository {
     ) {
         BigDecimal result = jdbc.queryForObject("""
             SELECT GREATEST(COALESCE(SUM(CASE
-                WHEN transaction_record.type = 2 THEN CAST(NULLIF(transaction_record.amount, '') AS NUMERIC)
-                WHEN transaction_record.type = 3 THEN -CAST(NULLIF(transaction_record.amount, '') AS NUMERIC)
+                WHEN transaction_record.type = 2 THEN transaction_record.amount
+                WHEN transaction_record.type = 3 THEN -transaction_record.amount
                 ELSE 0 END), 0), 0)
             FROM transactions transaction_record
             WHERE transaction_record.company_id = ? AND transaction_record.date BETWEEN ? AND ?
@@ -174,7 +174,7 @@ public class WorkforceCostReadRepository {
                         AND scoped_employee.department_id = ?
                   )
               ))
-            """, BigDecimal.class, companyId, periodStart.toString(), periodEnd.toString(),
+            """, BigDecimal.class, companyId, periodStart, periodEnd,
             scope.companyWide(), scope.actorUserId(), scope.departmentId(), scope.departmentId());
         return result == null ? BigDecimal.ZERO : result;
     }

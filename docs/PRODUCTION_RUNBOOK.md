@@ -19,6 +19,7 @@
 - 后端直连默认不信任客户端提交的 `X-Forwarded-For`。生产 Compose 仅通过 Caddy 暴露入口，Caddy 会用真实连接地址覆盖外部来源头，并显式启用 `MAMOJI_AUTH_TRUST_FORWARDED_HEADERS=true`；若改变网络拓扑，必须同步复核可信代理边界。
 - 本地会话只在 PostgreSQL 保存 SHA-256 令牌摘要和 `TIMESTAMPTZ` 有效期；过期会话每小时自动清理。结构化业务恢复会撤销全部现有会话，恢复完成后管理员必须重新登录，避免旧令牌映射到恢复后的账号数据。
 - 本地用户账户以 PostgreSQL 为唯一在线事实来源，不维护进程内用户缓存。角色、权限、资料和密码升级提交后，后续认证与通知收件人计算会直接读取已提交数据。
+- 经营流水同样以 PostgreSQL 为唯一在线事实来源，不维护进程内流水副本；交易列表、报表、导入去重和票据关联均读取已提交数据库状态。
 - 保持 `MAMOJI_OUTBOX_ENABLED=true`。当前项目先使用数据库 Outbox 承接异步事件，不直接引入 RocketMQ；详细说明见 `docs/OUTBOX_EVENTS.md`。
 - 设置 `MAMOJI_SMOKE_EMAIL` 和 `MAMOJI_SMOKE_PASSWORD`，用于发布后自动冒烟验证。
 - 固定 `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`，不要使用 `latest`。
@@ -31,7 +32,7 @@
 
 ## 首次部署
 
-从 V13 或更早版本升级时，V14 会把用户时间字段转换为 `TIMESTAMPTZ`，并拒绝规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳。V15 会把周期事项金额和日期分别转换为 `NUMERIC(16,2)` 与 `DATE`，并拒绝空公司归属、孤立用户/公司、非法频率/日历字段以及倒退的执行游标。V16 会把预算金额、日期和时间戳转换为 `NUMERIC(16,2)`、`DATE` 与 `TIMESTAMPTZ`，并拒绝无公司归属、孤立用户、跨公司账本/分类、超过两位小数、非法风险投影或倒序日期时间。先在备份副本或预生产执行升级；迁移失败时修复源数据并重新演练，不要修改已发布 migration 或跳过 Flyway 校验。
+从 V13 或更早版本升级时，V14 会把用户时间字段转换为 `TIMESTAMPTZ`，并拒绝规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳。V15 会把周期事项金额和日期分别转换为 `NUMERIC(16,2)` 与 `DATE`，并拒绝空公司归属、孤立用户/公司、非法频率/日历字段以及倒退的执行游标。V16 会把预算金额、日期和时间戳转换为 `NUMERIC(16,2)`、`DATE` 与 `TIMESTAMPTZ`，并拒绝无公司归属、孤立用户、跨公司账本/分类、超过两位小数、非法风险投影或倒序日期时间。V17 会把流水金额、日期、退款标记和生命周期时间转换为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，并拒绝无公司归属、孤立用户、跨公司或缺失的账户/分类/账本/预算/原流水、非法类型与退款关系、越界金额、非法幂等键或倒序时间。先在备份副本或预生产执行升级；迁移失败时修复源数据并重新演练，不要修改已发布 migration 或跳过 Flyway 校验。
 
 ```bash
 cp .env.production.example .env.production

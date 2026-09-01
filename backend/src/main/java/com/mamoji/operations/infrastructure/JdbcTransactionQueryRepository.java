@@ -6,10 +6,10 @@ import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.operations.domain.TransactionSearchCriteria;
 import com.mamoji.operations.domain.TransactionSummary;
-import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -59,7 +59,7 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
         SqlTransactionQuery query = transactionQuery(userId, companyId, criteria);
         String sql = """
             WITH filtered AS (
-                SELECT t.type, CAST(t.amount AS NUMERIC) AS amount, t.note, t.is_refundable,
+                SELECT t.type, t.amount, t.note, t.is_refundable,
                        LOWER(
                            COALESCE(t.note, '') || ' ' ||
                            COALESCE(c.name, '') || ' ' ||
@@ -93,7 +93,7 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
                 COUNT(*) FILTER (WHERE amount >= 10000) AS large_count,
                 COUNT(*) FILTER (
                     WHERE amount >= 10000
-                       OR (type = 2 AND is_refundable = 1)
+                       OR (type = 2 AND is_refundable)
                        OR pending
                        OR customer_refund
                        OR severance
@@ -158,8 +158,8 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
         addCondition(from, arguments, "t.account_id = ?", criteria.accountId());
         addCondition(from, arguments, "t.date >= ?", criteria.startDate());
         addCondition(from, arguments, "t.date <= ?", criteria.endDate());
-        addCondition(from, arguments, "CAST(t.amount AS NUMERIC) >= ?", criteria.minAmount());
-        addCondition(from, arguments, "CAST(t.amount AS NUMERIC) <= ?", criteria.maxAmount());
+        addCondition(from, arguments, "t.amount >= ?", criteria.minAmount());
+        addCondition(from, arguments, "t.amount <= ?", criteria.maxAmount());
         String keyword = criteria.keyword().toLowerCase(Locale.ROOT);
         if (!keyword.isBlank()) {
             from.append(" AND (LOWER(t.note) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ? "
@@ -175,7 +175,7 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
     private void addCondition(StringBuilder sql, List<Object> arguments, String condition, Object value) {
         if (value == null) return;
         sql.append(" AND ").append(condition);
-        arguments.add(value instanceof LocalDate date ? date.toString() : value);
+        arguments.add(value);
     }
 
     private TransactionRecord mapTransaction(ResultSet rs, int rowNum) throws SQLException {
@@ -187,26 +187,22 @@ public class JdbcTransactionQueryRepository implements TransactionQueryRepositor
         transaction.userId = rs.getLong("user_id");
         transaction.familyId = nullableLong(rs, "family_id");
         transaction.type = rs.getInt("type");
-        transaction.amount = money(rs.getString("amount"));
+        transaction.amount = rs.getBigDecimal("amount");
         transaction.categoryId = rs.getLong("category_id");
         transaction.accountId = rs.getLong("account_id");
-        transaction.date = rs.getString("date");
+        transaction.date = rs.getObject("date", LocalDate.class).toString();
         transaction.note = rs.getString("note");
         transaction.originalTransactionId = nullableLong(rs, "original_transaction_id");
-        transaction.refundedAmount = money(rs.getString("refunded_amount"));
-        transaction.isRefundable = rs.getInt("is_refundable") == 1;
+        transaction.refundedAmount = rs.getBigDecimal("refunded_amount");
+        transaction.isRefundable = rs.getBoolean("is_refundable");
         transaction.budgetId = nullableLong(rs, "budget_id");
-        transaction.createdAt = rs.getString("created_at");
-        transaction.updatedAt = rs.getString("updated_at");
+        transaction.createdAt = rs.getObject("created_at", OffsetDateTime.class).toString();
+        transaction.updatedAt = rs.getObject("updated_at", OffsetDateTime.class).toString();
         transaction.categoryName = rs.getString("resolved_category_name");
         transaction.categoryIcon = rs.getString("resolved_category_icon");
         transaction.categoryColor = rs.getString("resolved_category_color");
         transaction.accountName = rs.getString("resolved_account_name");
         return transaction;
-    }
-
-    private BigDecimal money(String value) {
-        return value == null || value.isBlank() ? BigDecimal.ZERO : new BigDecimal(value);
     }
 
     private Long nullableLong(ResultSet rs, String column) throws SQLException {

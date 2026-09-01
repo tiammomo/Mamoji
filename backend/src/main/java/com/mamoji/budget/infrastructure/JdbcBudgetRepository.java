@@ -26,8 +26,8 @@ public class JdbcBudgetRepository implements BudgetRepository {
         SELECT b.*, c.name AS category_name, c.icon AS category_icon,
                COALESCE(SUM(
                    CASE
-                       WHEN t.type = 2 THEN CAST(t.amount AS NUMERIC)
-                       WHEN t.type = 3 THEN -CAST(t.amount AS NUMERIC)
+                       WHEN t.type = 2 THEN t.amount
+                       WHEN t.type = 3 THEN -t.amount
                        ELSE 0
                    END
                ), 0) AS computed_spent,
@@ -43,7 +43,7 @@ public class JdbcBudgetRepository implements BudgetRepository {
          AND t.type IN (2, 3)
          AND (b.ledger_id IS NULL OR t.family_id = b.ledger_id)
          AND (b.category_id IS NULL OR t.category_id = b.category_id)
-         AND ((t.type = 3 AND t.budget_id = b.id) OR t.date BETWEEN b.start_date::TEXT AND b.end_date::TEXT)
+         AND ((t.type = 3 AND t.budget_id = b.id) OR t.date BETWEEN b.start_date AND b.end_date)
         """;
 
     private final JdbcTemplate jdbc;

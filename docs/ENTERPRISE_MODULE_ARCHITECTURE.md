@@ -192,7 +192,7 @@ workforce/
 | `auth_tokens` | Platform Identity | 本地身份适配器按令牌摘要创建、认证、撤销和清理，其他模块不得直接访问 |
 | `registration_invites` | Platform Identity | 邀请仓储按 SHA-256 摘要发行并以行锁单次消费；原始凭证只在创建响应披露一次 |
 | `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
-| `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
+| `transactions`、`categories` | Operations | 流水命令通过 `TransactionWriteRepository` 写入、业务查询通过 `TransactionQueryRepository` 直读；Budget/Workspace 仅使用公司范围内的 SQL 投影 |
 | `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
 | `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers` | Finance | Operations 通过账户 ID 校验与调整 |
@@ -215,7 +215,7 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。两套旧 Store 的剩余集合只承担其他模块的演示初始化、兼容恢复和过渡同步。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。演示流水由独立初始化器在公司及会计基础数据就绪后创建，生产 `bootstrap` 模式不执行。两套旧 Store 的剩余集合只承担其他模块的演示初始化、兼容恢复和过渡同步。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
@@ -237,7 +237,7 @@ V8 迁移建立了：
 
 - 把演示数据改成显式 profile 或开发脚本，不在生产启动路径执行。
 - 删除 `InMemoryStore`、`EnterpriseStore` 的公开集合。
-- 将金额和日期从 TEXT 逐步迁为 `NUMERIC`、`DATE/TIMESTAMPTZ`。
+- 将账户、分类等剩余兼容模型的金额和日期从 TEXT 逐步迁为 `NUMERIC`、`DATE/TIMESTAMPTZ`；预算、周期事项和流水已完成。
 
 ### P2：集成宿主平台
 

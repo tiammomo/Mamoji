@@ -21,13 +21,13 @@ public class WorkspaceReadRepository {
     public OperatingMetrics operatingMetrics(long companyId, LocalDate start, LocalDate end, DataScope scope) {
         return jdbc.queryForObject("""
             SELECT
-                COALESCE(SUM(CASE WHEN t.type = 1 THEN CAST(t.amount AS NUMERIC) ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE WHEN t.type = 1 THEN t.amount ELSE 0 END), 0) AS income,
                 GREATEST(COALESCE(SUM(CASE
-                    WHEN t.type = 2 THEN CAST(t.amount AS NUMERIC)
-                    WHEN t.type = 3 THEN -CAST(t.amount AS NUMERIC)
+                    WHEN t.type = 2 THEN t.amount
+                    WHEN t.type = 3 THEN -t.amount
                     ELSE 0 END), 0), 0) AS expense,
                 COUNT(*) FILTER (
-                    WHERE t.type = 2 AND (CAST(t.amount AS NUMERIC) >= 10000 OR BTRIM(COALESCE(t.note, '')) = '')
+                    WHERE t.type = 2 AND (t.amount >= 10000 OR BTRIM(COALESCE(t.note, '')) = '')
                 ) AS review_count
             FROM transactions t
             WHERE t.company_id = ? AND t.date BETWEEN ? AND ?
@@ -46,7 +46,7 @@ public class WorkspaceReadRepository {
                 rs.getBigDecimal("income"),
                 rs.getBigDecimal("expense"),
                 rs.getInt("review_count")
-            ), companyId, start.toString(), end.toString(), scope.companyWide(), scope.actorUserId(),
+            ), companyId, start, end, scope.companyWide(), scope.actorUserId(),
             scope.departmentId(), scope.departmentId());
     }
 
@@ -178,16 +178,12 @@ public class WorkspaceReadRepository {
         return new RecentTransaction(
             rs.getLong("id"),
             rs.getInt("type"),
-            money(rs.getString("amount")),
-            rs.getString("date"),
+            rs.getBigDecimal("amount"),
+            rs.getObject("date", LocalDate.class).toString(),
             rs.getString("note"),
             rs.getString("category_name"),
             rs.getString("account_name")
         );
-    }
-
-    private BigDecimal money(String value) {
-        return value == null || value.isBlank() ? BigDecimal.ZERO : new BigDecimal(value);
     }
 
     public record OperatingMetrics(BigDecimal income, BigDecimal expense, int reviewCount) {
