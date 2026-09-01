@@ -1,0 +1,123 @@
+package com.mamoji.platform.identity.session.infrastructure;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+@Testcontainers(disabledWithoutDocker = true)
+class LocalSessionMigrationTest {
+    private static final String VALID_DIGEST = "sha256:" + "a".repeat(43);
+
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
+
+    @Test
+    void v12DiscardsUnsafeLegacySessionsBeforeAddingConstraints() throws Exception {
+        migrateToVersionEleven();
+
+        try (Connection connection = connection()) {
+            long userId = insertUser(connection);
+            insertSession(connection, VALID_DIGEST, userId, "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z");
+            insertSession(connection, "r".repeat(43), userId, "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z");
+            insertSession(connection, "sha256:" + "b".repeat(43), userId, "not-a-time", "2026-09-01T11:00:00Z");
+            insertSession(connection, "sha256:" + "c".repeat(43), userId, "2026-09-01T12:00:00Z", "2026-09-01T11:00:00Z");
+            insertSession(connection, "sha256:" + "d".repeat(43), userId + 9999, "2026-09-01T10:00:00Z", "2026-09-01T11:00:00Z");
+        }
+
+        migrateLatest();
+
+        try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+            try (ResultSet sessions = statement.executeQuery("SELECT token FROM auth_tokens")) {
+                sessions.next();
+                assertEquals(VALID_DIGEST, sessions.getString("token"));
+                assertFalse(sessions.next());
+            }
+            try (ResultSet version = statement.executeQuery("""
+                SELECT version FROM flyway_schema_history
+                WHERE success = true ORDER BY installed_rank DESC LIMIT 1
+                """)) {
+                version.next();
+                assertEquals("12", version.getString("version"));
+            }
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
+                SELECT 'plaintext', id, NOW(), NOW() + INTERVAL '1 hour' FROM users LIMIT 1
+                """));
+        }
+    }
+
+    private void migrateToVersionEleven() {
+        Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .target("11")
+            .load()
+            .migrate();
+    }
+
+    private void migrateLatest() {
+        Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .load()
+            .migrate();
+    }
+
+    private Connection connection() throws SQLException {
+        return DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()
+        );
+    }
+
+    private long insertUser(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO users (
+                email, nickname, avatar, family_id, role, permissions,
+                password_hash, created_at, updated_at
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+            RETURNING id
+            """)) {
+            statement.setString(1, "migration@mamoji.test");
+            statement.setString(2, "Migration User");
+            statement.setString(3, "");
+            statement.setInt(4, 1);
+            statement.setInt(5, 15);
+            statement.setString(6, "not-used");
+            statement.setString(7, "2026-09-01T10:00:00Z");
+            statement.setString(8, "2026-09-01T10:00:00Z");
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getLong("id");
+            }
+        }
+    }
+
+    private void insertSession(
+        Connection connection,
+        String token,
+        long userId,
+        String createdAt,
+        String expiresAt
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            """)) {
+            statement.setString(1, token);
+            statement.setLong(2, userId);
+            statement.setString(3, createdAt);
+            statement.setString(4, expiresAt);
+            statement.executeUpdate();
+        }
+    }
+}

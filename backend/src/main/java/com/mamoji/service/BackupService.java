@@ -81,6 +81,7 @@ public class BackupService {
     );
 
     private static final List<String> RESET_ONLY_TABLES = List.of(
+        "auth_tokens",
         "login_failure_states",
         "notification_deliveries",
         "outbox_events"
@@ -222,7 +223,7 @@ public class BackupService {
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("restored", true);
-        result.put("message", "结构化业务数据已恢复；当前登录会话保持不变。附件文件请使用配套 MinIO 备份恢复。" );
+        result.put("message", "结构化业务数据已恢复；全部登录会话已撤销。附件文件请使用配套 MinIO 备份恢复。" );
         result.put("counts", datasetCounts(parsed.data()));
         result.put("restoredAt", OffsetDateTime.now().toString());
         return result;
