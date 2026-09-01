@@ -7,10 +7,10 @@ import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
+import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.ObjectStorageService.StoredObject;
 import com.mamoji.service.support.ObjectStorageService;
@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -57,7 +58,7 @@ public class ReceiptService {
     private final AccessControlService accessControl;
     private final EnterpriseStore enterpriseStore;
     private final ReceiptVoucherRepository receiptVouchers;
-    private final InMemoryStore coreStore;
+    private final TransactionQueryRepository transactions;
     private final ObjectStorageService objectStorageService;
     private final OutboxEventService outboxEventService;
     private final JdbcTemplate jdbc;
@@ -66,7 +67,7 @@ public class ReceiptService {
         AccessControlService accessControl,
         EnterpriseStore enterpriseStore,
         ReceiptVoucherRepository receiptVouchers,
-        InMemoryStore coreStore,
+        TransactionQueryRepository transactions,
         ObjectStorageService objectStorageService,
         OutboxEventService outboxEventService,
         JdbcTemplate jdbc
@@ -74,7 +75,7 @@ public class ReceiptService {
         this.accessControl = accessControl;
         this.enterpriseStore = enterpriseStore;
         this.receiptVouchers = receiptVouchers;
-        this.coreStore = coreStore;
+        this.transactions = transactions;
         this.objectStorageService = objectStorageService;
         this.outboxEventService = outboxEventService;
         this.jdbc = jdbc;
@@ -324,7 +325,7 @@ public class ReceiptService {
         jdbc.update("""
             INSERT INTO receipt_file_hashes (company_id, voucher_id, sha256, file_name, file_size, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            """, company.id, voucher.id, fileHash, filename, file.getSize(), InMemoryStore.now());
+            """, company.id, voucher.id, fileHash, filename, file.getSize(), OffsetDateTime.now().toString());
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
         return Map.of(
             "success", true,
@@ -536,7 +537,7 @@ public class ReceiptService {
             String nextApprovalStatus = normalizeApprovalStatus(textOr(body.get("approvalStatus"), voucher.approvalStatus));
             if ("approved".equals(nextApprovalStatus) && !"approved".equals(voucher.approvalStatus)) {
                 voucher.approvedByUserId = user.id;
-                voucher.approvedAt = InMemoryStore.now();
+                voucher.approvedAt = OffsetDateTime.now().toString();
                 if ("submitted".equals(voucher.reimbursementStatus)) {
                     voucher.reimbursementStatus = "approved";
                 }
@@ -549,7 +550,7 @@ public class ReceiptService {
                 if (!Set.of("approved", "not_required").contains(voucher.approvalStatus)) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete or waive approval before posting the accounting voucher");
                 }
-                voucher.accountedAt = InMemoryStore.now();
+                voucher.accountedAt = OffsetDateTime.now().toString();
                 if (isBlank(voucher.accountingVoucherNo)) {
                     String period = isBlank(voucher.taxPeriod) ? voucher.issueDate.substring(0, 7) : voucher.taxPeriod;
                     voucher.accountingVoucherNo = "JV-" + period.replace("-", "") + "-" + String.format("%04d", voucher.id);
@@ -597,7 +598,7 @@ public class ReceiptService {
         if (transactionId == null || transactionId == 0) {
             return Optional.empty();
         }
-        TransactionRecord transaction = require(coreStore.findTransaction(transactionId).orElse(null), "Transaction not found");
+        TransactionRecord transaction = require(transactions.findById(transactionId).orElse(null), "Transaction not found");
         if (transaction.userId != user.id || !Objects.equals(transaction.companyId, companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden transaction");
         }

@@ -104,16 +104,15 @@ public class TransactionRefundService {
         Category category = validateRelations(user, company.id, original, account);
 
         TransactionRecord refund = newRefund(user, company, original, command, refundDate, category, account);
-        transactions.insert(refund);
         refund.originalTransactionId = original.id;
         refund.isRefundable = false;
         refund.budgetId = original.budgetId;
+        transactions.insert(refund);
 
         TransactionRecord updatedOriginal = copyTransaction(original);
         updatedOriginal.refundedAmount = updatedOriginal.refundedAmount.add(command.amount());
         updatedOriginal.isRefundable = updatedOriginal.refundedAmount.compareTo(updatedOriginal.amount) < 0;
         updatedOriginal.updatedAt = OffsetDateTime.now().toString();
-        transactions.update(refund);
         transactions.update(updatedOriginal);
         saveAdjustedAccount(account, refund);
         budgetService.refreshCompany(company.id);

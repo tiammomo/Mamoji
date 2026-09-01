@@ -4,9 +4,9 @@ import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
+import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -32,18 +32,18 @@ public class ReportingService {
     private static final Comparator<TransactionRecord> TRANSACTION_ORDER =
         Comparator.comparing((TransactionRecord tx) -> tx.date).reversed().thenComparing(tx -> tx.id);
 
-    private final InMemoryStore store;
+    private final TransactionQueryRepository transactions;
     private final FinanceRepository financeRepository;
     private final AccessControlService accessControl;
     private final BudgetApplicationService budgetService;
 
     public ReportingService(
-        InMemoryStore store,
+        TransactionQueryRepository transactions,
         FinanceRepository financeRepository,
         AccessControlService accessControl,
         BudgetApplicationService budgetService
     ) {
-        this.store = store;
+        this.transactions = transactions;
         this.financeRepository = financeRepository;
         this.accessControl = accessControl;
         this.budgetService = budgetService;
@@ -241,7 +241,7 @@ public class ReportingService {
     }
 
     private List<TransactionRecord> userTransactions(long userId, long companyId) {
-        return store.queryAllTransactions(userId, companyId).stream()
+        return transactions.findAll(userId, companyId).stream()
             .sorted(TRANSACTION_ORDER)
             .toList();
     }

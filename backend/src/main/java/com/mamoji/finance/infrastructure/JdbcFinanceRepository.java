@@ -30,14 +30,14 @@ public class JdbcFinanceRepository implements FinanceRepository {
                COALESCE(SUM(CASE
                    WHEN transaction_record.date >= ? AND transaction_record.date < ?
                     AND transaction_record.type = 1
-                   THEN CAST(NULLIF(transaction_record.amount, '') AS NUMERIC) ELSE 0 END), 0) AS monthly_income,
+                   THEN transaction_record.amount ELSE 0 END), 0) AS monthly_income,
                GREATEST(COALESCE(SUM(CASE
                    WHEN transaction_record.date >= ? AND transaction_record.date < ?
                     AND transaction_record.type = 2
-                   THEN CAST(NULLIF(transaction_record.amount, '') AS NUMERIC)
+                   THEN transaction_record.amount
                    WHEN transaction_record.date >= ? AND transaction_record.date < ?
                     AND transaction_record.type = 3
-                   THEN -CAST(NULLIF(transaction_record.amount, '') AS NUMERIC) ELSE 0 END), 0), 0) AS monthly_expense,
+                   THEN -transaction_record.amount ELSE 0 END), 0), 0) AS monthly_expense,
                COUNT(transaction_record.id) AS transaction_count,
                MAX(transaction_record.date) AS last_transaction_date
         FROM accounts account
@@ -79,12 +79,12 @@ public class JdbcFinanceRepository implements FinanceRepository {
                 ORDER BY account.id
                 """,
             this::mapAccountWithMetrics,
-            periodStart.toString(),
-            periodEndExclusive.toString(),
-            periodStart.toString(),
-            periodEndExclusive.toString(),
-            periodStart.toString(),
-            periodEndExclusive.toString(),
+            periodStart,
+            periodEndExclusive,
+            periodStart,
+            periodEndExclusive,
+            periodStart,
+            periodEndExclusive,
             userId,
             companyId
         );
@@ -99,12 +99,12 @@ public class JdbcFinanceRepository implements FinanceRepository {
         return jdbc.query(
             ACCOUNT_METRICS_SELECT + " WHERE account.id = ? GROUP BY account.id",
             this::mapAccountWithMetrics,
-            periodStart.toString(),
-            periodEndExclusive.toString(),
-            periodStart.toString(),
-            periodEndExclusive.toString(),
-            periodStart.toString(),
-            periodEndExclusive.toString(),
+            periodStart,
+            periodEndExclusive,
+            periodStart,
+            periodEndExclusive,
+            periodStart,
+            periodEndExclusive,
             id
         ).stream().findFirst();
     }
