@@ -1,4 +1,4 @@
-package com.mamoji.recurring.infrastructure;
+package com.mamoji.budget.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,47 +20,39 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
-class RecurringItemMigrationTest {
+class BudgetMigrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
 
     @Test
-    void migrationConvertsLegacyRulesAndEnforcesOwnershipAndValueConstraints() throws Exception {
-        migrateToFourteen(POSTGRES);
+    void migrationConvertsLegacyBudgetsAndEnforcesOwnershipAndValueConstraints() throws Exception {
+        migrateToFifteen(POSTGRES);
         try (Connection connection = connection(POSTGRES); Statement statement = connection.createStatement()) {
-            long userId = insertUser(statement);
+            long userId = insertUser(statement, "budget-migration@mamoji.test");
             long companyId = insertCompany(statement, userId);
-            statement.executeUpdate("""
-                INSERT INTO recurring_items (
-                    id, user_id, company_id, name, type, amount, frequency, interval_value,
-                    day_of_week, day_of_month, month_of_year, start_date, end_date,
-                    last_executed, next_execution, status, execution_count, note
-                ) VALUES (
-                    ' AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA ', %d, %d, '  Office rent  ', 2,
-                    '3200.50', ' MONTHLY ', 1, NULL, 5, NULL, '2026-09-01', '2027-09-01',
-                    NULL, '2026-10-05', 1, 0, 'migration fixture'
-                )
-                """.formatted(userId, companyId));
+            insertBudget(statement, userId, companyId);
         }
 
         migrateLatest(POSTGRES);
 
         try (Connection connection = connection(POSTGRES); Statement statement = connection.createStatement()) {
             try (ResultSet result = statement.executeQuery("""
-                SELECT id, name, amount, frequency,
+                SELECT name, amount, start_date, warning_reached, created_at,
                        pg_typeof(amount)::TEXT AS amount_type,
                        pg_typeof(start_date)::TEXT AS start_type,
-                       pg_typeof(next_execution)::TEXT AS next_type
-                FROM recurring_items
+                       pg_typeof(warning_reached)::TEXT AS warning_type,
+                       pg_typeof(created_at)::TEXT AS created_type
+                FROM budgets
                 """)) {
                 result.next();
-                assertEquals("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", result.getString("id"));
-                assertEquals("Office rent", result.getString("name"));
-                assertEquals("3200.50", result.getBigDecimal("amount").toPlainString());
-                assertEquals("monthly", result.getString("frequency"));
+                assertEquals("Operations budget", result.getString("name"));
+                assertEquals("1000.50", result.getBigDecimal("amount").toPlainString());
+                assertEquals("2026-09-01", result.getObject("start_date").toString());
+                assertFalse(result.getBoolean("warning_reached"));
                 assertEquals("numeric", result.getString("amount_type"));
                 assertEquals("date", result.getString("start_type"));
-                assertEquals("date", result.getString("next_type"));
+                assertEquals("boolean", result.getString("warning_type"));
+                assertEquals("timestamp with time zone", result.getString("created_type"));
                 assertFalse(result.next());
             }
             try (ResultSet version = statement.executeQuery("""
@@ -73,10 +65,11 @@ class RecurringItemMigrationTest {
             try (ResultSet constraints = statement.executeQuery("""
                 SELECT conname
                 FROM pg_constraint
-                WHERE conrelid = 'recurring_items'::regclass
+                WHERE conrelid = 'budgets'::regclass
                   AND conname IN (
-                    'fk_recurring_company', 'fk_recurring_user', 'ck_recurring_amount',
-                    'ck_recurring_interval', 'ck_recurring_execution_cursor'
+                    'fk_budgets_company', 'fk_budgets_ledger', 'fk_budgets_category',
+                    'fk_budgets_user', 'ck_budgets_amount', 'ck_budgets_dates',
+                    'ck_budgets_projection', 'ck_budgets_lifecycle'
                   )
                   AND convalidated
                 """)) {
@@ -85,41 +78,34 @@ class RecurringItemMigrationTest {
                     names.add(constraints.getString("conname"));
                 }
                 assertEquals(Set.of(
-                    "fk_recurring_company",
-                    "fk_recurring_user",
-                    "ck_recurring_amount",
-                    "ck_recurring_interval",
-                    "ck_recurring_execution_cursor"
+                    "fk_budgets_company",
+                    "fk_budgets_ledger",
+                    "fk_budgets_category",
+                    "fk_budgets_user",
+                    "ck_budgets_amount",
+                    "ck_budgets_dates",
+                    "ck_budgets_projection",
+                    "ck_budgets_lifecycle"
                 ), names);
             }
+            assertThrows(SQLException.class, () -> statement.executeUpdate("UPDATE budgets SET amount = 0"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("UPDATE budgets SET spent = -1"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("UPDATE budgets SET end_date = start_date - 1"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("UPDATE budgets SET company_id = NULL"));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                UPDATE recurring_items SET interval_value = 0
-                """));
-            assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                UPDATE recurring_items SET next_execution = start_date
-                """));
-            assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                DELETE FROM users WHERE email = 'recurring-migration@mamoji.test'
+                DELETE FROM users WHERE email = 'budget-migration@mamoji.test'
                 """));
         }
     }
 
     @Test
-    void migrationRejectsUnscopedRulesWithoutPartialUpgrade() throws Exception {
+    void migrationRejectsUnscopedBudgetsWithoutPartialUpgrade() throws Exception {
         try (PostgreSQLContainer<?> dirtyDatabase = new PostgreSQLContainer<>("postgres:18.4-alpine")) {
             dirtyDatabase.start();
-            migrateToFourteen(dirtyDatabase);
+            migrateToFifteen(dirtyDatabase);
             try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
-                long userId = insertUser(statement);
-                statement.executeUpdate("""
-                    INSERT INTO recurring_items (
-                        id, user_id, company_id, name, type, amount, frequency, interval_value,
-                        start_date, next_execution, status, execution_count
-                    ) VALUES (
-                        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', %d, NULL, 'Rent', 2,
-                        '100.00', 'monthly', 1, '2026-09-01', '2026-10-01', 1, 0
-                    )
-                    """.formatted(userId));
+                long userId = insertUser(statement, "dirty-budget@mamoji.test");
+                insertBudget(statement, userId, null);
             }
 
             Flyway latest = Flyway.configure()
@@ -134,13 +120,13 @@ class RecurringItemMigrationTest {
                     WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                     """)) {
                     version.next();
-                    assertEquals("14", version.getString("version"));
+                    assertEquals("15", version.getString("version"));
                 }
                 try (ResultSet type = statement.executeQuery("""
                     SELECT data_type
                     FROM information_schema.columns
                     WHERE table_schema = current_schema()
-                      AND table_name = 'recurring_items'
+                      AND table_name = 'budgets'
                       AND column_name = 'amount'
                     """)) {
                     type.next();
@@ -150,16 +136,16 @@ class RecurringItemMigrationTest {
         }
     }
 
-    private static long insertUser(Statement statement) throws SQLException {
+    private static long insertUser(Statement statement, String email) throws SQLException {
         try (ResultSet result = statement.executeQuery("""
             INSERT INTO users (
                 email, nickname, avatar, family_id, role, permissions,
                 password_hash, created_at, updated_at
             ) VALUES (
-                'recurring-migration@mamoji.test', 'Migration owner', '', NULL, 1, 15,
+                '%s', 'Migration owner', '', NULL, 1, 15,
                 'not-used', NOW(), NOW()
             ) RETURNING id
-            """)) {
+            """.formatted(email))) {
             result.next();
             return result.getLong("id");
         }
@@ -178,10 +164,24 @@ class RecurringItemMigrationTest {
         }
     }
 
-    private static void migrateToFourteen(PostgreSQLContainer<?> database) {
+    private static void insertBudget(Statement statement, long userId, Long companyId) throws SQLException {
+        statement.executeUpdate("""
+            INSERT INTO budgets (
+                name, amount, start_date, end_date, warning_threshold, status, spent,
+                remaining_amount, usage_rate, warning_reached, risk_level, risk_message,
+                user_id, ledger_id, category_id, created_at, updated_at, company_id
+            ) VALUES (
+                '  Operations budget  ', '1000.50', '2026-09-01', '2026-09-30', 85, 1,
+                '250.00', '750.50', 0.25, 0, ' LOW ', ' Budget healthy ',
+                %d, NULL, NULL, '2026-09-01T10:00:00Z', '2026-09-01T11:00:00Z', %s
+            )
+            """.formatted(userId, companyId == null ? "NULL" : companyId.toString()));
+    }
+
+    private static void migrateToFifteen(PostgreSQLContainer<?> database) {
         Flyway.configure()
             .dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
-            .target("14")
+            .target("15")
             .load()
             .migrate();
     }

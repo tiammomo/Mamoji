@@ -45,7 +45,7 @@ public class BudgetReservationRepository {
                 rs.getString("start_date"),
                 rs.getString("end_date")
             ),
-            command.companyId(), command.ledgerId(), command.categoryId(), command.transactionDate().toString(),
+            command.companyId(), command.ledgerId(), command.categoryId(), command.transactionDate(),
             command.categoryId(), command.ledgerId()).stream().findFirst();
         if (candidate.isEmpty()) {
             return Optional.empty();
