@@ -54,7 +54,7 @@ public class WorkspaceReadRepository {
         return jdbc.queryForObject("""
             SELECT
                 COALESCE(SUM(CASE
-                    WHEN status = 1 AND type NOT IN ('debt', 'credit') THEN CAST(available_balance AS NUMERIC)
+                    WHEN status = 1 AND type NOT IN ('debt', 'credit') THEN available_balance
                     ELSE 0 END), 0) AS available_cash,
                 COUNT(*) FILTER (WHERE status = 1 AND reconciliation_status <> 'reconciled') AS reconciliation_issues,
                 COUNT(*) FILTER (WHERE status = 1 AND risk_level IN ('high', 'critical')) AS risk_issues
