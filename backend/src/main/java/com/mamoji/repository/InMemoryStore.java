@@ -2,8 +2,6 @@ package com.mamoji.repository;
 
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
-import com.mamoji.finance.domain.Ledger;
-import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
@@ -14,7 +12,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,8 +30,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @DependsOn("singleInstanceDatabaseGuard")
 public class InMemoryStore {
     public final Map<Long, Category> categories = new ConcurrentHashMap<>();
-    public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
-    public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
     private final LocalUserAccountRepository userAccounts;
@@ -79,13 +74,8 @@ public class InMemoryStore {
 
     private void loadAll() {
         categories.clear();
-        ledgers.clear();
-        ledgerMembers.clear();
 
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
-        forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
-        forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
-
     }
 
     /** Reload the process-local compatibility view after a controlled restore. */
@@ -111,8 +101,6 @@ public class InMemoryStore {
             Roles.ADMIN,
             Permissions.ALL
         );
-        Ledger defaultLedger = ledger(admin.id, "公司经营账本", "生产环境默认经营账本", "CNY", true);
-        member(defaultLedger.id, admin.id, "owner");
     }
 
     void seedDemoData() {
@@ -124,9 +112,6 @@ public class InMemoryStore {
             Roles.ADMIN,
             Permissions.ALL
         );
-        Ledger defaultLedger = ledger(testUser.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
-        member(defaultLedger.id, testUser.id, "owner");
-
         category(testUser.id, "主营业务收入", "💼", "#22c55e", "income");
         category(testUser.id, "团队餐饮", "🍜", "#f97316", "expense");
         category(testUser.id, "差旅交通", "🚇", "#0ea5e9", "expense");
@@ -208,67 +193,7 @@ public class InMemoryStore {
         return category;
     }
 
-    private Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
-        return ledger(ownerId, null, name, description, currency, isDefault);
-    }
-
-    private Ledger ledger(long ownerId, Long companyId, String name, String description, String currency, boolean isDefault) {
-        Ledger ledger = new Ledger();
-        ledger.ownerId = ownerId;
-        ledger.companyId = companyId;
-        ledger.name = name;
-        ledger.description = description == null ? "" : description;
-        ledger.currency = currency == null ? "CNY" : currency;
-        ledger.isDefault = isDefault;
-        ledger.status = 1;
-        stamp(ledger);
-        ledger.id = insert("""
-            INSERT INTO ledgers (name, description, currency, owner_id, is_default, status, created_at, updated_at, company_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindLedgerInsert(ps, ledger));
-        afterCommit(() -> ledgers.put(ledger.id, ledger));
-        return ledger;
-    }
-
-    private LedgerMember member(long ledgerId, long userId, String role) {
-        LedgerMember member = new LedgerMember();
-        member.ledgerId = ledgerId;
-        member.userId = userId;
-        member.role = role;
-        User memberUser = userAccounts.findById(userId).orElse(null);
-        if (memberUser != null) {
-            member.nickname = memberUser.nickname;
-            member.avatar = memberUser.avatar;
-        }
-        member.joinedAt = now();
-        member.id = insert("""
-            INSERT INTO ledger_members (ledger_id, user_id, role, nickname, avatar, joined_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, ps -> bindLedgerMemberInsert(ps, member));
-        afterCommit(() -> ledgerMembers.put(member.id, member));
-        return member;
-    }
-
-    Ledger ensureCompanyAccountingWorkspace(long ownerId, long companyId, String currency, String subjectName) {
-        Ledger ledger = queryLedgers(ownerId, companyId).stream()
-            .filter(candidate -> candidate.isDefault)
-            .min(Comparator.comparing(candidate -> candidate.id))
-            .orElseGet(() -> ledger(
-                ownerId,
-                companyId,
-                textOr(subjectName, "经营主体") + "账本",
-                "主体默认经营账本",
-                textOr(currency, "CNY"),
-                true
-            ));
-        if (!ledgerMemberExists(ledger.id, ownerId)) {
-            member(ledger.id, ownerId, "owner");
-        }
-        ensureCompanyAccountingCategories(ownerId, companyId);
-        return ledger;
-    }
-
-    private void ensureCompanyAccountingCategories(long ownerId, long companyId) {
+    void ensureCompanyAccountingCategories(long ownerId, long companyId) {
         if (queryCategories(ownerId, companyId, "income").isEmpty()) {
             category(ownerId, companyId, "经营收入", "💼", "#22c55e", "income");
         }
@@ -287,27 +212,6 @@ public class InMemoryStore {
         afterCommit(() -> categories.remove(id));
     }
 
-    /** Transitional cache hook for legacy readers after a committed ledger creation. */
-    public void synchronizeLedgerAfterCommit(Ledger ledger) {
-        afterCommit(() -> ledgers.put(ledger.id, ledger));
-    }
-
-    /** Transitional cache hook for legacy readers after a committed ledger-member creation. */
-    public void synchronizeLedgerMemberAfterCommit(LedgerMember member) {
-        afterCommit(() -> ledgerMembers.put(member.id, member));
-    }
-
-    /** Transitional cache hook for legacy readers after a committed ledger-member deletion. */
-    public void removeLedgerMemberFromCompatibilityViewAfterCommit(long ledgerId, long userId) {
-        afterCommit(() -> ledgerMembers.values().removeIf(
-            member -> member.ledgerId == ledgerId && member.userId == userId
-        ));
-    }
-
-    private Optional<Category> findCategory(long id) {
-        return jdbc.query("SELECT * FROM categories WHERE id = ?", (rs, rowNum) -> mapCategory(rs), id).stream().findFirst();
-    }
-
     private List<Category> queryCategories(long userId, long companyId, String type) {
         if (type == null || type.isBlank()) {
             return jdbc.query(
@@ -321,44 +225,13 @@ public class InMemoryStore {
         );
     }
 
-    private Optional<Ledger> findLedger(long id) {
-        return jdbc.query("SELECT * FROM ledgers WHERE id = ?", (rs, rowNum) -> mapLedger(rs), id).stream().findFirst();
-    }
-
-    private List<Ledger> queryLedgers(long ownerId, long companyId) {
-        return jdbc.query(
-            "SELECT * FROM ledgers WHERE owner_id = ? AND company_id = ? ORDER BY is_default DESC, id",
-            (rs, rowNum) -> mapLedger(rs), ownerId, companyId
-        );
-    }
-
-    private boolean ledgerMemberExists(long ledgerId, long userId) {
-        Integer count = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ? AND user_id = ?",
-            Integer.class,
-            ledgerId,
-            userId
-        );
-        return count != null && count > 0;
-    }
-
-    private List<Category> sortedCategories() {
-        return jdbc.query("SELECT * FROM categories ORDER BY id", (rs, rowNum) -> mapCategory(rs));
-    }
-
     /**
      * Completes the V5 compatibility backfill once enterprise subjects and
      * employee access records have been initialized. SQL migration V5 can only
      * infer companies owned directly by a user; this pass also covers users who
      * access their default company through an employee record.
      */
-    public void assignUnscopedAccountingData(Map<Long, Long> defaultCompanyByUser) {
-        ledgers.values().stream().filter(ledger -> ledger.companyId == null).forEach(ledger -> {
-            ledger.companyId = defaultCompanyByUser.get(ledger.ownerId);
-            if (ledger.companyId != null) {
-                jdbc.update("UPDATE ledgers SET company_id = ? WHERE id = ? AND company_id IS NULL", ledger.companyId, ledger.id);
-            }
-        });
+    public void assignUnscopedCategoryData(Map<Long, Long> defaultCompanyByUser) {
         categories.values().stream().filter(category -> category.companyId == null).forEach(category -> {
             category.companyId = defaultCompanyByUser.get(category.userId);
             if (category.companyId != null) {
@@ -396,33 +269,6 @@ public class InMemoryStore {
         return category;
     }
 
-    private Ledger mapLedger(ResultSet rs) throws SQLException {
-        Ledger ledger = new Ledger();
-        ledger.id = rs.getLong("id");
-        ledger.companyId = nullableLong(rs, "company_id");
-        ledger.name = rs.getString("name");
-        ledger.description = rs.getString("description");
-        ledger.currency = rs.getString("currency");
-        ledger.ownerId = rs.getLong("owner_id");
-        ledger.isDefault = rs.getInt("is_default") == 1;
-        ledger.status = rs.getInt("status");
-        ledger.createdAt = rs.getString("created_at");
-        ledger.updatedAt = rs.getString("updated_at");
-        return ledger;
-    }
-
-    private LedgerMember mapLedgerMember(ResultSet rs) throws SQLException {
-        LedgerMember member = new LedgerMember();
-        member.id = rs.getLong("id");
-        member.ledgerId = rs.getLong("ledger_id");
-        member.userId = rs.getLong("user_id");
-        member.role = rs.getString("role");
-        member.nickname = rs.getString("nickname");
-        member.avatar = rs.getString("avatar");
-        member.joinedAt = rs.getString("joined_at");
-        return member;
-    }
-
     private void bindCategoryInsert(PreparedStatement ps, Category category) throws SQLException {
         ps.setString(1, category.name);
         ps.setString(2, category.icon);
@@ -433,27 +279,6 @@ public class InMemoryStore {
         ps.setString(7, category.createdAt);
         ps.setString(8, category.updatedAt);
         setLongOrNull(ps, 9, category.companyId);
-    }
-
-    private void bindLedgerInsert(PreparedStatement ps, Ledger ledger) throws SQLException {
-        ps.setString(1, ledger.name);
-        ps.setString(2, ledger.description);
-        ps.setString(3, ledger.currency);
-        ps.setLong(4, ledger.ownerId);
-        ps.setInt(5, intBool(ledger.isDefault));
-        ps.setInt(6, ledger.status);
-        ps.setString(7, ledger.createdAt);
-        ps.setString(8, ledger.updatedAt);
-        setLongOrNull(ps, 9, ledger.companyId);
-    }
-
-    private void bindLedgerMemberInsert(PreparedStatement ps, LedgerMember member) throws SQLException {
-        ps.setLong(1, member.ledgerId);
-        ps.setLong(2, member.userId);
-        ps.setString(3, member.role);
-        ps.setString(4, member.nickname);
-        ps.setString(5, member.avatar);
-        ps.setString(6, member.joinedAt);
     }
 
     private long insert(String sql, SqlBinder binder) {
@@ -479,25 +304,12 @@ public class InMemoryStore {
         return value == null ? null : ((Number) value).longValue();
     }
 
-    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
-        Object value = rs.getObject(column);
-        return value == null ? null : ((Number) value).intValue();
-    }
-
     private static void setLongOrNull(PreparedStatement ps, int index, Long value) throws SQLException {
         if (value == null) {
             ps.setObject(index, null);
         } else {
             ps.setLong(index, value);
         }
-    }
-
-    private static int intBool(boolean value) {
-        return value ? 1 : 0;
-    }
-
-    private static String textOr(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     public static BigDecimal money(Object value) {

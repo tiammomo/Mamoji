@@ -139,7 +139,7 @@ public class EnterpriseStore {
         }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
-        initializeAccountingCompanyScopes();
+        initializeCategoryCompanyScopes();
         attachDepartmentNames();
     }
 
@@ -184,19 +184,17 @@ public class EnterpriseStore {
             .or(() -> users.stream().min(Comparator.comparing(UserDirectory.Entry::id)));
     }
 
-    private void initializeAccountingCompanyScopes() {
+    private void initializeCategoryCompanyScopes() {
         Map<Long, Long> defaultCompanyByUser = new HashMap<>();
         sortedCompanies().forEach(company -> defaultCompanyByUser.putIfAbsent(company.ownerId, company.id));
         employees.values().stream()
             .sorted(Comparator.comparing(employee -> employee.id))
             .filter(employee -> employee.userId != null)
             .forEach(employee -> defaultCompanyByUser.putIfAbsent(employee.userId, employee.companyId));
-        coreStore.assignUnscopedAccountingData(defaultCompanyByUser);
-        sortedCompanies().forEach(company -> coreStore.ensureCompanyAccountingWorkspace(
+        coreStore.assignUnscopedCategoryData(defaultCompanyByUser);
+        sortedCompanies().forEach(company -> coreStore.ensureCompanyAccountingCategories(
             company.ownerId,
-            company.id,
-            company.currency,
-            company.name
+            company.id
         ));
     }
 

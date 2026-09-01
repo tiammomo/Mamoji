@@ -1,8 +1,11 @@
-package com.mamoji.controller;
+package com.mamoji.finance.api;
 
 import com.mamoji.finance.application.LedgerApplicationService;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
+import com.mamoji.platform.identity.ActorContext;
+import com.mamoji.platform.identity.CurrentActor;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -10,7 +13,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,57 +28,57 @@ public class LedgerController {
 
     @GetMapping
     public List<Ledger> list(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.listLedgers(authorization, companyId);
+        return service.listLedgers(actor, companyId);
     }
 
     @GetMapping("/default")
     public Ledger defaultLedger(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.defaultLedger(authorization, companyId);
+        return service.defaultLedger(actor, companyId);
     }
 
     @GetMapping("/{id}")
     public Ledger get(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.getLedger(authorization, id, companyId);
+        return service.getLedger(actor, id, companyId);
     }
 
     @PostMapping
     public Ledger create(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @CurrentActor ActorContext actor,
+        @Valid @RequestBody LedgerCreateRequest request
     ) {
-        return service.createLedger(authorization, body);
+        return service.createLedger(actor, request);
     }
 
     @GetMapping("/{id}/members")
-    public List<LedgerMember> members(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable long id) {
-        return service.ledgerMembers(authorization, id);
+    public List<LedgerMember> members(@CurrentActor ActorContext actor, @PathVariable long id) {
+        return service.ledgerMembers(actor, id);
     }
 
     @PostMapping("/{id}/members")
     public Map<String, Object> addMember(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody LedgerMemberCreateRequest request
     ) {
-        return service.addLedgerMember(authorization, id, body);
+        return service.addLedgerMember(actor, id, request);
     }
 
     @DeleteMapping("/{id}/members/{userId}")
     public void removeMember(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
         @PathVariable long id,
         @PathVariable long userId
     ) {
-        service.removeLedgerMember(authorization, id, userId);
+        service.removeLedgerMember(actor, id, userId);
     }
 }
