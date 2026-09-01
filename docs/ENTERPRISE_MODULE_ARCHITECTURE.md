@@ -52,7 +52,7 @@ flowchart TB
 
 | 边界 | 命令职责 | 查询职责 | 主要数据 | 对外契约 |
 | --- | --- | --- | --- | --- |
-| `platform.identity` | 解析当前人员 | 当前 Actor | 用户会话/外部身份声明 | `ActorContext`、`@CurrentActor` |
+| `platform.identity` | 解析当前人员、本地会话创建/撤销 | 当前 Actor | `auth_tokens`/外部身份声明 | `ActorContext`、`@CurrentActor` |
 | `platform.tenant` | 同步成员关系 | 公司、角色、部门、范围 | `company_memberships` | `CompanyMembershipRepository` |
 | `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
 | `access-management` | 公司成员和角色维护 | 成员、角色、数据范围 | `users/company_memberships` | `/admin/users` |
@@ -186,6 +186,7 @@ workforce/
 | 表或投影 | 所属模块 | 其他模块如何使用 |
 | --- | --- | --- |
 | `company_memberships` | Platform Tenant | 只通过成员仓储读取 |
+| `auth_tokens` | Platform Identity | 本地身份适配器按令牌摘要创建、认证、撤销和清理，其他模块不得直接访问 |
 | `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
 | `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
 | `budgets` | Budget | Operations 只请求匹配预算；Workspace 只读 |

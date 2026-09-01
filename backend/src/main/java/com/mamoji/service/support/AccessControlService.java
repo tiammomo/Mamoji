@@ -3,12 +3,12 @@ package com.mamoji.service.support;
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.platform.identity.ActorIdentityProvider;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembership;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -19,25 +19,25 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AccessControlService {
-    private final InMemoryStore store;
+    private final ActorIdentityProvider identityProvider;
     private final EnterpriseStore enterpriseStore;
     private final CompanyMembershipRepository memberships;
     private final ProductModuleCatalog productModules;
 
     public AccessControlService(
-        InMemoryStore store,
+        ActorIdentityProvider identityProvider,
         EnterpriseStore enterpriseStore,
         CompanyMembershipRepository memberships,
         ProductModuleCatalog productModules
     ) {
-        this.store = store;
+        this.identityProvider = identityProvider;
         this.enterpriseStore = enterpriseStore;
         this.memberships = memberships;
         this.productModules = productModules;
     }
 
     public User requireUser(String authorization) {
-        return store.currentUser(authorization)
+        return identityProvider.authenticate(authorization)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
     }
 

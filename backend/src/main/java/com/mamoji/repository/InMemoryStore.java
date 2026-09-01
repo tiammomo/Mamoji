@@ -14,14 +14,11 @@ import com.mamoji.platform.identity.User;
 import com.mamoji.service.support.PasswordHasher;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,7 +50,6 @@ public class InMemoryStore {
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
     public final Map<Long, RegistrationInvite> registrationInvites = new ConcurrentHashMap<>();
     public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
-    private final Map<String, AuthSession> tokens = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
     private final PasswordHasher passwordHasher;
@@ -103,7 +99,6 @@ public class InMemoryStore {
         ledgerMembers.clear();
         registrationInvites.clear();
         recurringItems.clear();
-        tokens.clear();
 
         forEachRow("SELECT * FROM users", rs -> users.put(rs.getLong("id"), mapUser(rs)));
         forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
@@ -114,10 +109,6 @@ public class InMemoryStore {
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
         forEachRow("SELECT * FROM registration_invites", rs -> registrationInvites.put(rs.getLong("id"), mapRegistrationInvite(rs)));
         forEachRow("SELECT * FROM recurring_items", rs -> recurringItems.put(rs.getString("id"), mapRecurringItem(rs)));
-        jdbc.query("SELECT * FROM auth_tokens WHERE expires_at > ?", (org.springframework.jdbc.core.RowCallbackHandler) rs -> tokens.put(
-            rs.getString("token"),
-            new AuthSession(rs.getLong("user_id"), rs.getString("expires_at"))
-        ), now());
 
         budgets.values().forEach(this::attachCategory);
         transactions.values().forEach(this::attachTransactionRelations);
@@ -644,62 +635,9 @@ public class InMemoryStore {
         afterCommit(() -> recurringItems.put(item.id, item));
     }
 
-    public void rememberToken(String token, long userId, String expiresAt) {
-        String tokenKey = tokenStorageKey(token);
-        jdbc.update("""
-            INSERT INTO auth_tokens (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
-            """, tokenKey, userId, now(), expiresAt);
-        afterCommit(() -> tokens.put(tokenKey, new AuthSession(userId, expiresAt)));
-    }
-
-    public void revokeToken(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            return;
-        }
-        String token = authorizationHeader.substring(7);
-        String tokenKey = tokenStorageKey(token);
-        jdbc.update("DELETE FROM auth_tokens WHERE token IN (?, ?)", tokenKey, token);
-        afterCommit(() -> {
-            tokens.remove(tokenKey);
-            tokens.remove(token);
-        });
-    }
-
     public void deleteRecurring(String id) {
         jdbc.update("DELETE FROM recurring_items WHERE id = ?", id);
         afterCommit(() -> recurringItems.remove(id));
-    }
-
-    public Optional<User> currentUser(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            return Optional.empty();
-        }
-        String token = authorizationHeader.substring(7);
-        String tokenKey = tokenStorageKey(token);
-        List<User> matches = jdbc.query("""
-            SELECT users.*
-            FROM auth_tokens token
-            JOIN users ON users.id = token.user_id
-            WHERE token.token IN (?, ?) AND token.expires_at > ?
-            ORDER BY CASE WHEN token.token = ? THEN 0 ELSE 1 END
-            LIMIT 1
-            """, (rs, rowNum) -> mapUser(rs), tokenKey, token, now(), tokenKey);
-        if (matches.isEmpty()) {
-            jdbc.update("DELETE FROM auth_tokens WHERE token IN (?, ?) AND expires_at <= ?", tokenKey, token, now());
-            return Optional.empty();
-        }
-        return Optional.of(matches.getFirst());
-    }
-
-    private String tokenStorageKey(String token) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(token.getBytes(StandardCharsets.UTF_8));
-            return "sha256:" + Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
-        } catch (Exception ex) {
-            throw new IllegalStateException("Token hashing failed", ex);
-        }
     }
 
     private User copyUser(User source) {
@@ -1517,13 +1455,4 @@ public class InMemoryStore {
         void accept(ResultSet rs) throws SQLException;
     }
 
-    private record AuthSession(long userId, String expiresAt) {
-        boolean expired() {
-            try {
-                return expiresAt == null || !OffsetDateTime.parse(expiresAt).isAfter(OffsetDateTime.now());
-            } catch (RuntimeException ignored) {
-                return true;
-            }
-        }
-    }
 }
