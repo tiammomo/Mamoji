@@ -1,0 +1,72 @@
+package com.mamoji.budget.infrastructure;
+
+import com.mamoji.budget.application.BudgetRepository;
+import com.mamoji.budget.domain.Budget;
+import com.mamoji.budget.domain.BudgetPolicy;
+import com.mamoji.domain.Models.Company;
+import com.mamoji.repository.EnterpriseStore;
+import jakarta.annotation.PostConstruct;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.Locale;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+/** Owns optional budget demo data after enterprise subjects and accounting scopes exist. */
+@Component
+public class BudgetDataInitializer {
+    private final BudgetRepository budgets;
+    private final BudgetPolicy policy;
+    private final EnterpriseStore enterpriseStore;
+    private final String bootstrapMode;
+
+    public BudgetDataInitializer(
+        BudgetRepository budgets,
+        BudgetPolicy policy,
+        EnterpriseStore enterpriseStore,
+        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
+    ) {
+        this.budgets = budgets;
+        this.policy = policy;
+        this.enterpriseStore = enterpriseStore;
+        this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
+    }
+
+    @PostConstruct
+    void initialize() {
+        if ("bootstrap".equals(bootstrapMode)) {
+            return;
+        }
+        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+            .filter(candidate -> "company".equals(candidate.entityType))
+            .min(Comparator.comparing(candidate -> candidate.id));
+        if (company.isEmpty() || !budgets.findByCompany(company.get().id).isEmpty()) {
+            return;
+        }
+
+        Company subject = company.get();
+        LocalDate today = LocalDate.now();
+        String now = OffsetDateTime.now().toString();
+        Budget budget = new Budget();
+        budget.companyId = subject.id;
+        budget.userId = subject.ownerId;
+        budget.name = "本月经营预算";
+        budget.amount = new BigDecimal("6000.00");
+        budget.startDate = today.withDayOfMonth(1).toString();
+        budget.endDate = today.withDayOfMonth(today.lengthOfMonth()).toString();
+        budget.warningThreshold = 85;
+        budget.status = 1;
+        budget.spent = BigDecimal.ZERO;
+        budget.reservedAmount = BigDecimal.ZERO;
+        budget.createdAt = now;
+        budget.updatedAt = now;
+        budgets.insert(policy.apply(budget));
+
+        Budget projected = budgets.findById(subject.id, budget.id).orElseThrow();
+        projected.updatedAt = OffsetDateTime.now().toString();
+        budgets.persistProjection(projected);
+    }
+}

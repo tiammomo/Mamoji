@@ -1,5 +1,7 @@
 package com.mamoji.budget.infrastructure;
 
+import com.mamoji.budget.application.BudgetRepository;
+import com.mamoji.budget.application.BudgetRepository.CategoryRef;
 import com.mamoji.budget.domain.Budget;
 import com.mamoji.budget.domain.BudgetPolicy;
 import com.mamoji.operations.domain.TransactionRecord;
@@ -7,6 +9,8 @@ import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -17,7 +21,7 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class BudgetRepository {
+public class JdbcBudgetRepository implements BudgetRepository {
     private static final String PROJECTED_SELECT = """
         SELECT b.*, c.name AS category_name, c.icon AS category_icon,
                COALESCE(SUM(
@@ -39,17 +43,18 @@ public class BudgetRepository {
          AND t.type IN (2, 3)
          AND (b.ledger_id IS NULL OR t.family_id = b.ledger_id)
          AND (b.category_id IS NULL OR t.category_id = b.category_id)
-         AND ((t.type = 3 AND t.budget_id = b.id) OR t.date BETWEEN b.start_date AND b.end_date)
+         AND ((t.type = 3 AND t.budget_id = b.id) OR t.date BETWEEN b.start_date::TEXT AND b.end_date::TEXT)
         """;
 
     private final JdbcTemplate jdbc;
     private final BudgetPolicy policy;
 
-    public BudgetRepository(JdbcTemplate jdbc, BudgetPolicy policy) {
+    public JdbcBudgetRepository(JdbcTemplate jdbc, BudgetPolicy policy) {
         this.jdbc = jdbc;
         this.policy = policy;
     }
 
+    @Override
     public List<Budget> findByCompany(long companyId) {
         return jdbc.query(
             PROJECTED_SELECT + " WHERE b.company_id = ? GROUP BY b.id, c.name, c.icon ORDER BY b.id",
@@ -58,6 +63,7 @@ public class BudgetRepository {
         );
     }
 
+    @Override
     public Optional<Budget> findById(long companyId, long id) {
         return jdbc.query(
             PROJECTED_SELECT + " WHERE b.company_id = ? AND b.id = ? GROUP BY b.id, c.name, c.icon",
@@ -67,11 +73,14 @@ public class BudgetRepository {
         ).stream().findFirst();
     }
 
+    @Override
     public Optional<Budget> findByIdForUpdate(long id) {
         return jdbc.query("SELECT * FROM budgets WHERE id = ? FOR UPDATE", this::mapBase, id).stream().findFirst();
     }
 
+    @Override
     public Budget insert(Budget budget) {
+        budget.version = 0;
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
@@ -90,6 +99,7 @@ public class BudgetRepository {
         return budget;
     }
 
+    @Override
     public void update(Budget budget) {
         Object[] arguments = Arrays.copyOf(statementArguments(budget, false), 20);
         arguments[18] = budget.id;
@@ -108,15 +118,21 @@ public class BudgetRepository {
         budget.version++;
     }
 
+    @Override
     public void delete(long id) {
-        jdbc.update("DELETE FROM budgets WHERE id = ?", id);
+        int deleted = jdbc.update("DELETE FROM budgets WHERE id = ?", id);
+        if (deleted != 1) {
+            throw new OptimisticLockingFailureException("Budget was changed by another request: " + id);
+        }
     }
 
+    @Override
     public boolean hasTransactions(long id) {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM transactions WHERE budget_id = ?", Long.class, id);
         return count != null && count > 0;
     }
 
+    @Override
     public Optional<CategoryRef> category(long id) {
         return jdbc.query(
             "SELECT id, company_id, type FROM categories WHERE id = ?",
@@ -125,6 +141,7 @@ public class BudgetRepository {
         ).stream().findFirst();
     }
 
+    @Override
     public Optional<Long> matchingBudgetId(TransactionRecord transaction) {
         return jdbc.query("""
             SELECT id
@@ -137,18 +154,42 @@ public class BudgetRepository {
             ORDER BY CASE WHEN category_id = ? THEN 0 ELSE 1 END, id
             LIMIT 1
             """, (rs, rowNum) -> rs.getLong("id"), transaction.companyId, transaction.familyId,
-            transaction.categoryId, transaction.date, transaction.categoryId).stream().findFirst();
+            transaction.categoryId, LocalDate.parse(transaction.date), transaction.categoryId).stream().findFirst();
     }
 
+    @Override
     public void persistProjection(Budget budget) {
-        jdbc.update("""
+        int updated = jdbc.update("""
             UPDATE budgets
             SET spent = ?, remaining_amount = ?, usage_rate = ?, warning_reached = ?,
-                risk_level = ?, risk_message = ?, status = ?, updated_at = ?
-            WHERE id = ?
+                risk_level = ?, risk_message = ?, status = ?, updated_at = ?, version = version + 1
+            WHERE id = ? AND version = ?
+              AND (
+                  spent IS DISTINCT FROM ?
+                  OR remaining_amount IS DISTINCT FROM ?
+                  OR usage_rate IS DISTINCT FROM ?
+                  OR warning_reached IS DISTINCT FROM ?
+                  OR risk_level IS DISTINCT FROM ?
+                  OR risk_message IS DISTINCT FROM ?
+                  OR status IS DISTINCT FROM ?
+              )
             """, money(budget.spent), money(budget.remainingAmount), budget.usageRate,
-            budget.warningReached ? 1 : 0, budget.riskLevel, budget.riskMessage,
-            budget.status, budget.updatedAt, budget.id);
+            budget.warningReached, budget.riskLevel, budget.riskMessage,
+            budget.status, timestamp(budget.updatedAt), budget.id, budget.version,
+            money(budget.spent), money(budget.remainingAmount), budget.usageRate,
+            budget.warningReached, budget.riskLevel, budget.riskMessage, budget.status);
+        if (updated == 1) {
+            budget.version++;
+            return;
+        }
+        Long storedVersion = jdbc.queryForObject(
+            "SELECT version FROM budgets WHERE id = ?",
+            Long.class,
+            budget.id
+        );
+        if (storedVersion == null || storedVersion != budget.version) {
+            throw new OptimisticLockingFailureException("Budget was changed by another request: " + budget.id);
+        }
     }
 
     private Budget mapProjected(ResultSet rs, int rowNum) throws SQLException {
@@ -164,24 +205,24 @@ public class BudgetRepository {
         Budget budget = new Budget();
         budget.id = rs.getLong("id");
         budget.version = rs.getLong("version");
-        budget.companyId = nullableLong(rs, "company_id");
+        budget.companyId = rs.getLong("company_id");
         budget.name = rs.getString("name");
-        budget.amount = moneyValue(rs.getString("amount"));
-        budget.startDate = rs.getString("start_date");
-        budget.endDate = rs.getString("end_date");
+        budget.amount = rs.getBigDecimal("amount");
+        budget.startDate = dateText(rs, "start_date");
+        budget.endDate = dateText(rs, "end_date");
         budget.warningThreshold = rs.getInt("warning_threshold");
         budget.status = rs.getInt("status");
-        budget.spent = moneyValue(rs.getString("spent"));
-        budget.remainingAmount = moneyValue(rs.getString("remaining_amount"));
+        budget.spent = rs.getBigDecimal("spent");
+        budget.remainingAmount = rs.getBigDecimal("remaining_amount");
         budget.usageRate = rs.getDouble("usage_rate");
-        budget.warningReached = rs.getInt("warning_reached") == 1;
+        budget.warningReached = rs.getBoolean("warning_reached");
         budget.riskLevel = rs.getString("risk_level");
         budget.riskMessage = rs.getString("risk_message");
         budget.userId = rs.getLong("user_id");
         budget.ledgerId = nullableLong(rs, "ledger_id");
         budget.categoryId = nullableLong(rs, "category_id");
-        budget.createdAt = rs.getString("created_at");
-        budget.updatedAt = rs.getString("updated_at");
+        budget.createdAt = timestampText(rs, "created_at");
+        budget.updatedAt = timestampText(rs, "updated_at");
         return budget;
     }
 
@@ -197,32 +238,44 @@ public class BudgetRepository {
         int index = 0;
         values[index++] = budget.name;
         values[index++] = money(budget.amount);
-        values[index++] = budget.startDate;
-        values[index++] = budget.endDate;
+        values[index++] = date(budget.startDate);
+        values[index++] = date(budget.endDate);
         values[index++] = budget.warningThreshold;
         values[index++] = budget.status;
         values[index++] = money(budget.spent);
         values[index++] = money(budget.remainingAmount);
         values[index++] = budget.usageRate;
-        values[index++] = budget.warningReached ? 1 : 0;
+        values[index++] = budget.warningReached;
         values[index++] = budget.riskLevel;
         values[index++] = budget.riskMessage;
         values[index++] = budget.userId;
         values[index++] = budget.ledgerId;
         values[index++] = budget.categoryId;
-        values[index++] = budget.createdAt;
-        values[index++] = budget.updatedAt;
+        values[index++] = timestamp(budget.createdAt);
+        values[index++] = timestamp(budget.updatedAt);
         values[index++] = budget.companyId;
         if (includeId) values[index] = budget.id;
         return values;
     }
 
-    private String money(BigDecimal value) {
-        return (value == null ? BigDecimal.ZERO : value).stripTrailingZeros().toPlainString();
+    private BigDecimal money(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
-    private BigDecimal moneyValue(String value) {
-        return value == null || value.isBlank() ? BigDecimal.ZERO : new BigDecimal(value);
+    private LocalDate date(String value) {
+        return LocalDate.parse(value);
+    }
+
+    private OffsetDateTime timestamp(String value) {
+        return OffsetDateTime.parse(value);
+    }
+
+    private String dateText(ResultSet result, String column) throws SQLException {
+        return result.getObject(column, LocalDate.class).toString();
+    }
+
+    private String timestampText(ResultSet result, String column) throws SQLException {
+        return result.getObject(column, OffsetDateTime.class).toString();
     }
 
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
@@ -230,6 +283,4 @@ public class BudgetRepository {
         return rs.wasNull() ? null : value;
     }
 
-    public record CategoryRef(long id, Long companyId, String type) {
-    }
 }

@@ -18,6 +18,7 @@ class LegacyStoreBoundaryTest {
             "attachBudgetData",
             "attachCategory",
             "attachTransactionRelations",
+            "budget",
             "budgetForUpdate",
             "budgetHasTransactions",
             "currentUser",
@@ -60,6 +61,9 @@ class LegacyStoreBoundaryTest {
         assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("recurringItems")),
             "Recurring items must not return to the process-local compatibility view");
+        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("budgets")),
+            "Budgets must not return to the process-local compatibility view");
     }
 
     @Test

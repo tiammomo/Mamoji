@@ -6,7 +6,6 @@ import com.mamoji.budget.domain.Budget;
 import com.mamoji.budget.domain.BudgetPolicy;
 import com.mamoji.budget.domain.BudgetReservation;
 import com.mamoji.budget.domain.BudgetReservationCommand;
-import com.mamoji.budget.infrastructure.BudgetRepository;
 import com.mamoji.budget.infrastructure.BudgetReservationRepository;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
@@ -15,10 +14,10 @@ import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.OutboxEventService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,7 +37,6 @@ public class BudgetApplicationService {
     private final BudgetReservationRepository reservationRepository;
     private final BudgetPolicy policy;
     private final AccessContextService accessContext;
-    private final InMemoryStore compatibilityStore;
     private final EnterpriseStore auditStore;
     private final OutboxEventService outbox;
 
@@ -47,7 +45,6 @@ public class BudgetApplicationService {
         BudgetReservationRepository reservationRepository,
         BudgetPolicy policy,
         AccessContextService accessContext,
-        InMemoryStore compatibilityStore,
         EnterpriseStore auditStore,
         OutboxEventService outbox
     ) {
@@ -55,7 +52,6 @@ public class BudgetApplicationService {
         this.reservationRepository = reservationRepository;
         this.policy = policy;
         this.accessContext = accessContext;
-        this.compatibilityStore = compatibilityStore;
         this.auditStore = auditStore;
         this.outbox = outbox;
     }
@@ -110,7 +106,7 @@ public class BudgetApplicationService {
         Company company = writableCompany(actor, request.companyId());
         validatePeriod(request.startDate(), request.endDate());
         validateCategory(company.id, request.categoryId());
-        String now = InMemoryStore.now();
+        String now = now();
         Budget budget = new Budget();
         budget.companyId = company.id;
         budget.userId = actor.userId();
@@ -127,9 +123,10 @@ public class BudgetApplicationService {
         budget.updatedAt = now;
         policy.apply(budget);
         repository.insert(budget);
-        synchronizeCompatibility(budget);
-        audit(company.id, budget, "create", "创建经营预算: " + budget.name, actor);
-        return repository.findById(company.id, budget.id).orElse(budget);
+        refreshCompany(company.id);
+        Budget created = repository.findById(company.id, budget.id).orElse(budget);
+        audit(company.id, created, "create", "创建经营预算: " + created.name, actor);
+        return created;
     }
 
     @Transactional
@@ -157,11 +154,10 @@ public class BudgetApplicationService {
         if (request.status() != null) budget.status = request.status();
         validatePeriod(LocalDate.parse(budget.startDate), LocalDate.parse(budget.endDate));
         validateCategory(company.id, budget.categoryId);
-        budget.updatedAt = InMemoryStore.now();
+        budget.updatedAt = now();
         repository.update(policy.apply(budget));
         refreshCompany(company.id);
         Budget updated = repository.findById(company.id, id).orElse(budget);
-        synchronizeCompatibility(updated);
         audit(company.id, updated, "update", "更新经营预算: " + updated.name, actor);
         return updated;
     }
@@ -179,7 +175,6 @@ public class BudgetApplicationService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Budget has transactions");
         }
         repository.delete(id);
-        compatibilityStore.afterCommit(() -> compatibilityStore.budgets.remove(id));
         audit(company.id, budget, "delete", "删除经营预算: " + budget.name, actor);
     }
 
@@ -209,11 +204,10 @@ public class BudgetApplicationService {
 
     public void refreshCompany(long companyId) {
         List<Budget> budgets = repository.findByCompany(companyId);
-        String now = InMemoryStore.now();
+        String now = now();
         budgets.forEach(budget -> {
             budget.updatedAt = now;
             repository.persistProjection(budget);
-            synchronizeCompatibility(budget);
         });
     }
 
@@ -270,8 +264,8 @@ public class BudgetApplicationService {
         }
     }
 
-    private void synchronizeCompatibility(Budget budget) {
-        compatibilityStore.afterCommit(() -> compatibilityStore.budgets.put(budget.id, budget));
+    private String now() {
+        return OffsetDateTime.now().toString();
     }
 
     private void audit(long companyId, Budget budget, String action, String summary, ActorContext actor) {
