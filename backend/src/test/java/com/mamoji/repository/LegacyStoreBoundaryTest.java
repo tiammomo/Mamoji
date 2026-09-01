@@ -21,17 +21,24 @@ class LegacyStoreBoundaryTest {
             "currentUser",
             "deleteBudget",
             "findRegistrationInviteByToken",
+            "registrationInvite",
+            "registrationInviteForUpdate",
             "recalculateBudget",
             "refreshBudgetData",
             "refreshBudgetDataAfterCommit",
             "rememberToken",
             "revokeToken",
             "saveBudget",
+            "saveRegistrationInvite",
             "sortedAccounts",
             "sortedBudgets",
             "sortedCategories",
+            "sortedRegistrationInvites",
             "sortedTransactions"
         ));
+        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("registrationInvites")),
+            "Registration invitations must not return to the process-local compatibility view");
     }
 
     @Test

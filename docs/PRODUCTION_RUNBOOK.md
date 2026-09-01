@@ -11,6 +11,7 @@
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
 - 应用运行时不具备兼容建表通道；所有 schema 变更必须先以 Flyway migration 发布。
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
+- 注册邀请原始 token 只在创建响应中返回一次，随后列表只展示元数据，PostgreSQL 仅保存 SHA-256 摘要。管理员应立即通过受控渠道发送邀请链接；若丢失原始 token，请创建新邀请，不要尝试从数据库或列表找回。
 - 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
 - 保持 `MAMOJI_PASSWORD_MIN_LENGTH=12`、`MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`；首次管理员、注册和改密都会执行该策略，复杂度要求至少包含大小写、数字、符号中的三类。
 - 登录失败保护默认按账号 5 次锁定 15 分钟，并按来源 50 次锁定 15 分钟；状态以 SHA-256 摘要键保存在 PostgreSQL，不保存邮箱或 IP 明文，应用重启或切换实例不会清空。可通过 `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、`MAMOJI_AUTH_FAILURE_WINDOW_MINUTES`、`MAMOJI_AUTH_LOCK_MINUTES` 调整。
@@ -131,6 +132,8 @@ scripts/backup-prod.sh
 - `minio-data.tar.gz`：MinIO 对象数据。
 - `SHA256SUMS`：恢复前校验文件。
 - `manifest.env`：备份时间和核心环境信息。
+
+应用内结构化备份当前格式为 `2.1`，包含权威 `company_memberships` 和预算占用账本 `budget_reservations`。恢复器仍接受旧 `2.0` 文件：旧邀请明文会在写回前摘要化，缺失的公司成员关系会从公司负责人和员工档案重建；旧格式本身未包含预算占用历史，因此关键生产恢复仍应优先使用 PostgreSQL + MinIO 完整备份。
 
 ## 恢复
 

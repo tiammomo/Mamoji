@@ -9,7 +9,6 @@ import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.TransactionRecord;
-import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
 import com.mamoji.service.support.PasswordHasher;
 import jakarta.annotation.PostConstruct;
@@ -48,7 +47,6 @@ public class InMemoryStore {
     public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
-    public final Map<Long, RegistrationInvite> registrationInvites = new ConcurrentHashMap<>();
     public final Map<String, RecurringItem> recurringItems = new ConcurrentHashMap<>();
 
     private final JdbcTemplate jdbc;
@@ -97,7 +95,6 @@ public class InMemoryStore {
         transactions.clear();
         ledgers.clear();
         ledgerMembers.clear();
-        registrationInvites.clear();
         recurringItems.clear();
 
         forEachRow("SELECT * FROM users", rs -> users.put(rs.getLong("id"), mapUser(rs)));
@@ -107,7 +104,6 @@ public class InMemoryStore {
         forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
-        forEachRow("SELECT * FROM registration_invites", rs -> registrationInvites.put(rs.getLong("id"), mapRegistrationInvite(rs)));
         forEachRow("SELECT * FROM recurring_items", rs -> recurringItems.put(rs.getString("id"), mapRecurringItem(rs)));
 
         budgets.values().forEach(this::attachCategory);
@@ -471,49 +467,6 @@ public class InMemoryStore {
         }
     }
 
-    public RegistrationInvite registrationInvite(
-        String token,
-        String email,
-        int role,
-        int permissions,
-        String expiresAt,
-        long invitedByUserId
-    ) {
-        RegistrationInvite invite = new RegistrationInvite();
-        invite.token = token;
-        invite.email = email == null ? "" : email.toLowerCase(Locale.ROOT);
-        invite.role = role;
-        invite.permissions = permissions;
-        invite.expiresAt = expiresAt;
-        invite.invitedByUserId = invitedByUserId;
-        stamp(invite);
-        invite.id = insert("""
-            INSERT INTO registration_invites (
-                token, email, role, permissions, expires_at, accepted_at, accepted_user_id, invited_by_user_id,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindRegistrationInvite(ps, invite));
-        afterCommit(() -> registrationInvites.put(invite.id, invite));
-        return invite;
-    }
-
-    public List<RegistrationInvite> sortedRegistrationInvites() {
-        return jdbc.query(
-            "SELECT * FROM registration_invites ORDER BY created_at DESC, id DESC",
-            (rs, rowNum) -> mapRegistrationInvite(rs)
-        );
-    }
-
-    public void saveRegistrationInvite(RegistrationInvite invite) {
-        jdbc.update("""
-            UPDATE registration_invites SET token = ?, email = ?, role = ?, permissions = ?, expires_at = ?,
-                accepted_at = ?, accepted_user_id = ?, invited_by_user_id = ?, created_at = ?, updated_at = ?
-            WHERE id = ?
-            """, invite.token, invite.email, invite.role, invite.permissions, invite.expiresAt, invite.acceptedAt,
-            invite.acceptedUserId, invite.invitedByUserId, invite.createdAt, invite.updatedAt, invite.id);
-        afterCommit(() -> registrationInvites.put(invite.id, invite));
-    }
-
     public void saveUser(User user) {
         jdbc.update("""
             UPDATE users SET email = ?, nickname = ?, avatar = ?, family_id = ?, role = ?, permissions = ?,
@@ -735,15 +688,6 @@ public class InMemoryStore {
 
     public Optional<User> userForUpdate(long id) {
         List<User> matches = jdbc.query("SELECT * FROM users WHERE id = ? FOR UPDATE", (rs, rowNum) -> mapUser(rs), id);
-        return matches.stream().findFirst();
-    }
-
-    public Optional<RegistrationInvite> registrationInviteForUpdate(String token) {
-        List<RegistrationInvite> matches = jdbc.query(
-            "SELECT * FROM registration_invites WHERE token = ? FOR UPDATE",
-            (rs, rowNum) -> mapRegistrationInvite(rs),
-            token
-        );
         return matches.stream().findFirst();
     }
 
@@ -1166,22 +1110,6 @@ public class InMemoryStore {
         return member;
     }
 
-    private RegistrationInvite mapRegistrationInvite(ResultSet rs) throws SQLException {
-        RegistrationInvite invite = new RegistrationInvite();
-        invite.id = rs.getLong("id");
-        invite.token = rs.getString("token");
-        invite.email = rs.getString("email");
-        invite.role = rs.getInt("role");
-        invite.permissions = rs.getInt("permissions");
-        invite.expiresAt = rs.getString("expires_at");
-        invite.acceptedAt = rs.getString("accepted_at");
-        invite.acceptedUserId = nullableLong(rs, "accepted_user_id");
-        invite.invitedByUserId = rs.getLong("invited_by_user_id");
-        invite.createdAt = rs.getString("created_at");
-        invite.updatedAt = rs.getString("updated_at");
-        return invite;
-    }
-
     private RecurringItem mapRecurringItem(ResultSet rs) throws SQLException {
         RecurringItem item = new RecurringItem();
         item.id = rs.getString("id");
@@ -1351,19 +1279,6 @@ public class InMemoryStore {
         ps.setString(4, member.nickname);
         ps.setString(5, member.avatar);
         ps.setString(6, member.joinedAt);
-    }
-
-    private void bindRegistrationInvite(PreparedStatement ps, RegistrationInvite invite) throws SQLException {
-        ps.setString(1, invite.token);
-        ps.setString(2, invite.email);
-        ps.setInt(3, invite.role);
-        ps.setInt(4, invite.permissions);
-        ps.setString(5, invite.expiresAt);
-        ps.setString(6, invite.acceptedAt);
-        setLongOrNull(ps, 7, invite.acceptedUserId);
-        ps.setLong(8, invite.invitedByUserId);
-        ps.setString(9, invite.createdAt);
-        ps.setString(10, invite.updatedAt);
     }
 
     private long insert(String sql, SqlBinder binder) {

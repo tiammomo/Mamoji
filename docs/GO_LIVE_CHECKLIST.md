@@ -8,6 +8,7 @@
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类。
 - 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
+- 已确认邀请原始 token 只在创建时展示一次，并使用受控渠道交付；邀请列表和数据库均不保存可直接使用的明文凭证。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。
 - `MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`，`MAMOJI_PASSWORD_MIN_LENGTH>=12`。
 - `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、锁定窗口和锁定时长已确认符合公司安全策略。
@@ -24,6 +25,7 @@
 - `MAMOJI_FLYWAY_ENABLED=true`，数据库迁移由 Flyway 管理。
 - 正式投产前已执行一次 `scripts/backup-prod.sh`。
 - 已在预生产或临时恢复环境执行 `CONFIRM_RESTORE=yes scripts/restore-prod.sh <backup-dir>` 并验证业务可用。
+- 如使用应用内结构化备份，已确认格式为 `2.1`，且公司成员关系与预算占用账本均包含在导出数据集中。
 - 备份目录有独立磁盘或外部对象存储同步策略。
 - 已配置每日备份 cron，保留周期与公司数据恢复要求一致。
 - 已确认备份维护窗口会短暂停止入口、后端写入和 MinIO，并为探针设置了合理告警延迟。

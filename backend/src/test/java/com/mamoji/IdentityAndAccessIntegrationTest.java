@@ -3,11 +3,16 @@ package com.mamoji;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
+import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import com.mamoji.platform.identity.security.application.LoginFailureRepository;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.platform.identity.security.domain.LoginThrottleSubject;
@@ -16,9 +21,13 @@ import com.mamoji.platform.identity.session.application.LocalSessionService;
 import com.mamoji.platform.identity.session.domain.LocalSession;
 import com.mamoji.platform.identity.session.domain.SessionTokenDigest;
 import com.mamoji.repository.InMemoryStore;
+import com.mamoji.service.BackupService;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +36,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -53,6 +65,9 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Autowired
     LocalSessionService localSessionService;
+
+    @Autowired
+    BackupService backupService;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -121,6 +136,200 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
             VALUES ('plaintext-token', ?, ?, ?)
             """, administratorId, now, now.plusHours(1)));
+    }
+
+    @Test
+    void invitationCredentialIsDisclosedOnceAndConcurrentRegistrationConsumesItOnce() throws Exception {
+        String email = uniqueEmail("single-use-invitation");
+        String administratorToken = adminToken();
+        ApiResponse createdResponse = request("POST", "/api/v1/auth/invitations", Map.of(
+            "email", email,
+            "role", 2,
+            "permissions", 1,
+            "expiresInDays", 1
+        ), administratorToken);
+        assertEquals(200, createdResponse.status(), createdResponse.body());
+        Map<String, Object> created = parseMap(createdResponse.body());
+        String rawToken = text(created.get("token"));
+        long invitationId = ((Number) created.get("id")).longValue();
+        InvitationTokenDigest digest = InvitationTokenDigest.fromRawToken(rawToken);
+
+        assertEquals(64, rawToken.length());
+        assertEquals(digest.value(), jdbc.queryForObject(
+            "SELECT token FROM registration_invites WHERE id = ?",
+            String.class,
+            invitationId
+        ));
+        assertFalse(digest.value().contains(rawToken));
+
+        ApiResponse listedResponse = request("GET", "/api/v1/auth/invitations", null, administratorToken);
+        assertEquals(200, listedResponse.status(), listedResponse.body());
+        assertFalse(listedResponse.body().contains(rawToken));
+        assertFalse(listedResponse.body().contains(digest.value()));
+        Map<String, Object> listed = parseList(listedResponse.body()).stream()
+            .filter(row -> ((Number) row.get("id")).longValue() == invitationId)
+            .findFirst()
+            .orElseThrow();
+        assertTrue(listed.containsKey("token"));
+        assertNull(listed.get("token"));
+
+        Map<String, Object> registration = Map.of(
+            "email", email,
+            "nickname", "Concurrent invite member",
+            "password", "Member-Password-123!",
+            "inviteToken", rawToken
+        );
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "POST", "/api/v1/auth/register", registration, null
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "POST", "/api/v1/auth/register", registration, null
+        );
+
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+        List<Integer> statuses = List.of(firstResponse.status(), secondResponse.status());
+
+        assertEquals(1, statuses.stream().filter(status -> status == 200).count(),
+            firstResponse.body() + " / " + secondResponse.body());
+        assertTrue(statuses.stream().anyMatch(status -> status == 403 || status == 409),
+            firstResponse.body() + " / " + secondResponse.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM users WHERE email = ?", Integer.class, email
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM registration_invites invitation
+            JOIN users accepted_user ON accepted_user.id = invitation.accepted_user_id
+            WHERE invitation.id = ? AND invitation.accepted_at IS NOT NULL AND accepted_user.email = ?
+            """, Integer.class, invitationId, email));
+    }
+
+    @Test
+    @Transactional
+    void structuredRestoreUpgradesLegacyRawInvitationTokensAndTypedTimestamps() throws Exception {
+        String email = uniqueEmail("legacy-backup-invitation");
+        String administratorToken = adminToken();
+        ApiResponse createdResponse = request("POST", "/api/v1/auth/invitations", Map.of(
+            "email", email,
+            "role", 2,
+            "permissions", 1,
+            "expiresInDays", 1
+        ), administratorToken);
+        assertEquals(200, createdResponse.status(), createdResponse.body());
+        Map<String, Object> created = parseMap(createdResponse.body());
+        long invitationId = ((Number) created.get("id")).longValue();
+        String rawToken = text(created.get("token"));
+        String digest = InvitationTokenDigest.fromRawToken(rawToken).value();
+
+        ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
+        Map<String, Object> payload = exported.getBody();
+        assertNotNull(payload);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) payload.get("data");
+        assertFalse(((List<?>) data.get("company_memberships")).isEmpty());
+        assertTrue(data.get("budget_reservations") instanceof List<?>);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> invitationRows = (List<Map<String, Object>>) data.get("registration_invites");
+        Map<String, Object> exportedInvitation = invitationRows.stream()
+            .filter(row -> Long.parseLong(String.valueOf(row.get("id"))) == invitationId)
+            .findFirst()
+            .orElseThrow();
+        assertEquals(digest, exportedInvitation.get("token"));
+
+        exportedInvitation.put("token", rawToken);
+        data.remove("company_memberships");
+        data.remove("budget_reservations");
+        payload.put("version", "2.0");
+        ObjectMapper backupMapper = new ObjectMapper()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .enable(DeserializationFeature.USE_LONG_FOR_INTS);
+        Map<String, Object> normalizedPayload = backupMapper.readValue(
+            backupMapper.writeValueAsBytes(payload),
+            new TypeReference<>() {}
+        );
+        @SuppressWarnings("unchecked")
+        Map<String, Object> normalizedData = (Map<String, Object>) normalizedPayload.get("data");
+        normalizedPayload.put("checksum", sha256(backupMapper.writeValueAsBytes(normalizedData)));
+        MockMultipartFile legacyBackup = new MockMultipartFile(
+            "file",
+            "legacy-invitation-backup.json",
+            "application/json",
+            backupMapper.writeValueAsBytes(normalizedPayload)
+        );
+
+        Map<String, Object> restored = backupService.restore(
+            "Bearer " + administratorToken,
+            legacyBackup,
+            "RESTORE",
+            false
+        );
+
+        assertEquals(true, restored.get("restored"));
+        assertEquals("2.0", restored.get("sourceVersion"));
+        assertEquals("2.1", restored.get("targetVersion"));
+        assertEquals(digest, jdbc.queryForObject(
+            "SELECT token FROM registration_invites WHERE id = ?",
+            String.class,
+            invitationId
+        ));
+        assertNotNull(jdbc.queryForObject(
+            "SELECT expires_at FROM registration_invites WHERE id = ?",
+            OffsetDateTime.class,
+            invitationId
+        ));
+        assertTrue(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM company_memberships",
+            Integer.class
+        ) > 0);
+    }
+
+    @Test
+    @Transactional
+    void currentStructuredBackupCoversEveryTableAndRoundTripsMemberships() throws Exception {
+        String administratorToken = adminToken();
+        int membershipsBefore = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM company_memberships",
+            Integer.class
+        );
+
+        ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
+        Map<String, Object> payload = exported.getBody();
+        assertNotNull(payload);
+        assertEquals("2.1", payload.get("version"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) payload.get("data");
+        Set<String> coveredTables = new java.util.HashSet<>(data.keySet());
+        coveredTables.addAll(Set.of(
+            "auth_tokens",
+            "login_failure_states",
+            "notification_deliveries",
+            "outbox_events"
+        ));
+        assertEquals(Set.copyOf(jdbc.queryForList("""
+            SELECT tablename
+            FROM pg_tables
+            WHERE schemaname = current_schema() AND tablename <> 'flyway_schema_history'
+            """, String.class)), coveredTables);
+
+        MockMultipartFile currentBackup = new MockMultipartFile(
+            "file",
+            "current-structured-backup.json",
+            "application/json",
+            toJson(payload).getBytes(StandardCharsets.UTF_8)
+        );
+        Map<String, Object> restored = backupService.restore(
+            "Bearer " + administratorToken,
+            currentBackup,
+            "RESTORE",
+            false
+        );
+
+        assertEquals("2.1", restored.get("sourceVersion"));
+        assertEquals(membershipsBefore, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM company_memberships",
+            Integer.class
+        ));
     }
 
     @Test
@@ -476,7 +685,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("12", jdbc.queryForObject("""
+        assertEquals("13", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(1, jdbc.queryForObject("""
@@ -533,6 +742,33 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             SELECT conname
             FROM pg_constraint
             WHERE conname IN ('fk_auth_tokens_user', 'ck_auth_tokens_digest', 'ck_auth_tokens_expiry')
+            """, String.class)));
+        assertEquals(Set.of(
+            "expires_at",
+            "accepted_at",
+            "created_at",
+            "updated_at"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'registration_invites'
+              AND data_type = 'timestamp with time zone'
+            """, String.class)));
+        assertEquals(Set.of(
+            "fk_registration_invites_accepted_user",
+            "fk_registration_invites_inviter",
+            "ck_registration_invites_digest",
+            "ck_registration_invites_email",
+            "ck_registration_invites_role",
+            "ck_registration_invites_permissions",
+            "ck_registration_invites_expiry",
+            "ck_registration_invites_acceptance"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname LIKE 'fk_registration_invites_%'
+               OR conname LIKE 'ck_registration_invites_%'
             """, String.class)));
     }
 
@@ -737,5 +973,11 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             );
             coreStore.synchronizeUserAccessAfterCommit(primaryAdministratorId, 1, permissions, restoredAt);
         }
+    }
+
+    private String sha256(byte[] value) throws Exception {
+        return HexFormat.of().formatHex(
+            MessageDigest.getInstance("SHA-256").digest(value)
+        );
     }
 }
