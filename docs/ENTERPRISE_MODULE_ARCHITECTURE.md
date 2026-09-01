@@ -186,6 +186,7 @@ workforce/
 | 表或投影 | 所属模块 | 其他模块如何使用 |
 | --- | --- | --- |
 | `company_memberships` | Platform Tenant | 只通过成员仓储读取 |
+| `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
 | `transactions`、`categories` | Operations | Budget/Workspace 使用只读 SQL 投影 |
 | `budgets` | Budget | Operations 只请求匹配预算；Workspace 只读 |
 | `accounts`、`ledgers` | Finance | Operations 通过账户 ID 校验与调整 |

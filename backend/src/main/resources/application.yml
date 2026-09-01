@@ -101,6 +101,9 @@ mamoji:
       max-failed-attempts-per-source: ${MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE:50}
       failure-window-minutes: ${MAMOJI_AUTH_FAILURE_WINDOW_MINUTES:15}
       lock-minutes: ${MAMOJI_AUTH_LOCK_MINUTES:15}
+      trust-forwarded-headers: ${MAMOJI_AUTH_TRUST_FORWARDED_HEADERS:false}
+      cleanup-interval-ms: ${MAMOJI_AUTH_CLEANUP_INTERVAL_MS:3600000}
+      cleanup-initial-delay-ms: ${MAMOJI_AUTH_CLEANUP_INITIAL_DELAY_MS:3600000}
     password:
       min-length: ${MAMOJI_PASSWORD_MIN_LENGTH:12}
       require-complexity: ${MAMOJI_PASSWORD_REQUIRE_COMPLEXITY:false}
