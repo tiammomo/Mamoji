@@ -6,6 +6,7 @@ import com.mamoji.budget.domain.BudgetReservationCommand;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -42,8 +43,8 @@ public class BudgetReservationRepository {
                 rs.getBigDecimal("amount"),
                 nullableLong(rs, "ledger_id"),
                 nullableLong(rs, "category_id"),
-                rs.getString("start_date"),
-                rs.getString("end_date")
+                rs.getObject("start_date", LocalDate.class),
+                rs.getObject("end_date", LocalDate.class)
             ),
             command.companyId(), command.ledgerId(), command.categoryId(), command.transactionDate(),
             command.categoryId(), command.ledgerId()).stream().findFirst();
@@ -55,8 +56,8 @@ public class BudgetReservationRepository {
         BigDecimal committed = jdbc.queryForObject("""
             SELECT COALESCE(SUM(
                 CASE
-                    WHEN type = 2 THEN CAST(amount AS NUMERIC)
-                    WHEN type = 3 THEN -CAST(amount AS NUMERIC)
+                    WHEN type = 2 THEN amount
+                    WHEN type = 3 THEN -amount
                     ELSE 0
                 END
             ), 0)
@@ -119,7 +120,7 @@ public class BudgetReservationRepository {
 
     private void validateConfirmationTarget(BudgetReservation reservation, long transactionId) {
         Optional<ConfirmationTarget> target = jdbc.query("""
-            SELECT company_id, budget_id, type, CAST(amount AS NUMERIC) AS amount
+            SELECT company_id, budget_id, type, amount
             FROM transactions
             WHERE id = ?
             """, (rs, rowNum) -> new ConfirmationTarget(
@@ -216,8 +217,8 @@ public class BudgetReservationRepository {
         BigDecimal amount,
         Long ledgerId,
         Long categoryId,
-        String startDate,
-        String endDate
+        LocalDate startDate,
+        LocalDate endDate
     ) {
     }
 

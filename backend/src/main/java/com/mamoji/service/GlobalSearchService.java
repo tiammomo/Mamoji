@@ -46,13 +46,13 @@ public class GlobalSearchService {
         if (operationsReadable || financeReadable) {
             results.addAll(jdbc.query("""
                 SELECT t.id, COALESCE(NULLIF(t.note, ''), '流水 #' || t.id) AS title,
-                       t.date || ' · ' || c.name || ' · ¥' || t.amount AS subtitle
+                       t.date::TEXT || ' · ' || c.name || ' · ¥' || t.amount::TEXT AS subtitle
                 FROM transactions t
                 LEFT JOIN categories c ON c.id = t.category_id
                 LEFT JOIN accounts a ON a.id = t.account_id
                 WHERE t.company_id = ? AND (
                     LOWER(COALESCE(t.note, '')) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ?
-                    OR LOWER(COALESCE(a.name, '')) LIKE ? OR t.amount LIKE ?
+                    OR LOWER(COALESCE(a.name, '')) LIKE ? OR t.amount::TEXT LIKE ?
                 ) AND (
                     ? OR t.user_id = ? OR (
                         CAST(? AS BIGINT) IS NOT NULL AND EXISTS (

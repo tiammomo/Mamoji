@@ -26,6 +26,7 @@ class LegacyStoreBoundaryTest {
             "findUser",
             "findUserByEmail",
             "findRegistrationInviteByToken",
+            "findTransaction",
             "registrationInvite",
             "registrationInviteForUpdate",
             "recalculateBudget",
@@ -45,9 +46,12 @@ class LegacyStoreBoundaryTest {
             "sortedRegistrationInvites",
             "sortedTransactions",
             "sortedUsers",
+            "synchronizeTransactionAfterCommit",
             "synchronizeUserAccessAfterCommit",
             "deleteRecurring",
+            "queryAllTransactions",
             "queryRecurring",
+            "removeTransactionFromCompatibilityViewAfterCommit",
             "updatePasswordHashIfCurrent",
             "user",
             "userForUpdate"
@@ -64,6 +68,9 @@ class LegacyStoreBoundaryTest {
         assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("budgets")),
             "Budgets must not return to the process-local compatibility view");
+        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("transactions")),
+            "Transactions must not return to the process-local compatibility view");
     }
 
     @Test

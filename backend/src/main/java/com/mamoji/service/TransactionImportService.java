@@ -5,11 +5,11 @@ import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionApplicationService;
+import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.CreateTransactionCommand;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -41,7 +41,7 @@ public class TransactionImportService {
     private static final int MAX_ROWS = 500;
 
     private final AccessControlService accessControl;
-    private final InMemoryStore store;
+    private final TransactionQueryRepository transactions;
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
     private final TransactionApplicationService transactionApplicationService;
@@ -49,14 +49,14 @@ public class TransactionImportService {
 
     public TransactionImportService(
         AccessControlService accessControl,
-        InMemoryStore store,
+        TransactionQueryRepository transactions,
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
         TransactionApplicationService transactionApplicationService,
         PlatformTransactionManager transactionManager
     ) {
         this.accessControl = accessControl;
-        this.store = store;
+        this.transactions = transactions;
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
         this.transactionApplicationService = transactionApplicationService;
@@ -224,7 +224,7 @@ public class TransactionImportService {
 
     private Set<String> existingKeys(ImportContext context) {
         Set<String> keys = new HashSet<>();
-        store.queryAllTransactions(context.user().id, context.company().id).stream()
+        transactions.findAll(context.user().id, context.company().id).stream()
             .forEach(transaction -> keys.add(transactionKey(
                 transaction.type,
                 transaction.amount,

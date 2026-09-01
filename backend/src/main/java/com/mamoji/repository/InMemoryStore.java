@@ -6,7 +6,6 @@ import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.operations.domain.Category;
-import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.service.support.PasswordHasher;
@@ -37,7 +36,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class InMemoryStore {
     public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
     public final Map<Long, Category> categories = new ConcurrentHashMap<>();
-    public final Map<Long, TransactionRecord> transactions = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
 
@@ -85,17 +83,14 @@ public class InMemoryStore {
     private void loadAll() {
         accounts.clear();
         categories.clear();
-        transactions.clear();
         ledgers.clear();
         ledgerMembers.clear();
 
         forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
-        forEachRow("SELECT * FROM transactions", rs -> transactions.put(rs.getLong("id"), mapTransaction(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
 
-        transactions.values().forEach(this::attachTransactionRelations);
     }
 
     /** Reload the process-local compatibility view after a controlled restore. */
@@ -137,26 +132,18 @@ public class InMemoryStore {
         Ledger defaultLedger = ledger(testUser.id, "公司经营账本", "初创公司经营收入、成本、税费与预算", "CNY", true);
         member(defaultLedger.id, testUser.id, "owner");
 
-        Category revenue = category(testUser.id, "主营业务收入", "💼", "#22c55e", "income");
-        Category teamMeal = category(testUser.id, "团队餐饮", "🍜", "#f97316", "expense");
-        Category travel = category(testUser.id, "差旅交通", "🚇", "#0ea5e9", "expense");
-        Category procurement = category(testUser.id, "办公采购", "🛍️", "#a855f7", "expense");
-        Category customerRefund = category(testUser.id, "客户退款", "↩", "#f43f5e", "expense");
-        Category severance = category(testUser.id, "离职补偿", "HR", "#8b5cf6", "expense");
+        category(testUser.id, "主营业务收入", "💼", "#22c55e", "income");
+        category(testUser.id, "团队餐饮", "🍜", "#f97316", "expense");
+        category(testUser.id, "差旅交通", "🚇", "#0ea5e9", "expense");
+        category(testUser.id, "办公采购", "🛍️", "#a855f7", "expense");
+        category(testUser.id, "客户退款", "↩", "#f43f5e", "expense");
+        category(testUser.id, "离职补偿", "HR", "#8b5cf6", "expense");
         category(testUser.id, "办公租赁", "🏢", "#6366f1", "expense");
         category(testUser.id, "税费", "🧾", "#ef4444", "expense");
 
-        Account cash = account(testUser.id, defaultLedger.id, "公司现金备用金", "cash", "备用金", null, "1200");
-        Account bank = account(testUser.id, defaultLedger.id, "公司基本户", "bank", "对公账户", "招商银行", "26300");
+        account(testUser.id, defaultLedger.id, "公司现金备用金", "cash", "备用金", null, "1200");
+        account(testUser.id, defaultLedger.id, "公司基本户", "bank", "对公账户", "招商银行", "26300");
         account(testUser.id, defaultLedger.id, "企业信用卡", "credit", "信用卡", "招商银行", "1800");
-
-        transaction(testUser.id, defaultLedger.id, 1, "15000", revenue.id, bank.id, LocalDate.now().minusDays(4).toString(), "客户项目回款");
-        transaction(testUser.id, defaultLedger.id, 1, "22000", revenue.id, bank.id, LocalDate.now().minusDays(5).toString(), "项目交付待回款：ERP 二期验收，预计下月到账");
-        transaction(testUser.id, defaultLedger.id, 2, "68.5", teamMeal.id, cash.id, LocalDate.now().minusDays(1).toString(), "团队工作餐");
-        transaction(testUser.id, defaultLedger.id, 2, "25", travel.id, cash.id, LocalDate.now().minusDays(2).toString(), "市内交通");
-        transaction(testUser.id, defaultLedger.id, 2, "899", procurement.id, bank.id, LocalDate.now().minusDays(3).toString(), "办公键盘和配件");
-        transaction(testUser.id, defaultLedger.id, 2, "1200", customerRefund.id, bank.id, LocalDate.now().minusDays(2).toString(), "客户退款：交付范围调整，冲减收入");
-        transaction(testUser.id, defaultLedger.id, 2, "18000", severance.id, bank.id, LocalDate.now().minusDays(6).toString(), "离职补偿：N+1 经济补偿");
     }
 
     private void validateBootstrapAdmin() {
@@ -270,59 +257,6 @@ public class InMemoryStore {
         return category;
     }
 
-    private TransactionRecord transaction(long userId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
-        Long companyId = findAccount(accountId).map(account -> account.companyId).orElse(null);
-        if (companyId == null) {
-            companyId = findCategory(categoryId).map(category -> category.companyId).orElse(null);
-        }
-        if (companyId == null && ledgerId != null) {
-            companyId = findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
-        }
-        return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note);
-    }
-
-    private TransactionRecord transaction(long userId, Long companyId, Long ledgerId, int type, String amount, long categoryId, long accountId, String date, String note) {
-        return transaction(userId, companyId, ledgerId, type, amount, categoryId, accountId, date, note, null);
-    }
-
-    private TransactionRecord transaction(
-        long userId,
-        Long companyId,
-        Long ledgerId,
-        int type,
-        String amount,
-        long categoryId,
-        long accountId,
-        String date,
-        String note,
-        String idempotencyKey
-    ) {
-        TransactionRecord tx = new TransactionRecord();
-        tx.userId = userId;
-        tx.companyId = companyId;
-        tx.familyId = ledgerId;
-        tx.type = type;
-        tx.amount = money(amount);
-        tx.categoryId = categoryId;
-        tx.accountId = accountId;
-        tx.date = date;
-        tx.note = note == null ? "" : note;
-        tx.idempotencyKey = idempotencyKey;
-        tx.refundedAmount = BigDecimal.ZERO;
-        tx.isRefundable = type == 2;
-        attachTransactionRelations(tx);
-        stamp(tx);
-        tx.id = insert("""
-            INSERT INTO transactions (
-                user_id, family_id, type, amount, category_id, account_id, date, note,
-                original_transaction_id, refunded_amount, is_refundable, budget_id, created_at, updated_at, company_id,
-                idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindTransactionInsert(ps, tx));
-        afterCommit(() -> transactions.put(tx.id, tx));
-        return tx;
-    }
-
     private Ledger ledger(long ownerId, String name, String description, String currency, boolean isDefault) {
         return ledger(ownerId, null, name, description, currency, isDefault);
     }
@@ -392,16 +326,6 @@ public class InMemoryStore {
         }
     }
 
-    /** Transitional cache hook for legacy readers after a committed transaction write. */
-    public void synchronizeTransactionAfterCommit(TransactionRecord transaction) {
-        afterCommit(() -> transactions.put(transaction.id, transaction));
-    }
-
-    /** Transitional cache hook for legacy readers after a committed transaction deletion. */
-    public void removeTransactionFromCompatibilityViewAfterCommit(long id) {
-        afterCommit(() -> transactions.remove(id));
-    }
-
     /** Transitional cache hook for legacy readers after a committed account write. */
     public void synchronizeAccountAfterCommit(Account account) {
         afterCommit(() -> accounts.put(account.id, account));
@@ -458,29 +382,6 @@ public class InMemoryStore {
             "SELECT * FROM categories WHERE user_id = ? AND company_id = ? AND type = ? ORDER BY id",
             (rs, rowNum) -> mapCategory(rs), userId, companyId, type
         );
-    }
-
-    public Optional<TransactionRecord> findTransaction(long id) {
-        return jdbc.query("""
-            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
-                   c.color AS resolved_category_color, a.name AS resolved_account_name
-            FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.id = ?
-            """, (rs, rowNum) -> mapTransactionWithRelations(rs), id).stream().findFirst();
-    }
-
-    public List<TransactionRecord> queryAllTransactions(long userId, long companyId) {
-        return jdbc.query("""
-            SELECT t.*, c.name AS resolved_category_name, c.icon AS resolved_category_icon,
-                   c.color AS resolved_category_color, a.name AS resolved_account_name
-            FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.user_id = ? AND t.company_id = ?
-            ORDER BY t.date DESC, t.id DESC
-            """, (rs, rowNum) -> mapTransactionWithRelations(rs), userId, companyId);
     }
 
     private Optional<Ledger> findLedger(long id) {
@@ -540,15 +441,6 @@ public class InMemoryStore {
                 jdbc.update("UPDATE categories SET company_id = ? WHERE id = ? AND company_id IS NULL", category.companyId, category.id);
             }
         });
-        transactions.values().stream().filter(tx -> tx.companyId == null).forEach(tx -> {
-            tx.companyId = Optional.ofNullable(accounts.get(tx.accountId)).map(account -> account.companyId)
-                .orElseGet(() -> Optional.ofNullable(categories.get(tx.categoryId)).map(category -> category.companyId)
-                    .orElseGet(() -> Optional.ofNullable(tx.familyId).map(ledgers::get).map(ledger -> ledger.companyId)
-                        .orElse(defaultCompanyByUser.get(tx.userId))));
-            if (tx.companyId != null) {
-                jdbc.update("UPDATE transactions SET company_id = ? WHERE id = ? AND company_id IS NULL", tx.companyId, tx.id);
-            }
-        });
     }
 
     public void afterCommit(Runnable action) {
@@ -563,22 +455,6 @@ public class InMemoryStore {
                 action.run();
             }
         });
-    }
-
-    private void attachTransactionRelations(TransactionRecord tx) {
-        jdbc.query("""
-            SELECT c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-                   a.name AS account_name
-            FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN accounts a ON a.id = t.account_id
-            WHERE t.id = ?
-            """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
-                tx.categoryName = rs.getString("category_name");
-                tx.categoryIcon = rs.getString("category_icon");
-                tx.categoryColor = rs.getString("category_color");
-                tx.accountName = rs.getString("account_name");
-            }, tx.id);
     }
 
     private Account mapAccount(ResultSet rs) throws SQLException {
@@ -626,38 +502,6 @@ public class InMemoryStore {
         category.createdAt = rs.getString("created_at");
         category.updatedAt = rs.getString("updated_at");
         return category;
-    }
-
-    private TransactionRecord mapTransaction(ResultSet rs) throws SQLException {
-        TransactionRecord tx = new TransactionRecord();
-        tx.id = rs.getLong("id");
-        tx.version = rs.getLong("version");
-        tx.idempotencyKey = rs.getString("idempotency_key");
-        tx.companyId = nullableLong(rs, "company_id");
-        tx.userId = rs.getLong("user_id");
-        tx.familyId = nullableLong(rs, "family_id");
-        tx.type = rs.getInt("type");
-        tx.amount = money(rs.getString("amount"));
-        tx.categoryId = rs.getLong("category_id");
-        tx.accountId = rs.getLong("account_id");
-        tx.date = rs.getString("date");
-        tx.note = rs.getString("note");
-        tx.originalTransactionId = nullableLong(rs, "original_transaction_id");
-        tx.refundedAmount = money(rs.getString("refunded_amount"));
-        tx.isRefundable = rs.getInt("is_refundable") == 1;
-        tx.budgetId = nullableLong(rs, "budget_id");
-        tx.createdAt = rs.getString("created_at");
-        tx.updatedAt = rs.getString("updated_at");
-        return tx;
-    }
-
-    private TransactionRecord mapTransactionWithRelations(ResultSet rs) throws SQLException {
-        TransactionRecord tx = mapTransaction(rs);
-        tx.categoryName = rs.getString("resolved_category_name");
-        tx.categoryIcon = rs.getString("resolved_category_icon");
-        tx.categoryColor = rs.getString("resolved_category_color");
-        tx.accountName = rs.getString("resolved_account_name");
-        return tx;
     }
 
     private Ledger mapLedger(ResultSet rs) throws SQLException {
@@ -760,25 +604,6 @@ public class InMemoryStore {
         ps.setString(7, category.createdAt);
         ps.setString(8, category.updatedAt);
         setLongOrNull(ps, 9, category.companyId);
-    }
-
-    private void bindTransactionInsert(PreparedStatement ps, TransactionRecord tx) throws SQLException {
-        ps.setLong(1, tx.userId);
-        setLongOrNull(ps, 2, tx.familyId);
-        ps.setInt(3, tx.type);
-        ps.setString(4, moneyText(tx.amount));
-        ps.setLong(5, tx.categoryId);
-        ps.setLong(6, tx.accountId);
-        ps.setString(7, tx.date);
-        ps.setString(8, tx.note);
-        setLongOrNull(ps, 9, tx.originalTransactionId);
-        ps.setString(10, moneyText(tx.refundedAmount));
-        ps.setInt(11, intBool(tx.isRefundable));
-        setLongOrNull(ps, 12, tx.budgetId);
-        ps.setString(13, tx.createdAt);
-        ps.setString(14, tx.updatedAt);
-        setLongOrNull(ps, 15, tx.companyId);
-        ps.setString(16, tx.idempotencyKey);
     }
 
     private void bindLedgerInsert(PreparedStatement ps, Ledger ledger) throws SQLException {
