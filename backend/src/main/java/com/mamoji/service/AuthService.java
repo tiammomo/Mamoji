@@ -12,6 +12,7 @@ import com.mamoji.platform.identity.api.PasswordChangeRequest;
 import com.mamoji.platform.identity.api.ProfileUpdateRequest;
 import com.mamoji.platform.identity.api.RegistrationInviteCreateRequest;
 import com.mamoji.platform.identity.api.RegistrationRequest;
+import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
@@ -90,7 +91,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
         }
         User user = matchedUser.get();
-        loginSecurityService.recordSuccess(email, clientIp);
+        loginSecurityService.recordSuccess(email);
         if (passwordHasher.needsUpgrade(user.passwordHash)) {
             store.updatePasswordHashIfCurrent(user, passwordHasher.hash(password), InMemoryStore.now());
         }

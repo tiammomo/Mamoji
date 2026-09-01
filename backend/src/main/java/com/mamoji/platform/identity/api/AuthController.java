@@ -2,6 +2,7 @@ package com.mamoji.platform.identity.api;
 
 import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.security.infrastructure.ClientAddressResolver;
 import com.mamoji.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -19,14 +20,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
     private final AuthService service;
+    private final ClientAddressResolver clientAddressResolver;
 
-    public AuthController(AuthService service) {
+    public AuthController(AuthService service, ClientAddressResolver clientAddressResolver) {
         this.service = service;
+        this.clientAddressResolver = clientAddressResolver;
     }
 
     @PostMapping("/login")
     public Map<String, Object> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
-        return service.login(request, clientIp(httpRequest));
+        return service.login(request, clientAddressResolver.resolve(httpRequest));
     }
 
     @PostMapping("/register")
@@ -73,15 +76,4 @@ public class AuthController {
         return service.changePassword(authorization, request);
     }
 
-    private String clientIp(HttpServletRequest request) {
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
-        }
-        String realIp = request.getHeader("X-Real-IP");
-        if (realIp != null && !realIp.isBlank()) {
-            return realIp.trim();
-        }
-        return request.getRemoteAddr();
-    }
 }

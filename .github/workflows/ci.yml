@@ -50,3 +50,13 @@ jobs:
 
       - name: Compose config
         run: docker compose -f docker-compose.prod.yml --env-file .env.production.example config >/tmp/mamoji-compose.yml
+
+      - name: Caddy config
+        run: >-
+          docker run --rm
+          -e MAMOJI_PUBLIC_HOST=mamoji.example.com
+          -e MAMOJI_TLS_EMAIL=ops@example.com
+          -e MAMOJI_MINIO_BUCKET=mamoji
+          -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.11.4-alpine
+          caddy validate --config /etc/caddy/Caddyfile
