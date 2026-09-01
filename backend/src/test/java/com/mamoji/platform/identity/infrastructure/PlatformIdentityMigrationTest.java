@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import java.sql.Connection;
@@ -13,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -27,7 +29,7 @@ class PlatformIdentityMigrationTest {
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18.4-alpine");
 
     @Test
-    void identityMigrationsHardenLegacySessionsAndInvitations() throws Exception {
+    void identityMigrationsHardenLegacyAccountsSessionsAndInvitations() throws Exception {
         migrateToVersionEleven();
 
         try (Connection connection = connection()) {
@@ -91,12 +93,24 @@ class PlatformIdentityMigrationTest {
                 assertNull(invitations.getObject("invited_by_user_id"));
                 assertFalse(invitations.next());
             }
+            try (ResultSet users = statement.executeQuery("""
+                SELECT email,
+                       pg_typeof(created_at)::TEXT AS created_type,
+                       pg_typeof(updated_at)::TEXT AS updated_type
+                FROM users
+                """)) {
+                users.next();
+                assertEquals("migration@mamoji.test", users.getString("email"));
+                assertEquals("timestamp with time zone", users.getString("created_type"));
+                assertEquals("timestamp with time zone", users.getString("updated_type"));
+                assertFalse(users.next());
+            }
             try (ResultSet version = statement.executeQuery("""
                 SELECT version FROM flyway_schema_history
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("13", version.getString("version"));
+                assertEquals("14", version.getString("version"));
             }
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO auth_tokens (token, user_id, created_at, expires_at)
@@ -109,7 +123,102 @@ class PlatformIdentityMigrationTest {
                 ) SELECT 'plaintext', 'new@mamoji.test', 2, 15, NOW() + INTERVAL '1 day', id, NOW(), NOW()
                   FROM users LIMIT 1
                 """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO users (
+                    email, nickname, avatar, family_id, role, permissions,
+                    password_hash, created_at, updated_at
+                ) VALUES (
+                    'Not-Normalized@Mamoji.Test', 'Invalid', '', NULL, 2, 15,
+                    'not-used', NOW(), NOW()
+                )
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE users SET permissions = 16"
+            ));
         }
+    }
+
+    @Test
+    void userAccountMigrationRejectsDuplicateNormalizedEmailsWithoutPartialUpgrade() throws Exception {
+        try (PostgreSQLContainer<?> dirtyDatabase = new PostgreSQLContainer<>("postgres:18.4-alpine")) {
+            dirtyDatabase.start();
+            Flyway.configure()
+                .dataSource(
+                    dirtyDatabase.getJdbcUrl(),
+                    dirtyDatabase.getUsername(),
+                    dirtyDatabase.getPassword()
+                )
+                .target("13")
+                .load()
+                .migrate();
+            try (
+                Connection connection = DriverManager.getConnection(
+                    dirtyDatabase.getJdbcUrl(),
+                    dirtyDatabase.getUsername(),
+                    dirtyDatabase.getPassword()
+                );
+                Statement statement = connection.createStatement()
+            ) {
+                statement.executeUpdate("""
+                    INSERT INTO users (
+                        email, nickname, avatar, family_id, role, permissions,
+                        password_hash, created_at, updated_at
+                    ) VALUES
+                        ('duplicate@mamoji.test', 'First', '', NULL, 2, 15,
+                         'not-used', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z'),
+                        (' Duplicate@Mamoji.Test ', 'Second', '', NULL, 2, 15,
+                         'not-used', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')
+                    """);
+            }
+
+            Flyway latest = Flyway.configure()
+                .dataSource(
+                    dirtyDatabase.getJdbcUrl(),
+                    dirtyDatabase.getUsername(),
+                    dirtyDatabase.getPassword()
+                )
+                .load();
+            FlywayException failure = assertThrows(FlywayException.class, latest::migrate);
+            assertTrue(containsMessage(failure, "duplicate normalized email addresses"));
+
+            try (
+                Connection connection = DriverManager.getConnection(
+                    dirtyDatabase.getJdbcUrl(),
+                    dirtyDatabase.getUsername(),
+                    dirtyDatabase.getPassword()
+                );
+                Statement statement = connection.createStatement()
+            ) {
+                try (ResultSet version = statement.executeQuery("""
+                    SELECT version FROM flyway_schema_history
+                    WHERE success = true ORDER BY installed_rank DESC LIMIT 1
+                    """)) {
+                    version.next();
+                    assertEquals("13", version.getString("version"));
+                }
+                try (ResultSet type = statement.executeQuery("""
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'users'
+                      AND column_name = 'created_at'
+                    """)) {
+                    type.next();
+                    assertEquals("text", type.getString("data_type"));
+                }
+            }
+        }
+    }
+
+    private boolean containsMessage(Throwable failure, String expected) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current.getMessage() != null && current.getMessage().contains(expected)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private void migrateToVersionEleven() {
@@ -141,7 +250,7 @@ class PlatformIdentityMigrationTest {
             ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
             RETURNING id
             """)) {
-            statement.setString(1, "migration@mamoji.test");
+            statement.setString(1, "  Migration@Mamoji.Test  ");
             statement.setString(2, "Migration User");
             statement.setString(3, "");
             statement.setInt(4, 1);

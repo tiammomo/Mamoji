@@ -12,13 +12,13 @@ import com.mamoji.platform.identity.api.ProfileUpdateRequest;
 import com.mamoji.platform.identity.api.RegistrationInviteCreateRequest;
 import com.mamoji.platform.identity.api.RegistrationInviteResponse;
 import com.mamoji.platform.identity.api.RegistrationRequest;
+import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.platform.identity.invitation.application.IssuedRegistrationInvitation;
 import com.mamoji.platform.identity.invitation.application.RegistrationInvitationService;
 import com.mamoji.platform.identity.invitation.domain.RegistrationInvitation;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.platform.identity.session.application.LocalSessionService;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.PasswordHasher;
 import java.security.SecureRandom;
@@ -45,7 +45,7 @@ public class AuthService {
     private static final long SESSION_HOURS = 12;
     private static final int SESSION_TOKEN_BYTES = 32;
 
-    private final InMemoryStore store;
+    private final LocalUserAccountRepository userAccounts;
     private final EnterpriseStore enterpriseStore;
     private final FinanceRepository financeRepository;
     private final AccessControlService accessControl;
@@ -60,7 +60,7 @@ public class AuthService {
     private final boolean passwordRequireComplexity;
 
     public AuthService(
-        InMemoryStore store,
+        LocalUserAccountRepository userAccounts,
         EnterpriseStore enterpriseStore,
         FinanceRepository financeRepository,
         AccessControlService accessControl,
@@ -73,7 +73,7 @@ public class AuthService {
         @Value("${mamoji.security.password.min-length:12}") int passwordMinLength,
         @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity
     ) {
-        this.store = store;
+        this.userAccounts = userAccounts;
         this.enterpriseStore = enterpriseStore;
         this.financeRepository = financeRepository;
         this.accessControl = accessControl;
@@ -91,7 +91,7 @@ public class AuthService {
         String email = normalizedEmail(request.email());
         String password = request.password();
         loginSecurityService.requireLoginAllowed(email, clientIp);
-        Optional<User> matchedUser = store.findUserByEmail(email)
+        Optional<User> matchedUser = userAccounts.findByEmail(email)
             .filter(candidate -> passwordHasher.matches(password, candidate.passwordHash));
         if (matchedUser.isEmpty()) {
             enterpriseStore.auditLog(0, "auth_session", 0, "login_failed", "登录失败: " + maskEmail(email), 0, "anonymous");
@@ -103,7 +103,12 @@ public class AuthService {
         User user = matchedUser.get();
         loginSecurityService.recordSuccess(email);
         if (passwordHasher.needsUpgrade(user.passwordHash)) {
-            store.updatePasswordHashIfCurrent(user, passwordHasher.hash(password), InMemoryStore.now());
+            userAccounts.updatePasswordHashIfCurrent(
+                user.id,
+                user.passwordHash,
+                passwordHasher.hash(password),
+                OffsetDateTime.now().toString()
+            );
         }
         return authenticated(user);
     }
@@ -112,14 +117,14 @@ public class AuthService {
     public Map<String, Object> register(RegistrationRequest request) {
         String email = normalizedEmail(request.email());
         String password = request.password();
-        if (store.findUserByEmail(email).isPresent()) {
+        if (userAccounts.findByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
         RegistrationInvitation invite = invitationForRegistration(email, text(request.inviteToken()));
         validateNewPassword(password);
         User user;
         try {
-            user = store.user(
+            user = createUser(
                 email,
                 textOr(request.nickname(), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
                 textOr(request.avatar(), "😊|#3370ff"),
@@ -195,7 +200,7 @@ public class AuthService {
     ) {
         User actor = accessControl.requireAdmin(authorization);
         String email = normalizedEmail(request.email());
-        if (store.findUserByEmail(email).isPresent()) {
+        if (userAccounts.findByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
         int role = request.role() == null ? Roles.USER : request.role();
@@ -229,7 +234,7 @@ public class AuthService {
     @Transactional
     public User updateProfile(String authorization, ProfileUpdateRequest request) {
         User current = accessControl.requireUser(authorization);
-        User user = store.userForUpdate(current.id)
+        User user = userAccounts.findByIdForUpdate(current.id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
         if (request.nickname() != null) {
             user.nickname = request.nickname();
@@ -238,7 +243,7 @@ public class AuthService {
             user.avatar = request.avatar();
         }
         touch(user);
-        store.saveUser(user);
+        userAccounts.update(user);
         enterpriseStore.auditLog(0, "user", user.id, "update_profile", "更新个人资料", user.id, user.nickname);
         return user;
     }
@@ -246,7 +251,7 @@ public class AuthService {
     @Transactional
     public Map<String, Object> changePassword(String authorization, PasswordChangeRequest request) {
         User current = accessControl.requireUser(authorization);
-        User user = store.userForUpdate(current.id)
+        User user = userAccounts.findByIdForUpdate(current.id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized"));
         if (!passwordHasher.matches(request.oldPassword(), user.passwordHash)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Old password is incorrect");
@@ -255,7 +260,7 @@ public class AuthService {
         validateNewPassword(newPassword);
         user.passwordHash = passwordHasher.hash(newPassword);
         touch(user);
-        store.saveUser(user);
+        userAccounts.update(user);
         enterpriseStore.auditLog(0, "user", user.id, "change_password", "修改登录密码", user.id, user.nickname);
         return Map.of("success", true);
     }
@@ -280,6 +285,27 @@ public class AuthService {
         byte[] bytes = new byte[SESSION_TOKEN_BYTES];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private User createUser(
+        String email,
+        String nickname,
+        String avatar,
+        String passwordHash,
+        int role,
+        int permissions
+    ) {
+        User user = new User();
+        user.email = email;
+        user.nickname = nickname;
+        user.avatar = avatar == null ? "😊|#3370ff" : avatar;
+        user.role = role;
+        user.permissions = permissions;
+        user.passwordHash = passwordHash;
+        String now = OffsetDateTime.now().toString();
+        user.createdAt = now;
+        user.updatedAt = now;
+        return userAccounts.insert(user);
     }
 
     private RegistrationInvitation invitationForRegistration(String email, String token) {

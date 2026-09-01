@@ -3,6 +3,8 @@ package com.mamoji.repository;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.platform.audit.application.AuditLogRepository;
+import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
@@ -20,6 +22,8 @@ class LegacyStoreBoundaryTest {
             "budgetHasTransactions",
             "currentUser",
             "deleteBudget",
+            "findUser",
+            "findUserByEmail",
             "findRegistrationInviteByToken",
             "registrationInvite",
             "registrationInviteForUpdate",
@@ -30,15 +34,25 @@ class LegacyStoreBoundaryTest {
             "revokeToken",
             "saveBudget",
             "saveRegistrationInvite",
+            "saveUser",
+            "snapshot",
             "sortedAccounts",
             "sortedBudgets",
             "sortedCategories",
             "sortedRegistrationInvites",
-            "sortedTransactions"
+            "sortedTransactions",
+            "sortedUsers",
+            "synchronizeUserAccessAfterCommit",
+            "updatePasswordHashIfCurrent",
+            "user",
+            "userForUpdate"
         ));
         assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("registrationInvites")),
             "Registration invitations must not return to the process-local compatibility view");
+        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("users")),
+            "Local user accounts must not return to the process-local compatibility view");
     }
 
     @Test
@@ -61,6 +75,16 @@ class LegacyStoreBoundaryTest {
         assertTrue(exposedMethods.isEmpty(), () ->
             "Audit logs must remain append-only at the persistence boundary: " + exposedMethods
         );
+    }
+
+    @Test
+    void crossModuleUserDirectoryCannotExposeCredentials() {
+        assertTrue(Arrays.stream(UserDirectory.Entry.class.getRecordComponents())
+            .noneMatch(component -> component.getName().toLowerCase().contains("password")),
+            "Cross-module user projections must remain password-free");
+        assertTrue(Arrays.stream(LocalUserAccountRepository.class.getDeclaredMethods())
+            .noneMatch(method -> method.getName().equals("findAll")),
+            "Credential-bearing account repositories must not provide bulk cross-module reads");
     }
 
     private static void assertNotPublic(Class<?> storeType, Set<String> forbiddenMethods) {
