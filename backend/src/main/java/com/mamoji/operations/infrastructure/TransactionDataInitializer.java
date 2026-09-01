@@ -21,10 +21,12 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional transaction demo data after company-scoped accounting data exists. */
 @Component
+@DependsOn("accountDataInitializer")
 public class TransactionDataInitializer {
     private final TransactionQueryRepository transactions;
     private final TransactionWriteRepository transactionWrites;

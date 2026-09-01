@@ -391,7 +391,11 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals(200, response.status(), response.body());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> results = (List<Map<String, Object>>) parseMap(response.body()).get("results");
-        assertTrue(results.stream().anyMatch(result -> "account".equals(result.get("type")) && needle.equals(result.get("title"))));
+        Map<String, Object> accountResult = results.stream()
+            .filter(result -> "account".equals(result.get("type")) && needle.equals(result.get("title")))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(text(accountResult.get("subtitle")).endsWith("¥1234"));
     }
 
     @Test

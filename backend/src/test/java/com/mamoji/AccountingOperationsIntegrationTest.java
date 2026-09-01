@@ -92,6 +92,60 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
     }
 
     @Test
+    void accountValidationRejectsInvalidStateBeforeTheSingleInsertOrUpdate() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Account validation " + System.nanoTime());
+
+        ApiResponse rejectedCreate = request("POST", "/api/v1/accounts", Map.of(
+            "companyId", companyId,
+            "name", "Invalid account",
+            "type", "unsupported",
+            "balance", 10
+        ), token);
+
+        assertEquals(400, rejectedCreate.status(), rejectedCreate.body());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM accounts WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/accounts", Map.of(
+            "companyId", companyId,
+            "name", "Validated account",
+            "type", " BANK ",
+            "currency", "cny",
+            "balance", "1000.1250",
+            "openedAt", "2026-01-01"
+        ), token);
+
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> account = parseMap(created.body());
+        long accountId = ((Number) account.get("id")).longValue();
+        assertEquals("bank", account.get("type"));
+        assertEquals("CNY", account.get("currency"));
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT version FROM accounts WHERE id = ?",
+            Long.class,
+            accountId
+        ));
+
+        ApiResponse rejectedUpdate = request(
+            "PUT",
+            "/api/v1/accounts/" + accountId + "?companyId=" + companyId,
+            Map.of("openedAt", LocalDate.now().toString()),
+            token
+        );
+
+        assertEquals(400, rejectedUpdate.status(), rejectedUpdate.body());
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT version FROM accounts WHERE id = ?",
+            Long.class,
+            accountId
+        ));
+    }
+
+    @Test
     void transactionIdempotencyHeaderReplaysWithoutDoubleDeduction() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Idempotent transaction " + System.nanoTime());
@@ -209,11 +263,15 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         assertEquals(200, updated.status(), updated.body());
         Map<String, Object> updatedAccount = parseMap(updated.body());
         assertEquals(0, new BigDecimal("875").compareTo(decimal(updatedAccount.get("balance"))));
-        assertEquals("875", jdbc.queryForObject("SELECT balance FROM accounts WHERE id = ?", String.class, accountId));
+        assertEquals(0, new BigDecimal("875").compareTo(jdbc.queryForObject(
+            "SELECT balance FROM accounts WHERE id = ?",
+            BigDecimal.class,
+            accountId
+        )));
     }
 
     @Test
-    void financeWritesSynchronizeAccountLedgerAndMembershipCompatibilityViews() throws Exception {
+    void financeWritesKeepAccountsInPostgresAndSynchronizeRemainingCompatibilityViews() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long userId = ((Number) parseMap(request("GET", "/api/v1/auth/me", null, token).body()).get("id"))
             .longValue();
@@ -232,7 +290,11 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
 
         Map<String, Object> created = createAccount(token, companyId, "Finance-owned account", "1000");
         long accountId = ((Number) created.get("id")).longValue();
-        assertEquals(1, coreStore.accounts.get(accountId).version);
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT version FROM accounts WHERE id = ?",
+            Long.class,
+            accountId
+        ));
 
         ApiResponse updated = request(
             "PUT",
@@ -241,8 +303,16 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(200, updated.status(), updated.body());
-        assertEquals(2, coreStore.accounts.get(accountId).version);
-        assertEquals("Finance-owned account updated", coreStore.accounts.get(accountId).name);
+        assertEquals(1L, jdbc.queryForObject(
+            "SELECT version FROM accounts WHERE id = ?",
+            Long.class,
+            accountId
+        ));
+        assertEquals("Finance-owned account updated", jdbc.queryForObject(
+            "SELECT name FROM accounts WHERE id = ?",
+            String.class,
+            accountId
+        ));
 
         ApiResponse deleted = request(
             "DELETE",
@@ -251,7 +321,11 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             token
         );
         assertEquals(200, deleted.status(), deleted.body());
-        assertFalse(coreStore.accounts.containsKey(accountId));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM accounts WHERE id = ?",
+            Integer.class,
+            accountId
+        ));
 
         ApiResponse memberDeleted = request(
             "DELETE",
@@ -953,11 +1027,11 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             Integer.class,
             originalId
         ));
-        assertEquals("970", jdbc.queryForObject(
+        assertEquals(0, new BigDecimal("970").compareTo(jdbc.queryForObject(
             "SELECT balance FROM accounts WHERE id = ?",
-            String.class,
+            BigDecimal.class,
             id(account)
-        ));
+        )));
         assertEquals(1, jdbc.queryForObject("""
             SELECT COUNT(*) FROM outbox_events
             WHERE event_type = 'accounting.transaction.refund' AND company_id = ?

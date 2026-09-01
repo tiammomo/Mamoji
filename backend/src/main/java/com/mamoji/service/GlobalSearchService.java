@@ -84,7 +84,8 @@ public class GlobalSearchService {
 
             results.addAll(jdbc.query("""
                 SELECT id, name AS title,
-                       COALESCE(bank, '账户') || ' · ' || COALESCE(NULLIF(account_no, ''), '未设置账号') || ' · ¥' || balance AS subtitle
+                       COALESCE(bank, '账户') || ' · ' || COALESCE(NULLIF(account_no, ''), '未设置账号')
+                           || ' · ¥' || TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM balance::TEXT)) AS subtitle
                 FROM accounts
                 WHERE company_id = ? AND status = 1 AND (
                     LOWER(name) LIKE ? OR LOWER(COALESCE(bank, '')) LIKE ? OR LOWER(COALESCE(account_no, '')) LIKE ?

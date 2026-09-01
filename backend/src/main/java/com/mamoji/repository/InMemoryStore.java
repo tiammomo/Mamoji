@@ -2,7 +2,6 @@ package com.mamoji.repository;
 
 import com.mamoji.common.Permissions;
 import com.mamoji.common.Roles;
-import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.operations.domain.Category;
@@ -14,7 +13,6 @@ import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -34,7 +32,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Component
 @DependsOn("singleInstanceDatabaseGuard")
 public class InMemoryStore {
-    public final Map<Long, Account> accounts = new ConcurrentHashMap<>();
     public final Map<Long, Category> categories = new ConcurrentHashMap<>();
     public final Map<Long, Ledger> ledgers = new ConcurrentHashMap<>();
     public final Map<Long, LedgerMember> ledgerMembers = new ConcurrentHashMap<>();
@@ -81,12 +78,10 @@ public class InMemoryStore {
     }
 
     private void loadAll() {
-        accounts.clear();
         categories.clear();
         ledgers.clear();
         ledgerMembers.clear();
 
-        forEachRow("SELECT * FROM accounts", rs -> accounts.put(rs.getLong("id"), mapAccount(rs)));
         forEachRow("SELECT * FROM categories", rs -> categories.put(rs.getLong("id"), mapCategory(rs)));
         forEachRow("SELECT * FROM ledgers", rs -> ledgers.put(rs.getLong("id"), mapLedger(rs)));
         forEachRow("SELECT * FROM ledger_members", rs -> ledgerMembers.put(rs.getLong("id"), mapLedgerMember(rs)));
@@ -141,9 +136,6 @@ public class InMemoryStore {
         category(testUser.id, "办公租赁", "🏢", "#6366f1", "expense");
         category(testUser.id, "税费", "🧾", "#ef4444", "expense");
 
-        account(testUser.id, defaultLedger.id, "公司现金备用金", "cash", "备用金", null, "1200");
-        account(testUser.id, defaultLedger.id, "公司基本户", "bank", "对公账户", "招商银行", "26300");
-        account(testUser.id, defaultLedger.id, "企业信用卡", "credit", "信用卡", "招商银行", "1800");
     }
 
     private void validateBootstrapAdmin() {
@@ -192,47 +184,6 @@ public class InMemoryStore {
         user.passwordHash = password;
         stamp(user);
         return userAccounts.insert(user);
-    }
-
-    private Account account(long userId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
-        Long companyId = ledgerId == null ? null : findLedger(ledgerId).map(ledger -> ledger.companyId).orElse(null);
-        return account(userId, companyId, ledgerId, name, type, subType, bank, balance);
-    }
-
-    private Account account(long userId, Long companyId, Long ledgerId, String name, String type, String subType, String bank, String balance) {
-        Account account = new Account();
-        account.userId = userId;
-        account.companyId = companyId;
-        account.ledgerId = ledgerId;
-        account.name = name;
-        account.type = type;
-        account.subType = subType;
-        account.bank = bank;
-        account.accountNo = null;
-        account.openingBank = bank;
-        account.currency = "CNY";
-        account.balance = money(balance);
-        account.availableBalance = account.balance;
-        account.creditLimit = "credit".equals(type) ? account.balance.abs().max(new BigDecimal("20000")) : BigDecimal.ZERO;
-        account.frozenAmount = BigDecimal.ZERO;
-        account.includeInNetWorth = true;
-        account.status = 1;
-        account.openedAt = LocalDate.now().minusMonths(6).toString();
-        account.lastReconciledAt = LocalDate.now().minusDays("cash".equals(type) ? 8 : 2).toString();
-        account.ownerName = "财务负责人";
-        account.purpose = defaultAccountPurpose(account);
-        account.reconciliationStatus = "cash".equals(type) ? "pending" : "reconciled";
-        account.riskLevel = "low";
-        stamp(account);
-        account.id = insert("""
-            INSERT INTO accounts (
-                name, type, sub_type, bank, account_no, opening_bank, currency, balance, available_balance,
-                credit_limit, frozen_amount, include_in_net_worth, user_id, ledger_id, status, opened_at,
-                last_reconciled_at, owner_name, purpose, reconciliation_status, risk_level, created_at, updated_at, company_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindAccountInsert(ps, account));
-        afterCommit(() -> accounts.put(account.id, account));
-        return account;
     }
 
     private Category category(long userId, String name, String icon, String color, String type) {
@@ -326,16 +277,6 @@ public class InMemoryStore {
         }
     }
 
-    /** Transitional cache hook for legacy readers after a committed account write. */
-    public void synchronizeAccountAfterCommit(Account account) {
-        afterCommit(() -> accounts.put(account.id, account));
-    }
-
-    /** Transitional cache hook for legacy readers after a committed account deletion. */
-    public void removeAccountFromCompatibilityViewAfterCommit(long id) {
-        afterCommit(() -> accounts.remove(id));
-    }
-
     /** Transitional cache hook for legacy readers after a committed category write. */
     public void synchronizeCategoryAfterCommit(Category category) {
         afterCommit(() -> categories.put(category.id, category));
@@ -361,10 +302,6 @@ public class InMemoryStore {
         afterCommit(() -> ledgerMembers.values().removeIf(
             member -> member.ledgerId == ledgerId && member.userId == userId
         ));
-    }
-
-    private Optional<Account> findAccount(long id) {
-        return jdbc.query("SELECT * FROM accounts WHERE id = ?", (rs, rowNum) -> mapAccount(rs), id).stream().findFirst();
     }
 
     private Optional<Category> findCategory(long id) {
@@ -405,10 +342,6 @@ public class InMemoryStore {
         return count != null && count > 0;
     }
 
-    private List<Account> sortedAccounts() {
-        return jdbc.query("SELECT * FROM accounts ORDER BY id", (rs, rowNum) -> mapAccount(rs));
-    }
-
     private List<Category> sortedCategories() {
         return jdbc.query("SELECT * FROM categories ORDER BY id", (rs, rowNum) -> mapCategory(rs));
     }
@@ -424,15 +357,6 @@ public class InMemoryStore {
             ledger.companyId = defaultCompanyByUser.get(ledger.ownerId);
             if (ledger.companyId != null) {
                 jdbc.update("UPDATE ledgers SET company_id = ? WHERE id = ? AND company_id IS NULL", ledger.companyId, ledger.id);
-            }
-        });
-        accounts.values().stream().filter(account -> account.companyId == null).forEach(account -> {
-            account.companyId = Optional.ofNullable(account.ledgerId)
-                .map(ledgers::get)
-                .map(ledger -> ledger.companyId)
-                .orElse(defaultCompanyByUser.get(account.userId));
-            if (account.companyId != null) {
-                jdbc.update("UPDATE accounts SET company_id = ? WHERE id = ? AND company_id IS NULL", account.companyId, account.id);
             }
         });
         categories.values().stream().filter(category -> category.companyId == null).forEach(category -> {
@@ -455,38 +379,6 @@ public class InMemoryStore {
                 action.run();
             }
         });
-    }
-
-    private Account mapAccount(ResultSet rs) throws SQLException {
-        Account account = new Account();
-        account.id = rs.getLong("id");
-        account.version = rs.getLong("version");
-        account.companyId = nullableLong(rs, "company_id");
-        account.name = rs.getString("name");
-        account.type = rs.getString("type");
-        account.subType = rs.getString("sub_type");
-        account.bank = rs.getString("bank");
-        account.accountNo = rs.getString("account_no");
-        account.openingBank = rs.getString("opening_bank");
-        account.currency = textOr(rs.getString("currency"), "CNY");
-        account.balance = money(rs.getString("balance"));
-        account.availableBalance = money(rs.getString("available_balance"));
-        account.creditLimit = money(rs.getString("credit_limit"));
-        account.frozenAmount = money(rs.getString("frozen_amount"));
-        account.includeInNetWorth = rs.getInt("include_in_net_worth") == 1;
-        account.userId = rs.getLong("user_id");
-        account.ledgerId = nullableLong(rs, "ledger_id");
-        account.status = rs.getInt("status");
-        account.openedAt = rs.getString("opened_at");
-        account.lastReconciledAt = rs.getString("last_reconciled_at");
-        account.ownerName = rs.getString("owner_name");
-        account.purpose = rs.getString("purpose");
-        account.reconciliationStatus = textOr(rs.getString("reconciliation_status"), "pending");
-        account.riskLevel = textOr(rs.getString("risk_level"), "low");
-        account.createdAt = rs.getString("created_at");
-        account.updatedAt = rs.getString("updated_at");
-        hydrateAccountDefaults(account);
-        return account;
     }
 
     private Category mapCategory(ResultSet rs) throws SQLException {
@@ -529,69 +421,6 @@ public class InMemoryStore {
         member.avatar = rs.getString("avatar");
         member.joinedAt = rs.getString("joined_at");
         return member;
-    }
-
-    private static void hydrateAccountDefaults(Account account) {
-        account.currency = textOr(account.currency, "CNY");
-        account.openingBank = textOr(account.openingBank, account.bank);
-        account.ownerName = textOr(account.ownerName, "财务负责人");
-        account.purpose = textOr(account.purpose, defaultAccountPurpose(account));
-        account.reconciliationStatus = textOr(account.reconciliationStatus, "pending");
-        account.riskLevel = textOr(account.riskLevel, "low");
-        account.openedAt = textOr(account.openedAt, LocalDate.now().minusMonths(6).toString());
-        account.lastReconciledAt = textOr(account.lastReconciledAt, "cash".equals(account.type) ? null : LocalDate.now().minusDays(2).toString());
-        account.creditLimit = nullToZero(account.creditLimit);
-        account.frozenAmount = nullToZero(account.frozenAmount);
-        if ("credit".equals(account.type) && account.creditLimit.compareTo(BigDecimal.ZERO) == 0) {
-            account.creditLimit = account.balance.abs().max(new BigDecimal("20000"));
-        }
-        if (account.availableBalance == null || account.availableBalance.compareTo(BigDecimal.ZERO) == 0 && account.balance.compareTo(BigDecimal.ZERO) != 0) {
-            account.availableBalance = "credit".equals(account.type)
-                ? account.creditLimit.subtract(account.balance.abs()).subtract(account.frozenAmount).max(BigDecimal.ZERO)
-                : account.balance.subtract(account.frozenAmount);
-        }
-        account.monthlyIncome = BigDecimal.ZERO;
-        account.monthlyExpense = BigDecimal.ZERO;
-        account.currentMonthNetFlow = BigDecimal.ZERO;
-    }
-
-    private static String defaultAccountPurpose(Account account) {
-        return switch (account.type) {
-            case "cash" -> "零星备用金和小额报销";
-            case "bank" -> "客户回款、供应商付款和税费缴纳";
-            case "credit" -> "短期周转和线上订阅付款";
-            case "digital" -> "线上支付和平台收款";
-            case "investment" -> "闲置资金理财和收益管理";
-            case "debt" -> "借款、垫资和负债管理";
-            default -> "企业资金账户";
-        };
-    }
-
-    private void bindAccountInsert(PreparedStatement ps, Account account) throws SQLException {
-        ps.setString(1, account.name);
-        ps.setString(2, account.type);
-        ps.setString(3, account.subType);
-        ps.setString(4, account.bank);
-        ps.setString(5, account.accountNo);
-        ps.setString(6, account.openingBank);
-        ps.setString(7, account.currency);
-        ps.setString(8, moneyText(account.balance));
-        ps.setString(9, moneyText(account.availableBalance));
-        ps.setString(10, moneyText(account.creditLimit));
-        ps.setString(11, moneyText(account.frozenAmount));
-        ps.setInt(12, intBool(account.includeInNetWorth));
-        ps.setLong(13, account.userId);
-        setLongOrNull(ps, 14, account.ledgerId);
-        ps.setInt(15, account.status);
-        ps.setString(16, account.openedAt);
-        ps.setString(17, account.lastReconciledAt);
-        ps.setString(18, account.ownerName);
-        ps.setString(19, account.purpose);
-        ps.setString(20, account.reconciliationStatus);
-        ps.setString(21, account.riskLevel);
-        ps.setString(22, account.createdAt);
-        ps.setString(23, account.updatedAt);
-        setLongOrNull(ps, 24, account.companyId);
     }
 
     private void bindCategoryInsert(PreparedStatement ps, Category category) throws SQLException {
@@ -665,10 +494,6 @@ public class InMemoryStore {
 
     private static int intBool(boolean value) {
         return value ? 1 : 0;
-    }
-
-    private static String moneyText(BigDecimal value) {
-        return nullToZero(value).stripTrailingZeros().toPlainString();
     }
 
     private static String textOr(String value, String fallback) {

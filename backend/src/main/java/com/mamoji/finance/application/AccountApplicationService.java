@@ -14,8 +14,10 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +26,10 @@ import org.springframework.web.server.ResponseStatusException;
 /** Finance application boundary for account lifecycle and account summaries. */
 @Service
 public class AccountApplicationService {
+    private static final BigDecimal MAX_ACCOUNT_AMOUNT = new BigDecimal("9999999999999999.9999");
+    private static final Set<String> ACCOUNT_TYPES = Set.of(
+        "cash", "bank", "credit", "digital", "investment", "debt"
+    );
     private final FinanceRepository repository;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
@@ -80,10 +86,10 @@ public class AccountApplicationService {
         );
         Ledger ledger = repository.ensureAccountingLedger(user.id, company.id, company.currency, company.name);
         Account account = newAccount(user.id, company.id, ledger.id, body);
-        repository.insertAccount(account);
         account.includeInNetWorth = PayloadReader.bool(body.get("includeInNetWorth"), true);
         applyAccountFields(account, body);
-        repository.updateAccount(account);
+        validateAccount(account);
+        repository.insertAccount(account);
         audit(company.id, account.id, "create", "创建资金账户: " + account.name, user);
         return reloadedAccount(account);
     }
@@ -102,7 +108,7 @@ public class AccountApplicationService {
         assertScopedOwner(existing, user.id, company.id);
         Account account = copyAccount(existing);
         if (body.containsKey("name")) account.name = PayloadReader.text(body.get("name"));
-        if (body.containsKey("type")) account.type = PayloadReader.text(body.get("type"));
+        if (body.containsKey("type")) account.type = normalizeAccountType(PayloadReader.text(body.get("type")));
         if (body.containsKey("subType")) account.subType = PayloadReader.nullableText(body.get("subType"));
         if (body.containsKey("bank")) account.bank = PayloadReader.nullableText(body.get("bank"));
         if (body.containsKey("balance")) {
@@ -119,6 +125,7 @@ public class AccountApplicationService {
             );
         }
         applyAccountFields(account, body);
+        validateAccount(account);
         account.updatedAt = OffsetDateTime.now().toString();
         repository.updateAccount(account);
         audit(company.id, account.id, "update", "更新资金账户: " + account.name, user);
@@ -187,7 +194,7 @@ public class AccountApplicationService {
         account.companyId = companyId;
         account.ledgerId = ledgerId;
         account.name = PayloadReader.textOr(body.get("name"), "新账户");
-        account.type = PayloadReader.textOr(body.get("type"), "cash");
+        account.type = normalizeAccountType(PayloadReader.textOr(body.get("type"), "cash"));
         account.subType = PayloadReader.nullableText(body.get("subType"));
         account.bank = PayloadReader.nullableText(body.get("bank"));
         account.openingBank = account.bank;
@@ -216,7 +223,11 @@ public class AccountApplicationService {
         if (body.containsKey("openingBank")) {
             account.openingBank = PayloadReader.nullableText(body.get("openingBank"));
         }
-        if (body.containsKey("currency")) account.currency = PayloadReader.textOr(body.get("currency"), "CNY");
+        if (body.containsKey("currency")) {
+            account.currency = PayloadReader.textOr(body.get("currency"), "CNY")
+                .trim()
+                .toUpperCase(Locale.ROOT);
+        }
         if (account.currency == null || account.currency.isBlank()) account.currency = "CNY";
         if (body.containsKey("availableBalance")) {
             account.availableBalance = PayloadReader.number(body.get("availableBalance"), account.availableBalance);
@@ -297,10 +308,82 @@ public class AccountApplicationService {
     }
 
     private String normalizeReconciliationStatus(String value) {
-        return switch (value) {
-            case "reconciled", "pending", "exception" -> value;
-            default -> "pending";
-        };
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("reconciled", "pending", "exception").contains(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid reconciliationStatus");
+        }
+        return normalized;
+    }
+
+    private String normalizeAccountType(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void validateAccount(Account account) {
+        requireText(account.name, 120, "name");
+        if (!ACCOUNT_TYPES.contains(account.type)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid account type");
+        }
+        if (account.currency == null || !account.currency.matches("[A-Z]{3}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "currency must be a three-letter code");
+        }
+        validateMoney(account.balance, true, "balance");
+        validateMoney(account.availableBalance, true, "availableBalance");
+        validateMoney(account.creditLimit, false, "creditLimit");
+        validateMoney(account.frozenAmount, false, "frozenAmount");
+        if (account.status < 0 || account.status > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "status must be 0 or 1");
+        }
+        requireOptionalText(account.subType, 80, "subType");
+        requireOptionalText(account.bank, 120, "bank");
+        requireOptionalText(account.accountNo, 64, "accountNo");
+        requireOptionalText(account.openingBank, 120, "openingBank");
+        requireOptionalText(account.ownerName, 100, "ownerName");
+        requireOptionalText(account.purpose, 500, "purpose");
+        LocalDate openedAt = optionalDate(account.openedAt, "openedAt");
+        LocalDate reconciledAt = optionalDate(account.lastReconciledAt, "lastReconciledAt");
+        if (openedAt != null && reconciledAt != null && reconciledAt.isBefore(openedAt)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "lastReconciledAt cannot be before openedAt"
+            );
+        }
+        if (!Set.of("reconciled", "pending", "exception").contains(account.reconciliationStatus)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid reconciliationStatus");
+        }
+        if (!Set.of("low", "medium", "high", "critical").contains(account.riskLevel)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid riskLevel");
+        }
+    }
+
+    private void validateMoney(BigDecimal value, boolean signed, String field) {
+        if (value == null
+            || value.abs().compareTo(MAX_ACCOUNT_AMOUNT) > 0
+            || value.stripTrailingZeros().scale() > 4
+            || (!signed && value.signum() < 0)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid " + field);
+        }
+    }
+
+    private void requireText(String value, int maxLength, String field) {
+        if (value == null || value.isBlank() || value.length() > maxLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid " + field);
+        }
+    }
+
+    private void requireOptionalText(String value, int maxLength, String field) {
+        if (value != null && value.length() > maxLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid " + field);
+        }
+    }
+
+    private LocalDate optionalDate(String value, String field) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value);
+        } catch (RuntimeException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid " + field);
+        }
     }
 
     private String accountPurpose(String type) {
