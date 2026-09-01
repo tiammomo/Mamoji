@@ -13,7 +13,9 @@
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
 - 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
 - 保持 `MAMOJI_PASSWORD_MIN_LENGTH=12`、`MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`；首次管理员、注册和改密都会执行该策略，复杂度要求至少包含大小写、数字、符号中的三类。
-- 登录失败保护默认按账号 5 次锁定 15 分钟，并按来源 50 次锁定 15 分钟；可通过 `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、`MAMOJI_AUTH_FAILURE_WINDOW_MINUTES`、`MAMOJI_AUTH_LOCK_MINUTES` 调整。
+- 登录失败保护默认按账号 5 次锁定 15 分钟，并按来源 50 次锁定 15 分钟；状态以 SHA-256 摘要键保存在 PostgreSQL，不保存邮箱或 IP 明文，应用重启或切换实例不会清空。可通过 `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、`MAMOJI_AUTH_FAILURE_WINDOW_MINUTES`、`MAMOJI_AUTH_LOCK_MINUTES` 调整。
+- 成功登录只清除该账号的失败窗口，不清除来源地址的累计窗口；来源记录在停止失败请求后自动过期并由定时清理任务删除，防止单个有效账号绕过来源级密码喷洒保护。
+- 后端直连默认不信任客户端提交的 `X-Forwarded-For`。生产 Compose 仅通过 Caddy 暴露入口，Caddy 会用真实连接地址覆盖外部来源头，并显式启用 `MAMOJI_AUTH_TRUST_FORWARDED_HEADERS=true`；若改变网络拓扑，必须同步复核可信代理边界。
 - 保持 `MAMOJI_OUTBOX_ENABLED=true`。当前项目先使用数据库 Outbox 承接异步事件，不直接引入 RocketMQ；详细说明见 `docs/OUTBOX_EVENTS.md`。
 - 设置 `MAMOJI_SMOKE_EMAIL` 和 `MAMOJI_SMOKE_PASSWORD`，用于发布后自动冒烟验证。
 - 固定 `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`，不要使用 `latest`。

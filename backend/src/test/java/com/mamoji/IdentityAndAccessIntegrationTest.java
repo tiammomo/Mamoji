@@ -3,10 +3,14 @@ package com.mamoji;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
+import com.mamoji.platform.identity.security.application.LoginFailureRepository;
+import com.mamoji.platform.identity.security.application.LoginSecurityService;
+import com.mamoji.platform.identity.security.domain.LoginThrottleSubject;
 import com.mamoji.repository.InMemoryStore;
 import java.math.BigDecimal;
 import java.time.YearMonth;
@@ -17,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -30,6 +35,12 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Autowired
     AuditLogRepository auditLogRepository;
+
+    @Autowired
+    LoginFailureRepository loginFailureRepository;
+
+    @Autowired
+    LoginSecurityService loginSecurityService;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -55,6 +66,89 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
         ApiResponse meAfterLogout = request("GET", "/api/v1/auth/me", null, token);
         assertEquals(401, meAfterLogout.status());
+    }
+
+    @Test
+    void failedLoginLockSurvivesServiceInstancesAndReturnsTooManyRequests() throws Exception {
+        String email = uniqueEmail("persistent-login-lock");
+        String key = LoginThrottleSubject.email(email).keyHash();
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            ApiResponse response = request("POST", "/api/v1/auth/login", Map.of(
+                "email", email,
+                "password", "Wrong-Password-123!"
+            ), null);
+            assertEquals(401, response.status(), response.body());
+        }
+
+        assertEquals(5, jdbc.queryForObject(
+            "SELECT failed_attempts FROM login_failure_states WHERE subject_key = ?",
+            Integer.class,
+            key
+        ));
+        assertNotNull(jdbc.queryForObject(
+            "SELECT locked_until FROM login_failure_states WHERE subject_key = ?",
+            java.time.OffsetDateTime.class,
+            key
+        ));
+
+        LoginSecurityService restartedService = new LoginSecurityService(
+            loginFailureRepository, 5, 50, 15, 15
+        );
+        ResponseStatusException locked = assertThrows(
+            ResponseStatusException.class,
+            () -> restartedService.requireLoginAllowed(email, "203.0.113.90")
+        );
+        assertEquals(429, locked.getStatusCode().value());
+
+        ApiResponse blocked = request("POST", "/api/v1/auth/login", Map.of(
+            "email", email,
+            "password", "Wrong-Password-123!"
+        ), null);
+        assertEquals(429, blocked.status(), blocked.body());
+    }
+
+    @Test
+    void concurrentFailuresIncrementAtomicallyAndSuccessClearsOnlyTheAccountWindow() throws Exception {
+        String email = uniqueEmail("concurrent-login-lock");
+        String emailKey = LoginThrottleSubject.email(email).keyHash();
+        List<CompletableFuture<Void>> attempts = new java.util.ArrayList<>();
+        List<String> sources = new java.util.ArrayList<>();
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            String source = "203.0.113." + attempt;
+            sources.add(source);
+            attempts.add(CompletableFuture.runAsync(() ->
+                loginSecurityService.recordFailure(email, source)
+            ));
+        }
+
+        CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+
+        assertEquals(5, jdbc.queryForObject(
+            "SELECT failed_attempts FROM login_failure_states WHERE subject_key = ?",
+            Integer.class,
+            emailKey
+        ));
+        assertNotNull(jdbc.queryForObject(
+            "SELECT locked_until FROM login_failure_states WHERE subject_key = ?",
+            java.time.OffsetDateTime.class,
+            emailKey
+        ));
+
+        loginSecurityService.recordSuccess(email);
+
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM login_failure_states WHERE subject_key = ?",
+            Integer.class,
+            emailKey
+        ));
+        for (String source : sources) {
+            assertEquals(1, jdbc.queryForObject(
+                "SELECT failed_attempts FROM login_failure_states WHERE subject_key = ?",
+                Integer.class,
+                LoginThrottleSubject.source(source).keyHash()
+            ));
+        }
     }
 
     @Test
@@ -284,7 +378,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void freshMigrationProvidesProductionAccountingAndOvertimeColumns() {
+    void freshMigrationProvidesProductionSecurityAccountingAndOvertimeSchema() {
         Set<String> employeeColumns = Set.copyOf(jdbc.queryForList("""
             SELECT column_name
             FROM information_schema.columns
@@ -327,7 +421,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("10", jdbc.queryForObject("""
+        assertEquals("11", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(1, jdbc.queryForObject("""
@@ -337,6 +431,29 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
               AND table_name = 'outbox_events'
               AND column_name = 'lock_token'
             """, Integer.class));
+        assertEquals(Set.of(
+            "subject_key",
+            "subject_type",
+            "failed_attempts",
+            "window_started_at",
+            "locked_until",
+            "updated_at"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'login_failure_states'
+            """, String.class)));
+        assertEquals(Set.of(
+            "ck_login_failure_subject_key",
+            "ck_login_failure_subject_type",
+            "ck_login_failure_attempts",
+            "ck_login_failure_lock_time"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conname LIKE 'ck_login_failure_%'
+            """, String.class)));
     }
 
     @Test
