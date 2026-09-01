@@ -7,6 +7,7 @@
 - `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`，且部署未配置多个 backend 副本。
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类。
 - 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
+- 从 V13 及更早版本升级前，已确认 `users` 不存在规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳，V14 预检可以通过。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
 - 已确认邀请原始 token 只在创建时展示一次，并使用受控渠道交付；邀请列表和数据库均不保存可直接使用的明文凭证。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。

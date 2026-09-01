@@ -14,9 +14,8 @@ import static org.mockito.Mockito.when;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
-import com.mamoji.platform.identity.User;
+import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,11 +26,11 @@ class ReceiptVoucherDataInitializerTest {
     void bootstrapModeOnlyRepairsExistingEvidenceData() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
         EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
-        InMemoryStore coreStore = mock(InMemoryStore.class);
+        UserDirectory userDirectory = mock(UserDirectory.class);
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
             enterpriseStore,
-            coreStore,
+            userDirectory,
             "bootstrap"
         );
 
@@ -39,26 +38,25 @@ class ReceiptVoucherDataInitializerTest {
 
         verify(receiptVouchers).repairLegacyDefaults();
         verify(receiptVouchers, never()).insert(any());
-        verifyNoInteractions(enterpriseStore, coreStore);
+        verifyNoInteractions(enterpriseStore, userDirectory);
     }
 
     @Test
     void demoModeCreatesEvidenceAndAuditFixturesOnce() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
         EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
-        InMemoryStore coreStore = mock(InMemoryStore.class);
+        UserDirectory userDirectory = mock(UserDirectory.class);
         Company company = new Company();
         company.id = 9;
         company.entityType = "company";
-        User owner = new User();
-        owner.id = 3;
-        owner.role = 1;
-        owner.nickname = "Owner";
+        UserDirectory.Entry owner = new UserDirectory.Entry(
+            3, "owner@mamoji.test", "Owner", "", null, 1, 15
+        );
         List<ReceiptVoucher> inserted = new ArrayList<>();
         AtomicLong ids = new AtomicLong(100);
         when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
         when(enterpriseStore.hasAuditLogEntityType("receipt_voucher")).thenReturn(false);
-        when(coreStore.sortedUsers()).thenReturn(List.of(owner));
+        when(userDirectory.findAll()).thenReturn(List.of(owner));
         when(receiptVouchers.findByCompany(company.id)).thenReturn(List.of());
         when(receiptVouchers.insert(any())).thenAnswer(invocation -> {
             ReceiptVoucherDraft draft = invocation.getArgument(0);
@@ -74,7 +72,7 @@ class ReceiptVoucherDataInitializerTest {
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
             enterpriseStore,
-            coreStore,
+            userDirectory,
             "demo"
         );
 

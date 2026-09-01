@@ -3,9 +3,9 @@ package com.mamoji.accessmanagement.infrastructure;
 import com.mamoji.accessmanagement.application.ManagedUserRepository;
 import com.mamoji.accessmanagement.domain.ManagedUser;
 import com.mamoji.common.PageRequest;
-import com.mamoji.repository.InMemoryStore;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -25,11 +25,9 @@ public class JdbcManagedUserRepository implements ManagedUserRepository {
         """;
 
     private final JdbcTemplate jdbc;
-    private final InMemoryStore compatibilityStore;
 
-    public JdbcManagedUserRepository(JdbcTemplate jdbc, InMemoryStore compatibilityStore) {
+    public JdbcManagedUserRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.compatibilityStore = compatibilityStore;
     }
 
     @Override
@@ -85,15 +83,12 @@ public class JdbcManagedUserRepository implements ManagedUserRepository {
             "UPDATE users SET role = ?, permissions = ?, updated_at = ? WHERE id = ?",
             user.role(),
             user.permissions(),
-            user.updatedAt(),
+            OffsetDateTime.parse(user.updatedAt()),
             user.id()
         );
         if (updated != 1) {
             throw new OptimisticLockingFailureException("Managed user changed during access update: " + user.id());
         }
-        compatibilityStore.synchronizeUserAccessAfterCommit(
-            user.id(), user.role(), user.permissions(), user.updatedAt()
-        );
         return user;
     }
 
@@ -108,21 +103,21 @@ public class JdbcManagedUserRepository implements ManagedUserRepository {
         if (deleted != 1) {
             throw new OptimisticLockingFailureException("Managed user changed during deletion: " + id);
         }
-        compatibilityStore.removeUserFromCompatibilityViewAfterCommit(id);
     }
 
     private ManagedUser map(ResultSet rs, int rowNum) throws SQLException {
         long familyId = rs.getLong("family_id");
+        Long nullableFamilyId = rs.wasNull() ? null : familyId;
         return new ManagedUser(
             rs.getLong("id"),
             rs.getString("email"),
             rs.getString("nickname"),
             rs.getString("avatar"),
-            rs.wasNull() ? null : familyId,
+            nullableFamilyId,
             rs.getInt("role"),
             rs.getInt("permissions"),
-            rs.getString("created_at"),
-            rs.getString("updated_at")
+            rs.getObject("created_at", OffsetDateTime.class).toString(),
+            rs.getObject("updated_at", OffsetDateTime.class).toString()
         );
     }
 }
