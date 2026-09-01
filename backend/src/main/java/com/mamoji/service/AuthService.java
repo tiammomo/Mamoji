@@ -5,13 +5,16 @@ import com.mamoji.common.Roles;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.finance.domain.LedgerMember;
-import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.api.LoginRequest;
 import com.mamoji.platform.identity.api.PasswordChangeRequest;
 import com.mamoji.platform.identity.api.ProfileUpdateRequest;
 import com.mamoji.platform.identity.api.RegistrationInviteCreateRequest;
+import com.mamoji.platform.identity.api.RegistrationInviteResponse;
 import com.mamoji.platform.identity.api.RegistrationRequest;
+import com.mamoji.platform.identity.invitation.application.IssuedRegistrationInvitation;
+import com.mamoji.platform.identity.invitation.application.RegistrationInvitationService;
+import com.mamoji.platform.identity.invitation.domain.RegistrationInvitation;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.platform.identity.session.application.LocalSessionService;
 import com.mamoji.repository.EnterpriseStore;
@@ -21,11 +24,11 @@ import com.mamoji.service.support.PasswordHasher;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -48,6 +51,7 @@ public class AuthService {
     private final AccessControlService accessControl;
     private final PasswordHasher passwordHasher;
     private final LoginSecurityService loginSecurityService;
+    private final RegistrationInvitationService invitations;
     private final LocalSessionService sessions;
     private final OutboxEventService outboxEventService;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -62,6 +66,7 @@ public class AuthService {
         AccessControlService accessControl,
         PasswordHasher passwordHasher,
         LoginSecurityService loginSecurityService,
+        RegistrationInvitationService invitations,
         LocalSessionService sessions,
         OutboxEventService outboxEventService,
         @Value("${mamoji.registration.mode:open}") String registrationMode,
@@ -74,6 +79,7 @@ public class AuthService {
         this.accessControl = accessControl;
         this.passwordHasher = passwordHasher;
         this.loginSecurityService = loginSecurityService;
+        this.invitations = invitations;
         this.sessions = sessions;
         this.outboxEventService = outboxEventService;
         this.registrationMode = textOr(registrationMode, "open").toLowerCase(Locale.ROOT);
@@ -109,7 +115,7 @@ public class AuthService {
         if (store.findUserByEmail(email).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
-        RegistrationInvite invite = invitationForRegistration(email, text(request.inviteToken()));
+        RegistrationInvitation invite = invitationForRegistration(email, text(request.inviteToken()));
         validateNewPassword(password);
         User user;
         try {
@@ -118,17 +124,14 @@ public class AuthService {
                 textOr(request.nickname(), email.substring(0, email.indexOf("@") > 0 ? email.indexOf("@") : email.length())),
                 textOr(request.avatar(), "😊|#3370ff"),
                 passwordHasher.hash(password),
-                invite == null ? Roles.USER : invite.role,
-                invite == null ? Permissions.ALL : invite.permissions
+                invite == null ? Roles.USER : invite.role(),
+                invite == null ? Permissions.ALL : invite.permissions()
             );
         } catch (DuplicateKeyException ignored) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
         if (invite != null) {
-            invite.acceptedAt = OffsetDateTime.now().toString();
-            invite.acceptedUserId = user.id;
-            touch(invite);
-            store.saveRegistrationInvite(invite);
+            invite = invitations.accept(invite, user.id, OffsetDateTime.now());
         }
         Ledger ledger = registrationLedger(user.id);
         financeRepository.insertLedger(ledger);
@@ -148,12 +151,21 @@ public class AuthService {
             "registrationMode", registrationMode
         ));
         if (invite != null) {
-            enterpriseStore.auditLog(0, "registration_invite", invite.id, "accept", "接受注册邀请: " + user.email, user.id, user.nickname);
-            outboxEventService.publish("auth.registration_invite.accepted", 0, "registration_invite", invite.id, user.id, Map.of(
-                "email", user.email,
-                "acceptedUserId", user.id,
-                "invitedByUserId", invite.invitedByUserId
-            ));
+            enterpriseStore.auditLog(0, "registration_invite", invite.id(), "accept", "接受注册邀请: " + user.email, user.id, user.nickname);
+            Map<String, Object> invitationEvent = new LinkedHashMap<>();
+            invitationEvent.put("email", user.email);
+            invitationEvent.put("acceptedUserId", user.id);
+            if (invite.invitedByUserId() != null) {
+                invitationEvent.put("invitedByUserId", invite.invitedByUserId());
+            }
+            outboxEventService.publish(
+                "auth.registration_invite.accepted",
+                0,
+                "registration_invite",
+                invite.id(),
+                user.id,
+                invitationEvent
+            );
         }
         return authenticated(user);
     }
@@ -171,13 +183,16 @@ public class AuthService {
         return ledger;
     }
 
-    public List<RegistrationInvite> listInvitations(String authorization) {
+    public List<RegistrationInviteResponse> listInvitations(String authorization) {
         accessControl.requireAdmin(authorization);
-        return store.sortedRegistrationInvites();
+        return invitations.list().stream().map(RegistrationInviteResponse::summary).toList();
     }
 
     @Transactional
-    public RegistrationInvite createInvitation(String authorization, RegistrationInviteCreateRequest request) {
+    public RegistrationInviteResponse createInvitation(
+        String authorization,
+        RegistrationInviteCreateRequest request
+    ) {
         User actor = accessControl.requireAdmin(authorization);
         String email = normalizedEmail(request.email());
         if (store.findUserByEmail(email).isPresent()) {
@@ -186,23 +201,25 @@ public class AuthService {
         int role = request.role() == null ? Roles.USER : request.role();
         int permissions = (request.permissions() == null ? Permissions.ALL : request.permissions()) & Permissions.ALL;
         int expiresInDays = request.expiresInDays() == null ? 7 : request.expiresInDays();
-        RegistrationInvite invite = store.registrationInvite(
-            invitationToken(),
+        OffsetDateTime now = OffsetDateTime.now();
+        IssuedRegistrationInvitation issued = invitations.issue(
             email,
             role == Roles.ADMIN ? Roles.ADMIN : Roles.USER,
             permissions == 0 ? Permissions.ALL : permissions,
-            OffsetDateTime.now().plusDays(expiresInDays).toString(),
-            actor.id
+            now.plusDays(expiresInDays),
+            actor.id,
+            now
         );
-        enterpriseStore.auditLog(0, "registration_invite", invite.id, "create", "创建注册邀请: " + email, actor.id, actor.nickname);
-        outboxEventService.publish("auth.registration_invite.created", 0, "registration_invite", invite.id, actor.id, Map.of(
-            "email", invite.email,
-            "role", invite.role,
-            "permissions", invite.permissions,
-            "expiresAt", invite.expiresAt,
+        RegistrationInvitation invite = issued.invitation();
+        enterpriseStore.auditLog(0, "registration_invite", invite.id(), "create", "创建注册邀请: " + email, actor.id, actor.nickname);
+        outboxEventService.publish("auth.registration_invite.created", 0, "registration_invite", invite.id(), actor.id, Map.of(
+            "email", invite.email(),
+            "role", invite.role(),
+            "permissions", invite.permissions(),
+            "expiresAt", invite.expiresAt().toString(),
             "invitedByUserId", actor.id
         ));
-        return invite;
+        return RegistrationInviteResponse.issued(invite, issued.rawToken());
     }
 
     public User me(String authorization) {
@@ -265,33 +282,19 @@ public class AuthService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private RegistrationInvite invitationForRegistration(String email, String token) {
+    private RegistrationInvitation invitationForRegistration(String email, String token) {
         if (token.isBlank()) {
             if (inviteRegistrationMode()) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration invite is required");
             }
             return null;
         }
-        RegistrationInvite invite = store.registrationInviteForUpdate(token)
+        return invitations.findUsableForUpdate(token, email, OffsetDateTime.now())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid registration invite"));
-        if (invite.acceptedAt != null && !invite.acceptedAt.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration invite has already been used");
-        }
-        if (!invite.email.equalsIgnoreCase(email)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration invite email does not match");
-        }
-        if (OffsetDateTime.parse(invite.expiresAt).isBefore(OffsetDateTime.now())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration invite has expired");
-        }
-        return invite;
     }
 
     private boolean inviteRegistrationMode() {
         return "invite".equals(registrationMode) || "invitation".equals(registrationMode);
-    }
-
-    private String invitationToken() {
-        return UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
     }
 
     private String normalizedEmail(String value) {

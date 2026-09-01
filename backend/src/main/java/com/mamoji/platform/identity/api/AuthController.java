@@ -1,6 +1,5 @@
 package com.mamoji.platform.identity.api;
 
-import com.mamoji.platform.identity.RegistrationInvite;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.security.infrastructure.ClientAddressResolver;
 import com.mamoji.service.AuthService;
@@ -38,12 +37,14 @@ public class AuthController {
     }
 
     @GetMapping("/invitations")
-    public List<RegistrationInvite> invitations(@RequestHeader(value = "Authorization", required = false) String authorization) {
+    public List<RegistrationInviteResponse> invitations(
+        @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
         return service.listInvitations(authorization);
     }
 
     @PostMapping("/invitations")
-    public RegistrationInvite createInvitation(
+    public RegistrationInviteResponse createInvitation(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @Valid @RequestBody RegistrationInviteCreateRequest request
     ) {
