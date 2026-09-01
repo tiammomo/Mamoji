@@ -16,6 +16,7 @@
 - 登录失败保护默认按账号 5 次锁定 15 分钟，并按来源 50 次锁定 15 分钟；状态以 SHA-256 摘要键保存在 PostgreSQL，不保存邮箱或 IP 明文，应用重启或切换实例不会清空。可通过 `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、`MAMOJI_AUTH_FAILURE_WINDOW_MINUTES`、`MAMOJI_AUTH_LOCK_MINUTES` 调整。
 - 成功登录只清除该账号的失败窗口，不清除来源地址的累计窗口；来源记录在停止失败请求后自动过期并由定时清理任务删除，防止单个有效账号绕过来源级密码喷洒保护。
 - 后端直连默认不信任客户端提交的 `X-Forwarded-For`。生产 Compose 仅通过 Caddy 暴露入口，Caddy 会用真实连接地址覆盖外部来源头，并显式启用 `MAMOJI_AUTH_TRUST_FORWARDED_HEADERS=true`；若改变网络拓扑，必须同步复核可信代理边界。
+- 本地会话只在 PostgreSQL 保存 SHA-256 令牌摘要和 `TIMESTAMPTZ` 有效期；过期会话每小时自动清理。结构化业务恢复会撤销全部现有会话，恢复完成后管理员必须重新登录，避免旧令牌映射到恢复后的账号数据。
 - 保持 `MAMOJI_OUTBOX_ENABLED=true`。当前项目先使用数据库 Outbox 承接异步事件，不直接引入 RocketMQ；详细说明见 `docs/OUTBOX_EVENTS.md`。
 - 设置 `MAMOJI_SMOKE_EMAIL` 和 `MAMOJI_SMOKE_PASSWORD`，用于发布后自动冒烟验证。
 - 固定 `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`，不要使用 `latest`。
