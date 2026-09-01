@@ -585,7 +585,7 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             recurringId
         );
         assertEquals(1, ((Number) state.get("execution_count")).intValue());
-        assertEquals(LocalDate.now().toString(), state.get("last_executed"));
+        assertEquals(LocalDate.now(), ((java.sql.Date) state.get("last_executed")).toLocalDate());
     }
 
     @Test
