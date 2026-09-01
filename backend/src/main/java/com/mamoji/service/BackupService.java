@@ -45,9 +45,10 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class BackupService {
     private static final String FORMAT = "mamoji-structured-backup";
-    private static final String VERSION = "2.1";
+    private static final String VERSION = "2.2";
+    private static final String PREVIOUS_VERSION = "2.1";
     private static final String LEGACY_VERSION = "2.0";
-    private static final Set<String> SUPPORTED_VERSIONS = Set.of(LEGACY_VERSION, VERSION);
+    private static final Set<String> SUPPORTED_VERSIONS = Set.of(LEGACY_VERSION, PREVIOUS_VERSION, VERSION);
     private static final Set<String> LEGACY_OPTIONAL_TABLES = Set.of(
         "company_memberships",
         "budget_reservations"
@@ -213,10 +214,10 @@ public class BackupService {
         jdbc.execute("TRUNCATE TABLE " + String.join(", ", resetTables) + " RESTART IDENTITY");
         for (String table : BACKUP_TABLES) {
             restoreTable(table, parsed.data().get(table));
+            if (LEGACY_VERSION.equals(parsed.version()) && "employees".equals(table)) {
+                rebuildLegacyMemberships();
+            }
             resetSequence(table);
-        }
-        if (LEGACY_VERSION.equals(parsed.version())) {
-            rebuildLegacyMemberships();
         }
 
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -329,7 +330,8 @@ public class BackupService {
                 throw new IllegalArgumentException("备份校验和不匹配，文件可能不完整或已被修改。" );
             }
             LEGACY_OPTIONAL_TABLES.forEach(table -> data.putIfAbsent(table, List.of()));
-            if (VERSION.equals(sourceVersion) && ((List<?>) data.get("company_memberships")).isEmpty()) {
+            if (!LEGACY_VERSION.equals(sourceVersion)
+                && ((List<?>) data.get("company_memberships")).isEmpty()) {
                 throw new IllegalArgumentException("当前版本备份必须至少包含一个公司成员关系。" );
             }
             return new ParsedBackup(data, actualChecksum, sourceVersion);
@@ -418,6 +420,19 @@ public class BackupService {
                 throw new IllegalArgumentException("Invalid invitation token in structured backup");
             }
         }
+        if ("ledger_members".equals(table)
+            && !row.containsKey("company_id")
+            && row.get("ledger_id") != null) {
+            Long companyId = jdbc.queryForObject(
+                "SELECT company_id FROM ledgers WHERE id = ?",
+                Long.class,
+                Long.parseLong(String.valueOf(row.get("ledger_id")))
+            );
+            if (companyId == null) {
+                throw new IllegalArgumentException("Legacy backup contains an unscoped ledger membership");
+            }
+            row.put("company_id", companyId);
+        }
         return row;
     }
 
@@ -433,7 +448,10 @@ public class BackupService {
             case "numeric", "decimal" -> statement.setBigDecimal(index, new BigDecimal(value));
             case "real" -> statement.setFloat(index, Float.parseFloat(value));
             case "double precision" -> statement.setDouble(index, Double.parseDouble(value));
-            case "boolean" -> statement.setBoolean(index, Boolean.parseBoolean(value));
+            case "boolean" -> statement.setBoolean(
+                index,
+                "1".equals(value) || Boolean.parseBoolean(value)
+            );
             case "bytea" -> statement.setBytes(index, java.util.Base64.getDecoder().decode(value));
             case "json", "jsonb" -> statement.setObject(index, value, Types.OTHER);
             case "date" -> statement.setObject(index, LocalDate.parse(value));

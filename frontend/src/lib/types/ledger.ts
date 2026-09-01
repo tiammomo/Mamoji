@@ -2,6 +2,7 @@ export type LedgerRole = "owner" | "admin" | "editor" | "viewer";
 
 export interface Ledger {
   id: number;
+  companyId: number;
   name: string;
   description: string;
   currency: string;
@@ -14,6 +15,7 @@ export interface Ledger {
 
 export interface LedgerMember {
   id: number;
+  companyId: number;
   ledgerId: number;
   userId: number;
   role: LedgerRole;
@@ -23,6 +25,7 @@ export interface LedgerMember {
 }
 
 export interface CreateLedgerDTO {
+  companyId?: number;
   name: string;
   description?: string;
   currency?: string;

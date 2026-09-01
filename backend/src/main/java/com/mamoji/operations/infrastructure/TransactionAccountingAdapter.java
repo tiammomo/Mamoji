@@ -41,7 +41,12 @@ public class TransactionAccountingAdapter implements TransactionAccountingGatewa
 
     @Override
     public List<Ledger> findLedgers(long userId, long companyId) {
-        return financeRepository.findOwnedLedgers(userId, companyId);
+        return financeRepository.findAccessibleLedgers(userId, companyId);
+    }
+
+    @Override
+    public boolean ledgerMemberExists(long ledgerId, long userId) {
+        return financeRepository.ledgerMemberExists(ledgerId, userId);
     }
 
     @Override

@@ -3,7 +3,7 @@ package com.mamoji.finance.domain;
 /** Finance-owned ledger aggregate state. */
 public class Ledger {
     public long id;
-    public Long companyId;
+    public long companyId;
     public String name;
     public String description;
     public String currency;

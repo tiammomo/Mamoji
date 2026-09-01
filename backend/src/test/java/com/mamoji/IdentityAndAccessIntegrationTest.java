@@ -247,6 +247,15 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         assertEquals(digest, exportedInvitation.get("token"));
 
         exportedInvitation.put("token", rawToken);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> legacyLedgerMembers = (List<Map<String, Object>>) data.get("ledger_members");
+        legacyLedgerMembers.forEach(row -> row.remove("company_id"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> legacyLedgers = (List<Map<String, Object>>) data.get("ledgers");
+        legacyLedgers.forEach(row -> row.put(
+            "is_default",
+            Boolean.parseBoolean(String.valueOf(row.get("is_default"))) ? 1 : 0
+        ));
         data.remove("company_memberships");
         data.remove("budget_reservations");
         payload.put("version", "2.0");
@@ -276,7 +285,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
         assertEquals(true, restored.get("restored"));
         assertEquals("2.0", restored.get("sourceVersion"));
-        assertEquals("2.1", restored.get("targetVersion"));
+        assertEquals("2.2", restored.get("targetVersion"));
         assertEquals(digest, jdbc.queryForObject(
             "SELECT token FROM registration_invites WHERE id = ?",
             String.class,
@@ -295,6 +304,58 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Test
     @Transactional
+    void previousStructuredBackupDerivesLedgerMemberCompanyScope() throws Exception {
+        String administratorToken = adminToken();
+        ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
+        Map<String, Object> payload = exported.getBody();
+        assertNotNull(payload);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) payload.get("data");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> memberRows = (List<Map<String, Object>>) data.get("ledger_members");
+        memberRows.forEach(row -> row.remove("company_id"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ledgerRows = (List<Map<String, Object>>) data.get("ledgers");
+        ledgerRows.forEach(row -> row.put(
+            "is_default",
+            Boolean.parseBoolean(String.valueOf(row.get("is_default"))) ? 1 : 0
+        ));
+        payload.put("version", "2.1");
+
+        ObjectMapper backupMapper = new ObjectMapper()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .enable(DeserializationFeature.USE_LONG_FOR_INTS);
+        Map<String, Object> normalizedPayload = backupMapper.readValue(
+            backupMapper.writeValueAsBytes(payload),
+            new TypeReference<>() {}
+        );
+        @SuppressWarnings("unchecked")
+        Map<String, Object> normalizedData = (Map<String, Object>) normalizedPayload.get("data");
+        normalizedPayload.put("checksum", sha256(backupMapper.writeValueAsBytes(normalizedData)));
+        MockMultipartFile previousBackup = new MockMultipartFile(
+            "file",
+            "previous-structured-backup.json",
+            "application/json",
+            backupMapper.writeValueAsBytes(normalizedPayload)
+        );
+
+        Map<String, Object> restored = backupService.restore(
+            "Bearer " + administratorToken,
+            previousBackup,
+            "RESTORE",
+            false
+        );
+
+        assertEquals("2.1", restored.get("sourceVersion"));
+        assertEquals("2.2", restored.get("targetVersion"));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledger_members WHERE company_id IS NULL",
+            Integer.class
+        ));
+    }
+
+    @Test
+    @Transactional
     void currentStructuredBackupCoversEveryTableAndRoundTripsMemberships() throws Exception {
         String administratorToken = adminToken();
         int membershipsBefore = jdbc.queryForObject(
@@ -305,7 +366,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
         Map<String, Object> payload = exported.getBody();
         assertNotNull(payload);
-        assertEquals("2.1", payload.get("version"));
+        assertEquals("2.2", payload.get("version"));
         @SuppressWarnings("unchecked")
         Map<String, Object> data = (Map<String, Object>) payload.get("data");
         Set<String> coveredTables = new java.util.HashSet<>(data.keySet());
@@ -334,7 +395,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             false
         );
 
-        assertEquals("2.1", restored.get("sourceVersion"));
+        assertEquals("2.2", restored.get("sourceVersion"));
         assertEquals(membershipsBefore, jdbc.queryForObject(
             "SELECT COUNT(*) FROM company_memberships",
             Integer.class
@@ -490,14 +551,18 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         Map<String, Object> session = parseMap(registered.body());
         assertNotNull(session.get("token"));
         assertFalse(registered.body().contains("passwordHash"));
-        Map<String, Object> membership = jdbc.queryForMap("""
-            SELECT lm.nickname, lm.avatar
-            FROM ledger_members lm
-            JOIN users u ON u.id = lm.user_id
-            WHERE u.email = ?
-            """, email);
-        assertEquals("Invited Member", membership.get("nickname"));
-        assertEquals("🧭|#123456", membership.get("avatar"));
+        assertEquals(0, jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM ledgers ledger
+            JOIN users local_user ON local_user.id = ledger.owner_id
+            WHERE local_user.email = ? AND ledger.company_id IS NULL
+            """, Integer.class, email));
+        assertEquals(0, jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM ledger_members member
+            JOIN users local_user ON local_user.id = member.user_id
+            WHERE local_user.email = ?
+            """, Integer.class, email));
     }
 
     private void assertValidationFields(ApiResponse response, Set<String> expectedFields) throws Exception {
@@ -737,7 +802,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("18", jdbc.queryForObject("""
+        assertEquals("19", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(Set.of("created_at", "updated_at"), Set.copyOf(jdbc.queryForList("""

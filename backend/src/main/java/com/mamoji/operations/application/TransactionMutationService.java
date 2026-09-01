@@ -237,7 +237,9 @@ public class TransactionMutationService {
     private Long resolveLedgerId(User user, Company company, Account account) {
         if (account.ledgerId != null) {
             Ledger ledger = accounting.findLedger(account.ledgerId).orElse(null);
-            if (ledger == null || ledger.ownerId != user.id || !Objects.equals(ledger.companyId, company.id)) {
+            if (ledger == null
+                || ledger.companyId != company.id
+                || (ledger.ownerId != user.id && !accounting.ledgerMemberExists(ledger.id, user.id))) {
                 throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Account ledger is outside the selected company"

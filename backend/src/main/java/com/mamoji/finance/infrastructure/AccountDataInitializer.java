@@ -13,10 +13,12 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional account demo data after the company and its accounting ledger exist. */
 @Component
+@DependsOn("ledgerDataInitializer")
 public class AccountDataInitializer {
     private final FinanceRepository finances;
     private final EnterpriseStore enterpriseStore;
