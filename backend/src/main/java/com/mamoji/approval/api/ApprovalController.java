@@ -1,7 +1,7 @@
 package com.mamoji.approval.api;
 
 import com.mamoji.common.PagedResponse;
-import com.mamoji.service.ApprovalService;
+import com.mamoji.approval.application.ApprovalApplicationService;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,14 +16,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/approvals")
 public class ApprovalController {
-    private final ApprovalService service;
+    private final ApprovalApplicationService service;
 
-    public ApprovalController(ApprovalService service) {
+    public ApprovalController(ApprovalApplicationService service) {
         this.service = service;
     }
 
     @GetMapping
-    public PagedResponse<ApprovalService.ApprovalRequest> list(
+    public PagedResponse<ApprovalApplicationService.ApprovalRequest> list(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestParam Map<String, String> params
     ) {
@@ -39,7 +39,7 @@ public class ApprovalController {
     }
 
     @GetMapping("/{id}")
-    public ApprovalService.ApprovalDetail get(
+    public ApprovalApplicationService.ApprovalDetail get(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id
     ) {
@@ -47,7 +47,7 @@ public class ApprovalController {
     }
 
     @PostMapping
-    public ApprovalService.ApprovalDetail create(
+    public ApprovalApplicationService.ApprovalDetail create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
         @Valid @RequestBody ApprovalCreateRequest request
@@ -56,7 +56,7 @@ public class ApprovalController {
     }
 
     @PostMapping("/{id}/approve")
-    public ApprovalService.ApprovalDetail approve(
+    public ApprovalApplicationService.ApprovalDetail approve(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
         @Valid @RequestBody(required = false) ApprovalActionRequest request
@@ -65,7 +65,7 @@ public class ApprovalController {
     }
 
     @PostMapping("/{id}/reject")
-    public ApprovalService.ApprovalDetail reject(
+    public ApprovalApplicationService.ApprovalDetail reject(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
         @Valid @RequestBody(required = false) ApprovalActionRequest request
@@ -74,7 +74,7 @@ public class ApprovalController {
     }
 
     @PostMapping("/{id}/withdraw")
-    public ApprovalService.ApprovalDetail withdraw(
+    public ApprovalApplicationService.ApprovalDetail withdraw(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
         @Valid @RequestBody(required = false) ApprovalActionRequest request
