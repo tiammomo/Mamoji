@@ -114,6 +114,9 @@ MAMOJI_REPLICA_SMOKE_ALLOW_RESTART=yes scripts/replica-smoke.sh
 - 后端生成的短时效签名下载 URL 会使用 `MAMOJI_MINIO_EXTERNAL_URL`。
 - Caddy 只代理 `/<bucket>/*` 到 MinIO，用于访问已签名的对象 URL。
 - Bucket 保持私有，不要开启匿名读。
+- `MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY` 是单企业持久化票据容量硬上限，默认 10 GiB；`MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT` 默认 80。多副本上传通过 PostgreSQL 事务锁串行计算同企业已提交用量，超过硬上限返回 HTTP 507 且不会上传。
+- 数据库事务在对象上传后回滚，或批量上传中的单个文件没有完成数据库引用时，后端会补偿删除 MinIO 对象。Prometheus 指标 `mamoji_receipt_storage_capacity_warnings_total`、`mamoji_receipt_storage_capacity_rejections_total` 和带 `outcome` 标签的 `mamoji_receipt_storage_compensation_total` 分别记录水位预警、拒绝与补偿结果；补偿失败日志必须触发人工排查。
+- 应用配额只统计已提交的 MinIO 票据，不替代宿主机/volume 磁盘告警。上线前仍需为 MinIO volume 设置主机级容量阈值，并为数据库与 MinIO 使用同一维护窗口备份。
 
 ## 日常发布
 
@@ -222,7 +225,7 @@ scripts/smoke-prod.sh
 - Webhook 投递出现 `dead`，或 `notification_deliveries` 的 `pending/failed` 持续积压。
 - `notification-reminders` 长期没有完成记录，或失败时间持续推进且 `last_error` 未消除。
 
-Prometheus 已内置后端不可抓取、5xx、堆内存和 HikariCP 等规则；生产通知仍需接入公司现有告警平台或 Alertmanager。
+Prometheus 已内置后端不可抓取、5xx、堆内存、HikariCP、票据容量水位/拒绝和未引用对象补偿失败等规则；生产通知仍需接入公司现有告警平台或 Alertmanager。
 
 Outbox 积压检查：
 

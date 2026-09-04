@@ -34,6 +34,7 @@
 - `MAMOJI_AUTH_MAX_FAILED_ATTEMPTS`、`MAMOJI_AUTH_MAX_FAILED_ATTEMPTS_PER_SOURCE`、锁定窗口和锁定时长已确认符合公司安全策略。
 - `MAMOJI_OUTBOX_ENABLED=true`，`MAMOJI_OUTBOX_CONSUMER_ENABLED=true`，异步事件先走数据库 Outbox。
 - Caddy、MinIO、Prometheus 和备份 helper 镜像均固定明确版本，不使用 `latest`。
+- `MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY` 已按企业合同与磁盘预算设置为正整数，`MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT` 位于 1–99；已验证超额上传返回 507 且不新增票据或对象。
 - 公网只开放 `80/443`；PostgreSQL、后端、前端、MinIO API/Console 和 Prometheus 不直接暴露公网。
 - 已根据主机容量复核各服务 CPU、内存和 PID 限制，容器限制总和不会挤占宿主机与文件缓存所需余量。
 - 后端 Docker 停止宽限期大于 Spring 优雅停机窗口，Hikari 连接池上限与 PostgreSQL `max_connections` 留有运维连接余量。
@@ -64,7 +65,7 @@
 ## 监控与运维
 
 - Prometheus 可访问 `http://127.0.0.1:39090` 并成功抓取 `mamoji-backend`。
-- `docker/prometheus/alerts.yml` 中的后端不可用、5xx、堆内存和连接池告警规则已加载。
+- `docker/prometheus/alerts.yml` 中的后端不可用、5xx、堆内存、连接池和票据对象存储告警规则已加载。
 - `outbox_events` 没有 `dead` 状态事件，`pending/failed` 没有持续积压。
 - `notification_deliveries` 没有 `dead` 状态投递，`pending/failed` 没有持续积压，外部 Webhook 没有持续失败。
 - `scheduled_job_leases` 中不存在长期超过 `locked_until` 仍未被接管的提醒任务，最近完成或失败时间符合提醒周期。
@@ -72,6 +73,7 @@
 - `/healthz` 已接入负载均衡或外部探针。
 - Docker 后端探针使用 `/actuator/health/readiness` 且数据库中断时会转为非就绪；`/actuator/health/liveness` 不依赖外部服务。
 - 磁盘空间、CPU、内存、PostgreSQL volume、MinIO volume 已纳入主机级监控。
+- 票据容量预警/拒绝与未引用对象补偿指标已纳入 Prometheus；`mamoji_receipt_storage_compensation_total{outcome="failure"}` 增长会触发人工孤立对象排查。
 - 发布后执行 `scripts/smoke-prod.sh` 并人工抽查登录、员工、薪酬、税务、附件和审计日志。
 - 多副本发布没有使用 `SKIP_REPLICA_SMOKE=true`；如因紧急处置跳过，发布记录包含原因和后续补验结果。
 - 在预生产执行 `scripts/concurrency-smoke.sh` 只读模式并记录并发数、p95/p99、错误率、Hikari 等待和 CPU/内存；混合模式只在显式允许写入的维护窗口执行，且确认临时分类已清理。
