@@ -121,6 +121,6 @@ Actor（登录人员） + Company（当前公司） + Role（角色）
 - 工作台已改为后端聚合读模型，前端不再并发拼装大量接口。
 - 人力成本已拆为独立后端聚合读模型，优先使用薪酬月结快照，无批次时明确标记为员工档案估算。
 - 公司主体、主体划转、资金账户、账本及成员、流水、分类、预算、周期事项、税务事项、部门、员工与任职事件已移除旧 Store 中的 Map 和双写，以 PostgreSQL 专属仓储为唯一事实源；流水由 V17、账户由 V18、账本及成员由 V19、分类由 V20、税务事项由 V21、部门由 V22、员工由 V23、任职事件由 V24、公司主体由 V25、主体划转由 V26 的类型、租户和流程约束保护。`EnterpriseStore` 与 `InMemoryStore` 均已删除；审计、首次管理员和企业数据分别归 `AuditTrailService`、`InitialAdminDataInitializer` 与 `EnterpriseDataInitializer`。
-- 数据库仍保留单实例保护开关。生产启动期全表兼容修复已经删除，demo 初始化器也不会在 `bootstrap` 模式注册；等剩余首次数据、默认账本/分类和票据兼容写路径迁出或具备并发保护后，再把多实例作为默认生产拓扑。
+- 数据库仍保留单实例保护开关。生产启动期全表兼容修复已经删除，票据派生默认值由 V27 一次性回填，demo 初始化器也不会在 `bootstrap` 模式注册；等剩余首次数据和默认账本/分类写路径迁出或具备并发保护后，再把多实例作为默认生产拓扑。
 
 代码边界和后续拆分规则见 [ENTERPRISE_MODULE_ARCHITECTURE.md](ENTERPRISE_MODULE_ARCHITECTURE.md)。

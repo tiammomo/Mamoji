@@ -16,7 +16,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 /** Evidence-owned JDBC persistence for receipt vouchers. */
 @Repository
@@ -61,24 +60,6 @@ public class ReceiptVoucherRepository {
     public long count() {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class);
         return count == null ? 0 : count;
-    }
-
-    @Transactional
-    public int repairLegacyDefaults() {
-        List<ReceiptVoucher> vouchers = jdbc.query(
-            "SELECT * FROM receipt_vouchers ORDER BY id",
-            (rs, rowNum) -> mapStoredReceiptVoucher(rs)
-        );
-        int repaired = 0;
-        LocalDate today = LocalDate.now();
-        for (ReceiptVoucher voucher : vouchers) {
-            if (ReceiptVoucherPolicy.hydrate(voucher, today)) {
-                voucher.updatedAt = OffsetDateTime.now().toString();
-                save(voucher);
-                repaired++;
-            }
-        }
-        return repaired;
     }
 
     public ReceiptVoucher insert(ReceiptVoucherDraft draft) {
