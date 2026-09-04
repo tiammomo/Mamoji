@@ -2,6 +2,11 @@ package com.mamoji.approval.application;
 
 import com.mamoji.approval.api.ApprovalActionRequest;
 import com.mamoji.approval.api.ApprovalCreateRequest;
+import com.mamoji.approval.api.ApprovalDetail;
+import com.mamoji.approval.application.ApprovalRepository.NewAction;
+import com.mamoji.approval.application.ApprovalRepository.NewApproval;
+import com.mamoji.approval.domain.ApprovalAction;
+import com.mamoji.approval.domain.ApprovalRequest;
 import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.approval.domain.ApprovalWorkflow.Action;
 import com.mamoji.approval.domain.ApprovalWorkflow.Transition;
@@ -13,18 +18,12 @@ import com.mamoji.platform.identity.User;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,18 +40,18 @@ public class ApprovalApplicationService {
         "receipt_voucher", "transaction", "budget", "employee", "payroll_run", "other"
     );
 
-    private final JdbcTemplate jdbc;
+    private final ApprovalRepository repository;
     private final AccessControlService accessControl;
     private final AuditTrailService auditTrail;
     private final ApprovalEntityGateway entityGateway;
 
     public ApprovalApplicationService(
-        JdbcTemplate jdbc,
+        ApprovalRepository repository,
         AccessControlService accessControl,
         AuditTrailService auditTrail,
         ApprovalEntityGateway entityGateway
     ) {
-        this.jdbc = jdbc;
+        this.repository = repository;
         this.accessControl = accessControl;
         this.auditTrail = auditTrail;
         this.entityGateway = entityGateway;
@@ -63,78 +62,30 @@ public class ApprovalApplicationService {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
         PageRequest page = PageRequest.from(params);
-        StringBuilder where = new StringBuilder(" WHERE company_id = ?");
-        List<Object> args = new ArrayList<>();
-        args.add(company.id);
-        if (user.role != Roles.ADMIN) {
-            where.append(" AND (applicant_user_id = ? OR assignee_user_id = ?)");
-            args.add(user.id);
-            args.add(user.id);
-        }
-        addFilter(where, args, "status", params.get("status"));
-        addFilter(where, args, "request_type", params.get("requestType"));
-        String keyword = Objects.toString(params.get("keyword"), "").trim().toLowerCase(Locale.ROOT);
-        if (!keyword.isBlank()) {
-            where.append(" AND (LOWER(title) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)");
-            args.add("%" + keyword + "%");
-            args.add("%" + keyword + "%");
-        }
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM approval_requests" + where, Long.class, args.toArray());
-        List<Object> pageArgs = new ArrayList<>(args);
-        pageArgs.add(page.size());
-        pageArgs.add((long) page.page() * page.size());
-        List<ApprovalRequest> content = jdbc.query(
-            "SELECT * FROM approval_requests" + where + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            this::mapRequest,
-            pageArgs.toArray()
+        return repository.findPage(
+            company.id,
+            user.role == Roles.ADMIN ? null : user.id,
+            params.get("status"),
+            params.get("requestType"),
+            params.get("keyword"),
+            page
         );
-        long totalElements = total == null ? 0 : total;
-        int totalPages = (int) Math.ceil((double) totalElements / page.size());
-        return new PagedResponse<>(content, totalElements, totalPages, page.size(), page.page());
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        String accessClause = user.role == Roles.ADMIN ? "" : " AND (applicant_user_id = ? OR assignee_user_id = ?)";
-        List<Object> args = new ArrayList<>();
-        args.add(user.id);
-        args.add(company.id);
-        if (user.role != Roles.ADMIN) {
-            args.add(user.id);
-            args.add(user.id);
-        }
-        return jdbc.queryForObject("""
-            SELECT COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-                   COUNT(*) FILTER (WHERE status = 'approved') AS approved,
-                   COUNT(*) FILTER (WHERE status = 'rejected') AS rejected,
-                   COUNT(*) FILTER (WHERE status = 'pending' AND assignee_user_id = ?) AS mine_pending
-            FROM approval_requests
-            WHERE company_id = ?
-            """ + accessClause, (rs, rowNum) -> {
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("total", rs.getLong("total"));
-            result.put("pending", rs.getLong("pending"));
-            result.put("approved", rs.getLong("approved"));
-            result.put("rejected", rs.getLong("rejected"));
-            result.put("minePending", rs.getLong("mine_pending"));
-            return result;
-        }, args.toArray());
+        return repository.summarize(company.id, user.id, user.role == Roles.ADMIN);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public ApprovalDetail get(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequest(id);
-        accessControl.resolveCompany(user, request.companyId);
+        accessControl.resolveCompany(user, request.companyId());
         assertCanView(user, request);
-        List<ApprovalAction> actions = jdbc.query(
-            "SELECT * FROM approval_actions WHERE request_id = ? ORDER BY id",
-            this::mapAction,
-            id
-        );
+        List<ApprovalAction> actions = repository.findActions(id);
         return new ApprovalDetail(request, actions);
     }
 
@@ -151,35 +102,17 @@ public class ApprovalApplicationService {
             : headerIdempotencyKey;
         String idempotencyKey = idempotencyKey(suppliedIdempotencyKey);
         if (idempotencyKey != null) {
-            jdbc.query(
-                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
-                "approval:" + company.id + ":" + idempotencyKey
-            );
-            List<ApprovalRequest> replay = jdbc.query(
-                "SELECT * FROM approval_requests WHERE company_id = ? AND idempotency_key = ?",
-                this::mapRequest,
-                company.id,
-                idempotencyKey
-            );
-            if (!replay.isEmpty()) return get(authorization, replay.getFirst().id);
+            repository.lockIdempotencyKey(company.id, idempotencyKey);
+            ApprovalRequest replay = repository.findByIdempotencyKey(company.id, idempotencyKey).orElse(null);
+            if (replay != null) return get(authorization, replay.id());
         }
         String requestType = allowed(valueOr(command.requestType(), "other"), REQUEST_TYPES, "requestType");
         String entityType = allowed(valueOr(command.entityType(), "other"), ENTITY_TYPES, "entityType");
         Long entityId = command.entityId();
         validateEntity(user, company.id, entityType, entityId);
         if (entityId != null) {
-            String leaseKey = "approval:" + company.id + ":" + entityType + ":" + entityId;
-            jdbc.query(
-                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> { },
-                leaseKey
-            );
-            Integer pending = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM approval_requests
-                WHERE company_id = ? AND entity_type = ? AND entity_id = ? AND status = 'pending'
-                """, Integer.class, company.id, entityType, entityId);
-            if (pending != null && pending > 0) {
+            repository.lockEntity(company.id, entityType, entityId);
+            if (repository.hasPendingRequest(company.id, entityType, entityId)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "This entity already has a pending approval request");
             }
         }
@@ -190,18 +123,24 @@ public class ApprovalApplicationService {
         BigDecimal amount = command.amount() == null ? BigDecimal.ZERO : command.amount();
         String now = OffsetDateTime.now().toString();
         Transition submission = ApprovalWorkflow.submission();
-        ApprovalRequest request = jdbc.queryForObject("""
-            INSERT INTO approval_requests (
-                company_id, request_type, entity_type, entity_id, title, amount, applicant_user_id,
-                assignee_user_id, status, current_step, description, decided_at, created_at, updated_at,
-                idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-            RETURNING *
-            """, this::mapRequest, company.id, requestType, entityType, entityId, title, amount.toPlainString(),
-            user.id, assigneeId, submission.targetStatus().value(), submission.currentStep(), description, now, now,
-            idempotencyKey);
+        ApprovalRequest request = repository.insert(new NewApproval(
+            company.id,
+            requestType,
+            entityType,
+            entityId,
+            title,
+            amount,
+            user.id,
+            assigneeId,
+            submission.targetStatus().value(),
+            submission.currentStep(),
+            description,
+            now,
+            now,
+            idempotencyKey
+        ));
         addAction(
-            request.id,
+            request.id(),
             user.id,
             submission.action().value(),
             limitedNullable(blankToNull(command.comment()), 500, "comment")
@@ -210,23 +149,23 @@ public class ApprovalApplicationService {
         auditTrail.record(
             company.id,
             "approval_request",
-            request.id,
+            request.id(),
             submission.action().value(),
             auditSummary(submission.action(), title),
             user.id,
             user.nickname
         );
-        return get(authorization, request.id);
+        return get(authorization, request.id());
     }
 
     @Transactional
     public ApprovalDetail decide(String authorization, long id, String action, ApprovalActionRequest command) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
-        accessControl.resolveCompany(user, request.companyId);
+        accessControl.resolveCompany(user, request.companyId());
         Action workflowAction = parseDecisionAction(action);
         Transition transition = requireTransition(request, workflowAction);
-        if (user.role != Roles.ADMIN && !Objects.equals(request.assigneeUserId, user.id)) {
+        if (user.role != Roles.ADMIN && !Objects.equals(request.assigneeUserId(), user.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the assignee or an administrator can decide this request");
         }
         String comment = limitedNullable(blankToNull(command.comment()), 500, "comment");
@@ -234,16 +173,15 @@ public class ApprovalApplicationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection comment is required");
         }
         String now = OffsetDateTime.now().toString();
-        jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
-            transition.targetStatus().value(), transition.currentStep(), now, now, id);
+        repository.updateState(id, transition.targetStatus().value(), transition.currentStep(), now, now);
         addAction(id, user.id, transition.action().value(), comment);
         syncEntity(authorization, request, transition.entityStatus());
         auditTrail.record(
-            request.companyId,
+            request.companyId(),
             "approval_request",
             id,
             transition.action().value(),
-            auditSummary(transition.action(), request.title),
+            auditSummary(transition.action(), request.title()),
             user.id,
             user.nickname
         );
@@ -254,14 +192,13 @@ public class ApprovalApplicationService {
     public ApprovalDetail withdraw(String authorization, long id, ApprovalActionRequest command) {
         User user = accessControl.requireUser(authorization);
         ApprovalRequest request = requireRequestForUpdate(id);
-        accessControl.resolveCompany(user, request.companyId);
-        if (request.applicantUserId != user.id) {
+        accessControl.resolveCompany(user, request.companyId());
+        if (request.applicantUserId() != user.id) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the applicant can withdraw this request");
         }
         Transition transition = requireTransition(request, Action.WITHDRAW);
         String now = OffsetDateTime.now().toString();
-        jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
-            transition.targetStatus().value(), transition.currentStep(), now, now, id);
+        repository.updateState(id, transition.targetStatus().value(), transition.currentStep(), now, now);
         addAction(
             id,
             user.id,
@@ -270,11 +207,11 @@ public class ApprovalApplicationService {
         );
         syncEntity(authorization, request, transition.entityStatus());
         auditTrail.record(
-            request.companyId,
+            request.companyId(),
             "approval_request",
             id,
             transition.action().value(),
-            auditSummary(transition.action(), request.title),
+            auditSummary(transition.action(), request.title()),
             user.id,
             user.nickname
         );
@@ -295,11 +232,11 @@ public class ApprovalApplicationService {
 
     private Transition requireTransition(ApprovalRequest request, Action action) {
         try {
-            return ApprovalWorkflow.transition(ApprovalWorkflow.Status.fromStored(request.status), action);
+            return ApprovalWorkflow.transition(ApprovalWorkflow.Status.fromStored(request.status()), action);
         } catch (IllegalArgumentException | IllegalStateException ex) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
-                "Approval request cannot transition from " + request.status + " using " + action.value()
+                "Approval request cannot transition from " + request.status() + " using " + action.value()
             );
         }
     }
@@ -314,7 +251,7 @@ public class ApprovalApplicationService {
     }
 
     private void syncEntity(String authorization, ApprovalRequest request, String status) {
-        entityGateway.synchronizeStatus(authorization, request.entityType, request.entityId, status);
+        entityGateway.synchronizeStatus(authorization, request.entityType(), request.entityId(), status);
     }
 
     private void validateEntity(User user, long companyId, String entityType, Long entityId) {
@@ -322,47 +259,39 @@ public class ApprovalApplicationService {
     }
 
     private void validateAssignee(Company company, long assigneeId) {
-        Integer allowed = jdbc.queryForObject("""
-            SELECT COUNT(*) FROM users u
-            WHERE u.id = ? AND (
-                u.id = ? OR EXISTS (
-                    SELECT 1 FROM employees e
-                    WHERE e.company_id = ? AND e.user_id = u.id AND e.status <> 'departed'
-                )
-            )
-            """, Integer.class, assigneeId, company.ownerId, company.id);
-        if (allowed == null || allowed == 0) {
+        if (!repository.isValidAssignee(company.id, company.ownerId, assigneeId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assignee must be an active member of the selected company");
         }
     }
 
     private ApprovalRequest requireRequest(long id) {
-        List<ApprovalRequest> rows = jdbc.query("SELECT * FROM approval_requests WHERE id = ?", this::mapRequest, id);
-        if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Approval request not found");
-        return rows.getFirst();
+        return repository.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Approval request not found"));
     }
 
     private ApprovalRequest requireRequestForUpdate(long id) {
-        List<ApprovalRequest> rows = jdbc.query("SELECT * FROM approval_requests WHERE id = ? FOR UPDATE", this::mapRequest, id);
-        if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Approval request not found");
-        return rows.getFirst();
+        return repository.findByIdForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Approval request not found"));
     }
 
     private void assertCanView(User user, ApprovalRequest request) {
-        if (user.role != Roles.ADMIN && request.applicantUserId != user.id && !Objects.equals(request.assigneeUserId, user.id)) {
+        if (
+            user.role != Roles.ADMIN
+                && request.applicantUserId() != user.id
+                && !Objects.equals(request.assigneeUserId(), user.id)
+        ) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
     }
 
     private void addAction(long requestId, long actorUserId, String action, String comment) {
-        jdbc.update("INSERT INTO approval_actions (request_id, actor_user_id, action, comment, created_at) VALUES (?, ?, ?, ?, ?)",
-            requestId, actorUserId, action, comment, OffsetDateTime.now().toString());
-    }
-
-    private void addFilter(StringBuilder where, List<Object> args, String column, String value) {
-        if (value == null || value.isBlank()) return;
-        where.append(" AND ").append(column).append(" = ?");
-        args.add(value);
+        repository.insertAction(new NewAction(
+            requestId,
+            actorUserId,
+            action,
+            comment,
+            OffsetDateTime.now().toString()
+        ));
     }
 
     private String allowed(String value, Set<String> values, String field) {
@@ -400,36 +329,4 @@ public class ApprovalApplicationService {
         return value == null || value.isBlank() ? null : value;
     }
 
-    private ApprovalRequest mapRequest(ResultSet rs, int rowNum) throws SQLException {
-        long assignee = rs.getLong("assignee_user_id");
-        Long assigneeUserId = rs.wasNull() ? null : assignee;
-        return new ApprovalRequest(
-            rs.getLong("id"), rs.getLong("version"), rs.getString("idempotency_key"),
-            rs.getLong("company_id"), rs.getString("request_type"), rs.getString("entity_type"),
-            nullableLong(rs, "entity_id"), rs.getString("title"), new BigDecimal(rs.getString("amount")),
-            rs.getLong("applicant_user_id"), assigneeUserId, rs.getString("status"),
-            rs.getString("current_step"), rs.getString("description"), rs.getString("decided_at"),
-            rs.getString("created_at"), rs.getString("updated_at")
-        );
-    }
-
-    private ApprovalAction mapAction(ResultSet rs, int rowNum) throws SQLException {
-        return new ApprovalAction(rs.getLong("id"), rs.getLong("request_id"), rs.getLong("actor_user_id"),
-            rs.getString("action"), rs.getString("comment"), rs.getString("created_at"));
-    }
-
-    private Long nullableLong(ResultSet rs, String column) throws SQLException {
-        long value = rs.getLong(column);
-        return rs.wasNull() ? null : value;
-    }
-
-    public record ApprovalRequest(
-        long id, long version, String idempotencyKey, long companyId, String requestType, String entityType, Long entityId, String title,
-        BigDecimal amount, long applicantUserId, Long assigneeUserId, String status, String currentStep,
-        String description, String decidedAt, String createdAt, String updatedAt
-    ) {}
-
-    public record ApprovalAction(long id, long requestId, long actorUserId, String action, String comment, String createdAt) {}
-
-    public record ApprovalDetail(ApprovalRequest request, List<ApprovalAction> actions) {}
 }
