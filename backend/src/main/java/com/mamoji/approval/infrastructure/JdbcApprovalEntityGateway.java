@@ -1,7 +1,7 @@
 package com.mamoji.approval.infrastructure;
 
 import com.mamoji.approval.application.ApprovalEntityGateway;
-import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.application.ReceiptApprovalStatusService;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.platform.identity.User;

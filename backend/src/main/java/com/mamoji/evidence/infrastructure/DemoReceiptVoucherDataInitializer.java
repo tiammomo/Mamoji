@@ -1,7 +1,7 @@
 package com.mamoji.evidence.infrastructure;
 
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.identity.account.application.UserDirectory;

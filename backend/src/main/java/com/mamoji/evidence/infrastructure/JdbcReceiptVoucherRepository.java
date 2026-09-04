@@ -1,9 +1,9 @@
 package com.mamoji.evidence.infrastructure;
 
-import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.evidence.domain.ReceiptVoucherPolicy;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
