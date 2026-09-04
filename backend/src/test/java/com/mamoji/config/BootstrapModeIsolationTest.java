@@ -16,10 +16,10 @@ import com.mamoji.evidence.infrastructure.DemoReceiptVoucherDataInitializer;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.infrastructure.AccountDataInitializer;
+import com.mamoji.finance.infrastructure.DemoLedgerDataInitializer;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.application.TransactionWriteRepository;
-import com.mamoji.operations.infrastructure.CategoryDataInitializer;
 import com.mamoji.operations.infrastructure.DemoCategoryDataInitializer;
 import com.mamoji.operations.infrastructure.TransactionDataInitializer;
 import com.mamoji.people.application.DepartmentRepository;
@@ -32,6 +32,7 @@ import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransferRepository;
 import com.mamoji.recurring.application.RecurringItemRepository;
 import com.mamoji.recurring.infrastructure.RecurringItemDataInitializer;
+import com.mamoji.service.CompanyProvisioningService;
 import com.mamoji.tax.application.TaxItemRepository;
 import com.mamoji.tax.domain.TaxItemPolicy;
 import com.mamoji.tax.infrastructure.TaxItemDataInitializer;
@@ -46,7 +47,7 @@ class BootstrapModeIsolationTest {
         .withUserConfiguration(
             EnterpriseDataInitializer.class,
             DemoEnterpriseDataInitializer.class,
-            CategoryDataInitializer.class,
+            DemoLedgerDataInitializer.class,
             DemoCategoryDataInitializer.class,
             AccountDataInitializer.class,
             TransactionDataInitializer.class,
@@ -56,7 +57,7 @@ class BootstrapModeIsolationTest {
             DemoReceiptVoucherDataInitializer.class
         )
         .withBean("initialAdminDataInitializer", Object.class, Object::new)
-        .withBean("ledgerDataInitializer", Object.class, Object::new)
+        .withBean(CompanyProvisioningService.class, () -> mock(CompanyProvisioningService.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(UserDirectory.class, () -> mock(UserDirectory.class))
         .withBean(AuditTrailService.class, () -> mock(AuditTrailService.class))
@@ -82,7 +83,8 @@ class BootstrapModeIsolationTest {
     void productionBootstrapContextDoesNotRegisterDemoInitializers() {
         context.withPropertyValues("mamoji.bootstrap.mode=bootstrap").run(application -> {
             assertInstanceOf(EnterpriseDataInitializer.class, application.getBean("enterpriseDataInitializer"));
-            assertInstanceOf(CategoryDataInitializer.class, application.getBean("categoryDataInitializer"));
+            assertFalse(application.containsBean("ledgerDataInitializer"));
+            assertFalse(application.containsBean("categoryDataInitializer"));
             assertFalse(application.containsBean("receiptVoucherDataInitializer"));
             assertFalse(application.containsBean("demoEnterpriseDataInitializer"));
             assertFalse(application.containsBean("demoCategoryDataInitializer"));
@@ -99,6 +101,7 @@ class BootstrapModeIsolationTest {
     void demoContextRegistersOnlyDemoEnterpriseAndCategoryVariants() {
         context.withPropertyValues("mamoji.bootstrap.mode=demo").run(application -> {
             assertInstanceOf(DemoEnterpriseDataInitializer.class, application.getBean("enterpriseDataInitializer"));
+            assertInstanceOf(DemoLedgerDataInitializer.class, application.getBean("ledgerDataInitializer"));
             assertInstanceOf(DemoCategoryDataInitializer.class, application.getBean("categoryDataInitializer"));
             assertTrue(application.containsBean("accountDataInitializer"));
             assertTrue(application.containsBean("transactionDataInitializer"));

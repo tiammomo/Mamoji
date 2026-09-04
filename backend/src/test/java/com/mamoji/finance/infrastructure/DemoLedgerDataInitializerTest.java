@@ -5,23 +5,23 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class LedgerDataInitializerTest {
+class DemoLedgerDataInitializerTest {
     @Test
-    void ensuresOneDurableAccountingWorkspaceForEveryInitializedCompany() {
+    void ensuresOneDurableAccountingWorkspaceForEveryDemoCompany() {
         FinanceRepository finances = mock(FinanceRepository.class);
         CompanyRepository companies = mock(CompanyRepository.class);
         CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
         Company first = company(9, 3, "First company", "cny");
         Company second = company(10, 4, "Second company", "USD");
         when(companies.findAll()).thenReturn(List.of(first, second));
-        LedgerDataInitializer initializer = new LedgerDataInitializer(finances, companies, memberships);
+        DemoLedgerDataInitializer initializer = new DemoLedgerDataInitializer(finances, companies, memberships);
 
         initializer.initialize();
 
@@ -32,12 +32,12 @@ class LedgerDataInitializerTest {
     }
 
     @Test
-    void leavesFinancePersistenceUntouchedWhenNoCompanyWasInitialized() {
+    void leavesDemoFinancePersistenceUntouchedWhenNoCompanyWasInitialized() {
         FinanceRepository finances = mock(FinanceRepository.class);
         CompanyRepository companies = mock(CompanyRepository.class);
         CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
         when(companies.findAll()).thenReturn(List.of());
-        LedgerDataInitializer initializer = new LedgerDataInitializer(finances, companies, memberships);
+        DemoLedgerDataInitializer initializer = new DemoLedgerDataInitializer(finances, companies, memberships);
 
         initializer.initialize();
 

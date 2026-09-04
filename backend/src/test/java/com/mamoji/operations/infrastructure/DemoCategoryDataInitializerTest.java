@@ -2,22 +2,21 @@ package com.mamoji.operations.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.domain.Category;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.tenant.CompanyRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-class CategoryDataInitializerTest {
+class DemoCategoryDataInitializerTest {
     @Test
-    void demoModeSeedsDetailedCategoriesBeforeEnsuringEveryCompanyDefault() {
+    void seedsDetailedCategoriesBeforeEnsuringEveryCompanyDefault() {
         CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
         CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company first = company(11, 101, "company");
@@ -39,7 +38,7 @@ class CategoryDataInitializerTest {
     }
 
     @Test
-    void demoModeDoesNotRestoreCategoriesAUserAlreadyCustomized() {
+    void doesNotRestoreCategoriesAUserAlreadyCustomized() {
         CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
         CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company company = company(21, 201, "company");
@@ -54,21 +53,6 @@ class CategoryDataInitializerTest {
 
         verify(categories, never()).insert(any());
         verify(categories).ensureCompanyDefaults(201, 21);
-    }
-
-    @Test
-    void bootstrapModeOnlyEnsuresGenericDefaults() {
-        CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
-        CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
-        Company company = company(31, 301, "company");
-        when(companies.findAll()).thenReturn(List.of(company));
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies);
-
-        initializer.initialize();
-
-        verify(categories, never()).findAll(anyLong(), anyLong(), any());
-        verify(categories, never()).insert(any());
-        verify(categories).ensureCompanyDefaults(301, 31);
     }
 
     private Company company(long id, long ownerId, String entityType) {

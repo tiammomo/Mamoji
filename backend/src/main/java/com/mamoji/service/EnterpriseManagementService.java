@@ -1,8 +1,6 @@
 package com.mamoji.service;
 
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.finance.application.FinanceRepository;
-import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.people.application.EmploymentEventRepository;
@@ -50,8 +48,7 @@ import static com.mamoji.service.support.DomainSupport.touch;
 @Service
 public class EnterpriseManagementService {
     private final AuditTrailService auditTrail;
-    private final FinanceRepository financeRepository;
-    private final CategoryRepository categoryRepository;
+    private final CompanyProvisioningService companyProvisioning;
     private final DepartmentRepository departments;
     private final EmployeeRepository employeeRepository;
     private final EmploymentEventRepository employmentEvents;
@@ -66,8 +63,7 @@ public class EnterpriseManagementService {
 
     public EnterpriseManagementService(
         AuditTrailService auditTrail,
-        FinanceRepository financeRepository,
-        CategoryRepository categoryRepository,
+        CompanyProvisioningService companyProvisioning,
         DepartmentRepository departments,
         EmployeeRepository employeeRepository,
         EmploymentEventRepository employmentEvents,
@@ -81,8 +77,7 @@ public class EnterpriseManagementService {
         EntityTransferRepository entityTransfers
     ) {
         this.auditTrail = auditTrail;
-        this.financeRepository = financeRepository;
-        this.categoryRepository = categoryRepository;
+        this.companyProvisioning = companyProvisioning;
         this.departments = departments;
         this.employeeRepository = employeeRepository;
         this.employmentEvents = employmentEvents;
@@ -161,10 +156,7 @@ public class EnterpriseManagementService {
         CompanyProfilePolicy.initialize(company);
         applyCompanyFields(company, body);
         validateCompanyProfile(company);
-        companies.insert(company);
-        memberships.ensureOwner(company);
-        financeRepository.ensureAccountingLedger(user.id, company.id, company.currency, company.name);
-        categoryRepository.ensureCompanyDefaults(user.id, company.id);
+        companyProvisioning.create(company);
         audit(company.id, "company", company.id, "create", "创建公司主体: " + company.name, user);
         return company;
     }
