@@ -8,7 +8,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.platform.tenant.Company;
@@ -28,21 +27,6 @@ import org.mockito.ArgumentCaptor;
 
 class AccountDataInitializerTest {
     @Test
-    void bootstrapModeDoesNotCreateDemoAccounts() {
-        FinanceRepository finances = mock(FinanceRepository.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        AccountDataInitializer initializer = new AccountDataInitializer(
-            finances,
-            companies,
-            "bootstrap"
-        );
-
-        initializer.initialize();
-
-        verifyNoInteractions(finances, companies);
-    }
-
-    @Test
     void demoModeCreatesTypedCompanyScopedAccountsOnlyOnce() {
         FinanceRepository finances = mock(FinanceRepository.class);
         CompanyRepository companies = mock(CompanyRepository.class);
@@ -54,7 +38,7 @@ class AccountDataInitializerTest {
             .thenReturn(List.of(new Account()));
         when(finances.ensureAccountingLedger(company.ownerId, company.id, company.currency, company.name))
             .thenReturn(ledger);
-        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies, "demo");
+        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies);
 
         initializer.initialize();
         initializer.initialize();
@@ -97,7 +81,7 @@ class AccountDataInitializerTest {
         Company company = company();
         when(companies.findAll()).thenReturn(List.of(company));
         when(finances.findAccounts(company.ownerId, company.id)).thenReturn(List.of(new Account()));
-        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies, "demo");
+        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies);
 
         initializer.initialize();
 

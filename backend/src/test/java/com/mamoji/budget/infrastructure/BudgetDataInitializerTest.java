@@ -7,7 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.budget.application.BudgetRepository;
@@ -22,23 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class BudgetDataInitializerTest {
-    @Test
-    void bootstrapModeDoesNotCreateDemoBudget() {
-        BudgetRepository budgets = mock(BudgetRepository.class);
-        BudgetPolicy policy = mock(BudgetPolicy.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        BudgetDataInitializer initializer = new BudgetDataInitializer(
-            budgets,
-            policy,
-            companies,
-            "bootstrap"
-        );
-
-        initializer.initialize();
-
-        verifyNoInteractions(budgets, policy, companies);
-    }
-
     @Test
     void demoModeCreatesAndProjectsCompanyBudgetOnlyOnce() {
         BudgetRepository budgets = mock(BudgetRepository.class);
@@ -56,8 +38,7 @@ class BudgetDataInitializerTest {
         BudgetDataInitializer initializer = new BudgetDataInitializer(
             budgets,
             policy,
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();
@@ -87,8 +68,7 @@ class BudgetDataInitializerTest {
         BudgetDataInitializer initializer = new BudgetDataInitializer(
             budgets,
             new BudgetPolicy(),
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();

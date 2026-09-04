@@ -8,7 +8,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.platform.tenant.Company;
@@ -26,22 +25,12 @@ class ReceiptVoucherDataInitializerTest {
     @Test
     void bootstrapModeOnlyRepairsExistingEvidenceData() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        AuditTrailService auditTrail = mock(AuditTrailService.class);
-        UserDirectory userDirectory = mock(UserDirectory.class);
-        ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
-            receiptVouchers,
-            companies,
-            auditTrail,
-            userDirectory,
-            "bootstrap"
-        );
+        ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(receiptVouchers);
 
         initializer.initialize();
 
         verify(receiptVouchers).repairLegacyDefaults();
         verify(receiptVouchers, never()).insert(any());
-        verifyNoInteractions(companies, auditTrail, userDirectory);
     }
 
     @Test
@@ -73,18 +62,17 @@ class ReceiptVoucherDataInitializerTest {
             return voucher;
         });
         when(receiptVouchers.findAll()).thenAnswer(invocation -> List.copyOf(inserted));
-        ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
+        DemoReceiptVoucherDataInitializer initializer = new DemoReceiptVoucherDataInitializer(
             receiptVouchers,
             companies,
             auditTrail,
-            userDirectory,
-            "demo"
+            userDirectory
         );
 
         initializer.initialize();
 
         assertEquals(8, inserted.size());
-        verify(receiptVouchers).repairLegacyDefaults();
+        verify(receiptVouchers, never()).repairLegacyDefaults();
         verify(receiptVouchers, times(8)).save(any());
         verify(auditTrail, times(8)).record(
             anyLong(),

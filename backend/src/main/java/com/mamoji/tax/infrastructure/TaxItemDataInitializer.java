@@ -11,8 +11,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -20,6 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Seeds tax demo data once, after company policy data is durable. */
 @Component
+@ConditionalOnProperty(name = "mamoji.bootstrap.mode", havingValue = "demo", matchIfMissing = true)
 @DependsOn("enterpriseDataInitializer")
 public class TaxItemDataInitializer {
     private static final List<TaxSeed> DEMO_ITEMS = List.of(
@@ -45,27 +45,21 @@ public class TaxItemDataInitializer {
     private final TaxItemPolicy policy;
     private final CompanyRepository companies;
     private final TransactionTemplate transaction;
-    private final String bootstrapMode;
 
     public TaxItemDataInitializer(
         TaxItemRepository taxItems,
         TaxItemPolicy policy,
         CompanyRepository companies,
-        PlatformTransactionManager transactionManager,
-        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
+        PlatformTransactionManager transactionManager
     ) {
         this.taxItems = taxItems;
         this.policy = policy;
         this.companies = companies;
         this.transaction = new TransactionTemplate(transactionManager);
-        this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
     @PostConstruct
     void initialize() {
-        if ("bootstrap".equals(bootstrapMode)) {
-            return;
-        }
         transaction.executeWithoutResult(ignored -> companies.findAll().stream()
             .filter(company -> "company".equals(company.entityType))
             .min(Comparator.comparingLong(company -> company.id))

@@ -24,7 +24,7 @@ class CategoryDataInitializerTest {
         Company household = company(12, 101, "household");
         when(companies.findAll()).thenReturn(List.of(first, household));
         when(categories.findAll(101, 11, null)).thenReturn(List.of());
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "demo");
+        DemoCategoryDataInitializer initializer = new DemoCategoryDataInitializer(categories, companies);
 
         initializer.initialize();
 
@@ -48,7 +48,7 @@ class CategoryDataInitializerTest {
             category("主营业务收入", "income"),
             category("团队餐饮", "expense")
         ));
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "demo");
+        DemoCategoryDataInitializer initializer = new DemoCategoryDataInitializer(categories, companies);
 
         initializer.initialize();
 
@@ -62,7 +62,7 @@ class CategoryDataInitializerTest {
         CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company company = company(31, 301, "company");
         when(companies.findAll()).thenReturn(List.of(company));
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "bootstrap");
+        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies);
 
         initializer.initialize();
 
