@@ -195,6 +195,197 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void receiptQueryContractsValidateFiltersAndUseStableDatabasePagingAndSummary() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Receipt query contract " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Receipt query account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Receipt query expense", "expense");
+        Map<String, Object> transactionResult = createTransaction(token, companyId, account, category, "20");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) transactionResult.get("transaction");
+
+        ApiResponse purchase = request("POST", "/api/v1/receipts", Map.ofEntries(
+            Map.entry("companyId", companyId),
+            Map.entry("transactionId", transaction.get("id")),
+            Map.entry("title", "Literal 100% supplies"),
+            Map.entry("voucherType", "purchase_invoice"),
+            Map.entry("direction", "expense"),
+            Map.entry("counterparty", "Supplier"),
+            Map.entry("amount", 120),
+            Map.entry("taxAmount", 20),
+            Map.entry("taxPeriod", "2026-08"),
+            Map.entry("invoiceCheckStatus", "verified"),
+            Map.entry("deductionStatus", "deductible"),
+            Map.entry("issueDate", "2026-08-10"),
+            Map.entry("status", "linked")
+        ), token);
+        assertEquals(200, purchase.status(), purchase.body());
+        long purchaseId = ((Number) parseMap(purchase.body()).get("id")).longValue();
+
+        ApiResponse sales = request("POST", "/api/v1/receipts", Map.ofEntries(
+            Map.entry("companyId", companyId),
+            Map.entry("title", "Literal 100x sale"),
+            Map.entry("voucherType", "sales_invoice"),
+            Map.entry("direction", "income"),
+            Map.entry("counterparty", "Customer"),
+            Map.entry("amount", 300),
+            Map.entry("taxAmount", 30),
+            Map.entry("taxPeriod", "2026-09"),
+            Map.entry("invoiceCheckStatus", "failed"),
+            Map.entry("issueDate", "2026-09-12"),
+            Map.entry("status", "verified")
+        ), token);
+        assertEquals(200, sales.status(), sales.body());
+
+        ApiResponse reimbursement = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Travel reimbursement",
+            "voucherType", "reimbursement",
+            "direction", "expense",
+            "counterparty", "Employee",
+            "amount", 50,
+            "reimbursementStatus", "submitted",
+            "issueDate", "2026-07-01",
+            "status", "pending_review"
+        ), token);
+        assertEquals(200, reimbursement.status(), reimbursement.body());
+
+        ApiResponse filtered = request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId
+                + "&keyword=100%25&voucherType=purchase_invoice&direction=expense&status=linked"
+                + "&invoiceCheckStatus=verified&deductionStatus=deductible&taxPeriod=2026-08"
+                + "&linkState=linked&startDate=2026-08-01&endDate=2026-08-31"
+                + "&minAmount=100&maxAmount=150&page=0&size=1",
+            null,
+            token
+        );
+        assertEquals(200, filtered.status(), filtered.body());
+        Map<String, Object> filteredPage = parseMap(filtered.body());
+        assertEquals(1, filteredPage.get("totalElements"));
+        assertEquals(1, filteredPage.get("totalPages"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> filteredContent = (List<Map<String, Object>>) filteredPage.get("content");
+        assertEquals(purchaseId, ((Number) filteredContent.getFirst().get("id")).longValue());
+
+        ApiResponse literalKeyword = request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId + "&keyword=100%25&size=10",
+            null,
+            token
+        );
+        Map<String, Object> literalPage = parseMap(literalKeyword.body());
+        assertEquals(1, literalPage.get("totalElements"), literalKeyword.body());
+
+        ApiResponse secondPage = request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId + "&page=1&size=1",
+            null,
+            token
+        );
+        assertEquals(200, secondPage.status(), secondPage.body());
+        Map<String, Object> page = parseMap(secondPage.body());
+        assertEquals(3, page.get("totalElements"));
+        assertEquals(3, page.get("totalPages"));
+        assertEquals(1, page.get("number"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) page.get("content");
+        assertEquals(purchaseId, ((Number) content.getFirst().get("id")).longValue());
+
+        ApiResponse invalid = request(
+            "GET",
+            "/api/v1/receipts?companyId=-1&voucherType=unsupported&direction=sideways&status=unknown"
+                + "&invoiceCheckStatus=unknown&deductionStatus=unknown&reimbursementStatus=unknown"
+                + "&taxPeriod=2026-13&linkState=unknown&minAmount=-1&page=-1&size=201",
+            null,
+            token
+        );
+        assertValidationFields(invalid, Set.of(
+            "companyId",
+            "voucherType",
+            "direction",
+            "status",
+            "invoiceCheckStatus",
+            "deductionStatus",
+            "reimbursementStatus",
+            "taxPeriod",
+            "linkState",
+            "minAmount",
+            "page",
+            "size"
+        ));
+
+        ApiResponse invalidDate = request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId + "&startDate=2026-02-30",
+            null,
+            token
+        );
+        assertValidationFields(invalidDate, Set.of("startDate"));
+        assertEquals(400, request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId + "&startDate=2026-09-01&endDate=2026-08-01",
+            null,
+            token
+        ).status());
+        assertEquals(400, request(
+            "GET",
+            "/api/v1/receipts?companyId=" + companyId + "&minAmount=200&maxAmount=100",
+            null,
+            token
+        ).status());
+
+        ApiResponse summaryResponse = request(
+            "GET",
+            "/api/v1/receipts/summary?companyId=" + companyId,
+            null,
+            token
+        );
+        assertEquals(200, summaryResponse.status(), summaryResponse.body());
+        Map<String, Object> summary = parseMap(summaryResponse.body());
+        assertEquals(3, summary.get("totalCount"));
+        assertEquals(0, new BigDecimal("470").compareTo(decimal(summary.get("totalAmount"))));
+        assertEquals(0, new BigDecimal("300").compareTo(decimal(summary.get("salesInvoiceAmount"))));
+        assertEquals(0, new BigDecimal("120").compareTo(decimal(summary.get("purchaseInvoiceAmount"))));
+        assertEquals(0, new BigDecimal("30").compareTo(decimal(summary.get("outputTaxAmount"))));
+        assertEquals(0, new BigDecimal("20").compareTo(decimal(summary.get("deductibleTaxAmount"))));
+        assertEquals(0, new BigDecimal("50").compareTo(decimal(summary.get("reimbursementAmount"))));
+        assertEquals(0, new BigDecimal("50").compareTo(decimal(summary.get("reimbursementPendingAmount"))));
+        assertEquals(0, new BigDecimal("50").compareTo(decimal(summary.get("pendingAmount"))));
+        assertEquals(1, summary.get("pendingReviewCount"));
+        assertEquals(3, summary.get("missingAttachmentCount"));
+        assertEquals(2, summary.get("missingTransactionCount"));
+        assertEquals(1, summary.get("highRiskCount"));
+        assertEquals(1, summary.get("uncheckedInvoiceCount"));
+        assertEquals(1, summary.get("pendingDeductionCount"));
+        assertEquals(1, summary.get("pendingReimbursementCount"));
+        assertEquals(0, summary.get("missingTaxPeriodCount"));
+        assertEquals(0, summary.get("pendingApprovalCount"));
+        assertEquals(2, summary.get("pendingAccountingCount"));
+        assertEquals(1, summary.get("postedAccountingCount"));
+
+        long emptyCompanyId = createCompany(token, "Empty receipt summary " + System.nanoTime());
+        ApiResponse emptySummaryResponse = request(
+            "GET",
+            "/api/v1/receipts/summary?companyId=" + emptyCompanyId,
+            null,
+            token
+        );
+        assertEquals(200, emptySummaryResponse.status(), emptySummaryResponse.body());
+        Map<String, Object> emptySummary = parseMap(emptySummaryResponse.body());
+        assertEquals(0, emptySummary.get("totalCount"));
+        assertEquals(0, BigDecimal.ZERO.compareTo(decimal(emptySummary.get("totalAmount"))));
+
+        ApiResponse invalidSummary = request(
+            "GET",
+            "/api/v1/receipts/summary?companyId=-1",
+            null,
+            token
+        );
+        assertValidationFields(invalidSummary, Set.of("companyId"));
+    }
+
+    @Test
     void receiptMultipartContractsValidateSingleAndBatchUploadMetadata() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Receipt multipart contract " + System.nanoTime());

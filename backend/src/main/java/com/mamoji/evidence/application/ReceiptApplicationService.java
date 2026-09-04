@@ -1,9 +1,9 @@
 package com.mamoji.evidence.application;
 
-import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.tenant.Company;
+import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.operations.application.TransactionQueryRepository;
@@ -32,12 +32,11 @@ import java.util.OptionalLong;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-import static com.mamoji.common.PayloadReader.decimalParam;
-import static com.mamoji.common.PayloadReader.optionalLong;
 import static com.mamoji.common.PayloadReader.text;
 import static com.mamoji.service.support.DomainSupport.require;
 import static com.mamoji.service.support.DomainSupport.touch;
@@ -75,112 +74,19 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         this.outboxEventService = outboxEventService;
     }
 
-    public PagedResponse<ReceiptVoucher> list(String authorization, Map<String, String> params) {
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public PagedResponse<ReceiptVoucher> list(String authorization, ReceiptListQuery query) {
         User user = accessControl.requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id).stream()
-            .filter(voucher -> filterVoucher(voucher, params))
-            .toList();
-        return PagedResponse.of(vouchers, PageRequest.from(params));
+        Company company = accessControl.resolveCompany(user, query.companyId());
+        validateQueryBoundaries(query);
+        return receiptVouchers.findPage(company.id, query);
     }
 
-    public Map<String, Object> summary(String authorization, Long companyId) {
+    @Transactional(readOnly = true)
+    public ReceiptSummary summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id);
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        BigDecimal salesInvoiceAmount = BigDecimal.ZERO;
-        BigDecimal purchaseInvoiceAmount = BigDecimal.ZERO;
-        BigDecimal outputTaxAmount = BigDecimal.ZERO;
-        BigDecimal deductibleTaxAmount = BigDecimal.ZERO;
-        BigDecimal reimbursementAmount = BigDecimal.ZERO;
-        BigDecimal reimbursementPendingAmount = BigDecimal.ZERO;
-        BigDecimal pendingAmount = BigDecimal.ZERO;
-        long missingAttachmentCount = 0;
-        long missingTransactionCount = 0;
-        long pendingReviewCount = 0;
-        long highRiskCount = 0;
-        long uncheckedInvoiceCount = 0;
-        long pendingDeductionCount = 0;
-        long pendingReimbursementCount = 0;
-        long missingTaxPeriodCount = 0;
-        long pendingApprovalCount = 0;
-        long pendingAccountingCount = 0;
-        long postedAccountingCount = 0;
-
-        for (ReceiptVoucher voucher : vouchers) {
-            totalAmount = totalAmount.add(voucher.amount);
-            if ("sales_invoice".equals(voucher.voucherType)) {
-                salesInvoiceAmount = salesInvoiceAmount.add(voucher.amount);
-                outputTaxAmount = outputTaxAmount.add(voucher.taxAmount);
-            }
-            if ("purchase_invoice".equals(voucher.voucherType)) {
-                purchaseInvoiceAmount = purchaseInvoiceAmount.add(voucher.amount);
-                deductibleTaxAmount = deductibleTaxAmount.add(voucher.taxAmount);
-            }
-            if ("reimbursement".equals(voucher.voucherType)) {
-                reimbursementAmount = reimbursementAmount.add(voucher.amount);
-                if (!List.of("paid", "archived").contains(voucher.reimbursementStatus)) {
-                    reimbursementPendingAmount = reimbursementPendingAmount.add(voucher.amount);
-                    pendingReimbursementCount++;
-                }
-            }
-            if ("pending_review".equals(voucher.status)) {
-                pendingAmount = pendingAmount.add(voucher.amount);
-                pendingReviewCount++;
-            }
-            if (voucher.fileName == null || voucher.fileName.isBlank()) {
-                missingAttachmentCount++;
-            }
-            if (voucher.transactionId == null) {
-                missingTransactionCount++;
-            }
-            if ("high".equals(voucher.riskLevel) || "critical".equals(voucher.riskLevel)) {
-                highRiskCount++;
-            }
-            if (!"not_required".equals(voucher.invoiceCheckStatus) && !"verified".equals(voucher.invoiceCheckStatus)) {
-                uncheckedInvoiceCount++;
-            }
-            if ("pending".equals(voucher.deductionStatus) || "deductible".equals(voucher.deductionStatus)) {
-                pendingDeductionCount++;
-            }
-            if ((voucher.taxPeriod == null || voucher.taxPeriod.isBlank())
-                && (voucher.voucherType.equals("sales_invoice") || voucher.voucherType.equals("purchase_invoice") || voucher.voucherType.equals("tax_receipt"))) {
-                missingTaxPeriodCount++;
-            }
-            if ("pending".equals(voucher.approvalStatus)) {
-                pendingApprovalCount++;
-            }
-            if ("not_started".equals(voucher.accountingStatus) || "draft".equals(voucher.accountingStatus)) {
-                pendingAccountingCount++;
-            }
-            if ("posted".equals(voucher.accountingStatus)) {
-                postedAccountingCount++;
-            }
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("totalCount", vouchers.size());
-        result.put("totalAmount", totalAmount);
-        result.put("salesInvoiceAmount", salesInvoiceAmount);
-        result.put("purchaseInvoiceAmount", purchaseInvoiceAmount);
-        result.put("outputTaxAmount", outputTaxAmount);
-        result.put("deductibleTaxAmount", deductibleTaxAmount);
-        result.put("reimbursementAmount", reimbursementAmount);
-        result.put("reimbursementPendingAmount", reimbursementPendingAmount);
-        result.put("pendingAmount", pendingAmount);
-        result.put("pendingReviewCount", pendingReviewCount);
-        result.put("missingAttachmentCount", missingAttachmentCount);
-        result.put("missingTransactionCount", missingTransactionCount);
-        result.put("highRiskCount", highRiskCount);
-        result.put("uncheckedInvoiceCount", uncheckedInvoiceCount);
-        result.put("pendingDeductionCount", pendingDeductionCount);
-        result.put("pendingReimbursementCount", pendingReimbursementCount);
-        result.put("missingTaxPeriodCount", missingTaxPeriodCount);
-        result.put("pendingApprovalCount", pendingApprovalCount);
-        result.put("pendingAccountingCount", pendingAccountingCount);
-        result.put("postedAccountingCount", postedAccountingCount);
-        return result;
+        return receiptVouchers.summarize(company.id);
     }
 
     @Transactional
@@ -415,52 +321,17 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         }
     }
 
-    private boolean filterVoucher(ReceiptVoucher voucher, Map<String, String> params) {
-        String keyword = params.getOrDefault("keyword", "").toLowerCase();
-        if (!keyword.isBlank()
-            && !text(voucher.title).toLowerCase().contains(keyword)
-            && !text(voucher.voucherNo).toLowerCase().contains(keyword)
-            && !text(voucher.counterparty).toLowerCase().contains(keyword)
-            && !text(voucher.note).toLowerCase().contains(keyword)) {
-            return false;
+    private void validateQueryBoundaries(ReceiptListQuery query) {
+        if (query.startDate() != null
+            && query.endDate() != null
+            && query.startDate().isAfter(query.endDate())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startDate must not be after endDate");
         }
-        if (params.get("voucherType") != null && !params.get("voucherType").isBlank() && !voucher.voucherType.equals(params.get("voucherType"))) {
-            return false;
+        if (query.minAmount() != null
+            && query.maxAmount() != null
+            && query.minAmount().compareTo(query.maxAmount()) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "minAmount must not exceed maxAmount");
         }
-        if (params.get("status") != null && !params.get("status").isBlank() && !voucher.status.equals(params.get("status"))) {
-            return false;
-        }
-        if (params.get("direction") != null && !params.get("direction").isBlank() && !voucher.direction.equals(params.get("direction"))) {
-            return false;
-        }
-        if (!isBlank(params.get("invoiceCheckStatus")) && !voucher.invoiceCheckStatus.equals(params.get("invoiceCheckStatus"))) {
-            return false;
-        }
-        if (!isBlank(params.get("deductionStatus")) && !voucher.deductionStatus.equals(params.get("deductionStatus"))) {
-            return false;
-        }
-        if (!isBlank(params.get("reimbursementStatus")) && !voucher.reimbursementStatus.equals(params.get("reimbursementStatus"))) {
-            return false;
-        }
-        if (!isBlank(params.get("taxPeriod")) && !params.get("taxPeriod").equals(voucher.taxPeriod)) {
-            return false;
-        }
-        if ("missing".equals(params.get("linkState")) && voucher.transactionId != null) {
-            return false;
-        }
-        if ("linked".equals(params.get("linkState")) && voucher.transactionId == null) {
-            return false;
-        }
-        if (!isBlank(params.get("startDate")) && voucher.issueDate.compareTo(params.get("startDate")) < 0) {
-            return false;
-        }
-        if (!isBlank(params.get("endDate")) && voucher.issueDate.compareTo(params.get("endDate")) > 0) {
-            return false;
-        }
-        if (!isBlank(params.get("minAmount")) && voucher.amount.compareTo(decimalParam(params, "minAmount", voucher.amount)) < 0) {
-            return false;
-        }
-        return isBlank(params.get("maxAmount")) || voucher.amount.compareTo(decimalParam(params, "maxAmount", voucher.amount)) <= 0;
     }
 
     private void applyCreateFields(ReceiptVoucher voucher, ReceiptCreateCommand request) {
