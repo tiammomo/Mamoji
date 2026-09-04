@@ -1,20 +1,15 @@
-package com.mamoji.repository;
+package com.mamoji.people.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
 
-import com.mamoji.domain.Models.Employee;
-import com.mamoji.people.application.DepartmentRepository;
-import com.mamoji.platform.audit.application.AuditLogRepository;
-import com.mamoji.platform.identity.account.application.UserDirectory;
+import com.mamoji.people.domain.Employee;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
-class EnterpriseStoreReadTest {
-
+class JdbcEmployeeRepositoryTest {
     @Test
     void employeeProfilesUseTwoBatchQueriesRegardlessOfEmployeeCount() {
         CountingJdbcTemplate jdbc = new CountingJdbcTemplate(List.of(
@@ -22,26 +17,16 @@ class EnterpriseStoreReadTest {
             employee(2, 9),
             employee(3, 9)
         ));
-        EnterpriseStore store = new EnterpriseStore(
-            jdbc,
-            mock(UserDirectory.class),
-            mock(AuditLogRepository.class),
-            mock(DepartmentRepository.class),
-            "demo",
-            "Test",
-            "",
-            "test",
-            "test",
-            "CNY"
-        );
-        List<Employee> employees = store.sortedEmployees(9);
+        JdbcEmployeeRepository repository = new JdbcEmployeeRepository(jdbc);
+
+        List<Employee> employees = repository.findByCompany(9, true);
 
         assertEquals(3, employees.size());
         assertEquals(3, jdbc.queryCount);
         assertTrue(employees.stream().allMatch(employee -> employee.certificates.isEmpty()));
         assertTrue(employees.stream().allMatch(employee -> employee.experiences.isEmpty()));
 
-        store.sortedEmployees(9, false);
+        repository.findByCompany(9, false);
         assertEquals(4, jdbc.queryCount, "Basic employee reads must only execute the employee query");
     }
 
@@ -65,9 +50,7 @@ class EnterpriseStoreReadTest {
         @SuppressWarnings("unchecked")
         public <T> List<T> query(String sql, RowMapper<T> rowMapper, Object... args) {
             queryCount++;
-            if (sql.contains("FROM employees employee")) {
-                return (List<T>) employees;
-            }
+            if (sql.contains("FROM employees employee")) return (List<T>) employees;
             return List.of();
         }
     }

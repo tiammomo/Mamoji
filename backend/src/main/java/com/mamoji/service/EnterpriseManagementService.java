@@ -1,14 +1,16 @@
 package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Employee;
-import com.mamoji.domain.Models.EmployeeCertificate;
-import com.mamoji.domain.Models.EmployeeExperience;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.people.application.DepartmentRepository;
+import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.domain.Employee;
+import com.mamoji.people.domain.EmployeeCertificate;
+import com.mamoji.people.domain.EmployeeCompensationPolicy;
+import com.mamoji.people.domain.EmployeeExperience;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
@@ -20,6 +22,7 @@ import com.mamoji.tax.domain.TaxItem;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,6 +49,7 @@ public class EnterpriseManagementService {
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
     private final DepartmentRepository departments;
+    private final EmployeeRepository employeeRepository;
     private final TaxItemRepository taxItems;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
@@ -58,6 +62,7 @@ public class EnterpriseManagementService {
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
         DepartmentRepository departments,
+        EmployeeRepository employeeRepository,
         TaxItemRepository taxItems,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
@@ -69,6 +74,7 @@ public class EnterpriseManagementService {
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
         this.departments = departments;
+        this.employeeRepository = employeeRepository;
         this.taxItems = taxItems;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
@@ -80,7 +86,7 @@ public class EnterpriseManagementService {
     public Map<String, Object> summary(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<Employee> employees = enterpriseStore.sortedEmployees(company.id, false);
+        List<Employee> employees = employeeRepository.findByCompany(company.id, false);
         List<TaxItem> taxes = taxItems.findByCompany(company.id);
         BigDecimal monthlyPeopleCost = employees.stream()
             .filter(employee -> !employee.status.equals("departed"))
@@ -173,7 +179,7 @@ public class EnterpriseManagementService {
         String keyword = params.getOrDefault("keyword", "").toLowerCase();
         String status = params.getOrDefault("status", "");
         long departmentId = longParam(params, "departmentId", 0);
-        return enterpriseStore.sortedEmployees(company.id).stream()
+        return employeeRepository.findByCompany(company.id).stream()
             .filter(employee -> directoryReadable || (employee.userId != null && employee.userId == user.id))
             .filter(employee -> keyword.isBlank()
                 || employee.name.toLowerCase().contains(keyword)
@@ -199,7 +205,7 @@ public class EnterpriseManagementService {
         User operator = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(operator, optionalLong(body.get("companyId")).orElse(null));
         accessControl.requirePeopleManager(operator, company.id);
-        Employee employee = enterpriseStore.employee(
+        Employee employee = newEmployee(
             company.id,
             optionalLong(body.get("userId")).orElse(null),
             optionalLong(body.get("departmentId")).orElse(null),
@@ -221,8 +227,7 @@ public class EnterpriseManagementService {
             nullableText(body.get("emergencyContact"))
         );
         applyEmployeeFields(employee, body);
-        touch(employee);
-        enterpriseStore.saveEmployee(employee);
+        employeeRepository.insert(employee);
         memberships.synchronize(employee);
         syncEmployeeProfileLists(employee, body);
         enterpriseStore.event(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
@@ -233,7 +238,7 @@ public class EnterpriseManagementService {
     @Transactional
     public Employee updateEmployee(String authorization, long id, Map<String, Object> body) {
         User operator = accessControl.requireUser(authorization);
-        Employee employee = enterpriseStore.findEmployee(id)
+        Employee employee = employeeRepository.findByIdForUpdate(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Employee not found"));
         if (!accessControl.canAccessCompany(operator, employee.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
@@ -242,7 +247,7 @@ public class EnterpriseManagementService {
         String oldStatus = employee.status;
         applyEmployeeFields(employee, body);
         touch(employee);
-        enterpriseStore.saveEmployee(employee);
+        employeeRepository.update(employee);
         memberships.synchronize(employee);
         syncEmployeeProfileLists(employee, body);
         if (!oldStatus.equals(employee.status)) {
@@ -418,6 +423,53 @@ public class EnterpriseManagementService {
             "housingFundCompanyRate",
             "personalDeduction"
         ).contains(field);
+    }
+
+    private Employee newEmployee(
+        long companyId,
+        Long userId,
+        Long departmentId,
+        String name,
+        String email,
+        String phone,
+        String position,
+        String employmentType,
+        String status,
+        String accessRole,
+        String accessScope,
+        String hireDate,
+        String leaveDate,
+        String salary,
+        String socialInsurance,
+        String housingFund,
+        String taxEstimate,
+        String monthlyCost,
+        String emergencyContact
+    ) {
+        Employee employee = new Employee();
+        employee.companyId = companyId;
+        employee.userId = userId;
+        employee.departmentId = departmentId;
+        employee.name = name;
+        employee.email = email;
+        employee.phone = phone;
+        employee.position = position;
+        employee.employmentType = employmentType;
+        employee.status = status;
+        employee.accessRole = accessRole == null ? "employee" : accessRole;
+        employee.accessScope = accessScope == null ? "self" : accessScope;
+        employee.hireDate = hireDate;
+        employee.leaveDate = leaveDate;
+        employee.salary = number(salary, BigDecimal.ZERO);
+        employee.socialInsurance = number(socialInsurance, BigDecimal.ZERO);
+        employee.housingFund = number(housingFund, BigDecimal.ZERO);
+        employee.taxEstimate = number(taxEstimate, BigDecimal.ZERO);
+        employee.emergencyContact = emergencyContact;
+        String now = OffsetDateTime.now().toString();
+        employee.createdAt = now;
+        employee.updatedAt = now;
+        EmployeeCompensationPolicy.initialize(employee, number(monthlyCost, BigDecimal.ZERO));
+        return employee;
     }
 
     private void applyEmployeeFields(Employee employee, Map<String, Object> body) {
@@ -621,10 +673,16 @@ public class EnterpriseManagementService {
 
     private void syncEmployeeProfileLists(Employee employee, Map<String, Object> body) {
         if (body.containsKey("certificates")) {
-            enterpriseStore.replaceEmployeeCertificates(employee.id, employeeCertificatesFrom(body.get("certificates")));
+            employee.certificates = employeeRepository.replaceCertificates(
+                employee.id,
+                employeeCertificatesFrom(body.get("certificates"))
+            );
         }
         if (body.containsKey("experiences")) {
-            enterpriseStore.replaceEmployeeExperiences(employee.id, employeeExperiencesFrom(body.get("experiences")));
+            employee.experiences = employeeRepository.replaceExperiences(
+                employee.id,
+                employeeExperiencesFrom(body.get("experiences"))
+            );
         }
     }
 

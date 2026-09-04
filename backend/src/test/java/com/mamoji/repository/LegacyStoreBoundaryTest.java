@@ -99,16 +99,23 @@ class LegacyStoreBoundaryTest {
             "department",
             "deleteEmployee",
             "deleteTaxItem",
+            "findActiveEmployeeByUser",
             "findDepartment",
+            "findEmployee",
             "findTaxItem",
             "saveDepartment",
+            "saveEmployee",
             "saveTaxItem",
             "saveEntityTransfer",
-            "sortedDepartments"
+            "sortedDepartments",
+            "sortedEmployees"
         ));
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("departments")),
             "Departments must not return to the process-local enterprise compatibility view");
+        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("employees")),
+            "Employees must not return to the process-local enterprise compatibility view");
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("taxItems")),
             "Tax items must not return to the process-local enterprise compatibility view");

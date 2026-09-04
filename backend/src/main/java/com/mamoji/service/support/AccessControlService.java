@@ -2,7 +2,8 @@ package com.mamoji.service.support;
 
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Employee;
+import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.ActorIdentityProvider;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
@@ -21,17 +22,20 @@ import org.springframework.web.server.ResponseStatusException;
 public class AccessControlService {
     private final ActorIdentityProvider identityProvider;
     private final EnterpriseStore enterpriseStore;
+    private final EmployeeRepository employees;
     private final CompanyMembershipRepository memberships;
     private final ProductModuleCatalog productModules;
 
     public AccessControlService(
         ActorIdentityProvider identityProvider,
         EnterpriseStore enterpriseStore,
+        EmployeeRepository employees,
         CompanyMembershipRepository memberships,
         ProductModuleCatalog productModules
     ) {
         this.identityProvider = identityProvider;
         this.enterpriseStore = enterpriseStore;
+        this.employees = employees;
         this.memberships = memberships;
         this.productModules = productModules;
     }
@@ -157,7 +161,7 @@ public class AccessControlService {
     }
 
     public Optional<Employee> employeeForUser(User user, long companyId) {
-        return enterpriseStore.findActiveEmployeeByUser(user.id, companyId);
+        return employees.findActiveByUser(user.id, companyId);
     }
 
     public Optional<CompanyMembership> membershipForUser(User user, long companyId) {
