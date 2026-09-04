@@ -97,8 +97,14 @@ class LegacyStoreBoundaryTest {
         assertNotPublic(EnterpriseStore.class, Set.of(
             "attachDepartmentNames",
             "deleteEmployee",
+            "deleteTaxItem",
+            "findTaxItem",
+            "saveTaxItem",
             "saveEntityTransfer"
         ));
+        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("taxItems")),
+            "Tax items must not return to the process-local enterprise compatibility view");
     }
 
     @Test

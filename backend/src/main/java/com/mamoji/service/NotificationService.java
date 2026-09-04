@@ -8,7 +8,6 @@ import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.notification.domain.OutboxEvent;
 import com.mamoji.platform.identity.User;
@@ -19,6 +18,8 @@ import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.WebhookUrlValidator;
+import com.mamoji.tax.application.TaxItemRepository;
+import com.mamoji.tax.domain.TaxItem;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -43,6 +44,7 @@ public class NotificationService {
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
     private final EnterpriseStore enterpriseStore;
+    private final TaxItemRepository taxItems;
     private final ReceiptVoucherRepository receiptVouchers;
     private final AccessControlService accessControl;
     private final CompanyMembershipRepository memberships;
@@ -60,6 +62,7 @@ public class NotificationService {
         JdbcTemplate jdbc,
         UserDirectory userDirectory,
         EnterpriseStore enterpriseStore,
+        TaxItemRepository taxItems,
         ReceiptVoucherRepository receiptVouchers,
         AccessControlService accessControl,
         CompanyMembershipRepository memberships,
@@ -75,6 +78,7 @@ public class NotificationService {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
         this.enterpriseStore = enterpriseStore;
+        this.taxItems = taxItems;
         this.receiptVouchers = receiptVouchers;
         this.accessControl = accessControl;
         this.memberships = memberships;
@@ -360,7 +364,7 @@ public class NotificationService {
 
     private void generateTaxReminders(LocalDate today) {
         LocalDate latest = today.plusDays(taxLookaheadDays);
-        for (TaxItem item : enterpriseStore.allTaxItems()) {
+        for (TaxItem item : taxItems.findAll()) {
             if (taxSettled(item)) {
                 continue;
             }

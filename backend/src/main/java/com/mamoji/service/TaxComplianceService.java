@@ -2,11 +2,11 @@ package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
+import com.mamoji.tax.application.TaxItemRepository;
+import com.mamoji.tax.domain.TaxItem;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
@@ -43,23 +43,23 @@ public class TaxComplianceService {
     );
 
     private final AccessControlService accessControl;
-    private final EnterpriseStore enterpriseStore;
+    private final TaxItemRepository taxItems;
     private final ReceiptVoucherRepository receiptVouchers;
 
     public TaxComplianceService(
         AccessControlService accessControl,
-        EnterpriseStore enterpriseStore,
+        TaxItemRepository taxItems,
         ReceiptVoucherRepository receiptVouchers
     ) {
         this.accessControl = accessControl;
-        this.enterpriseStore = enterpriseStore;
+        this.taxItems = taxItems;
         this.receiptVouchers = receiptVouchers;
     }
 
     public Map<String, Object> report(String authorization, Long companyId) {
         User user = accessControl.requireUser(authorization);
         Company company = accessControl.resolveCompany(user, companyId);
-        List<TaxItem> taxItems = enterpriseStore.sortedTaxItems(company.id);
+        List<TaxItem> taxItems = this.taxItems.findByCompany(company.id);
         List<ReceiptVoucher> vouchers = receiptVouchers.findByCompany(company.id);
         Map<String, Object> policyProfile = policyProfile(company);
         List<Map<String, Object>> filingCalendar = filingCalendar(company, taxItems);
