@@ -204,7 +204,7 @@ workforce/
 | `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
 | `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers`、`ledger_members` | Finance | Operations 通过账户 ID 和公司内可访问账本契约校验与调整 |
-| `receipt_vouchers` | Evidence | Approval 通过应用服务更新审批状态 |
+| `receipt_vouchers` | Evidence | Approval 应用层通过 `ApprovalEntityGateway` 校验公司归属并同步审批状态，不直接依赖票据仓储或服务 |
 | `tax_items` | Tax | 专属 JDBC 仓储直接读写；企业汇总、通知和税务合规报告只读公司范围投影 |
 | `departments`、`employees`、`employment_events` | People Core | 部门、员工和追加式任职历史分别由 `DepartmentRepository`、`EmployeeRepository`、`EmploymentEventRepository` 直接读写 PostgreSQL；Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
 | `payroll_runs`、`payroll_run_items` | Workforce Cost | 报表与工作台只读已锁定或明确标识状态的快照 |
@@ -242,7 +242,8 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 ### P0：完成核心边界
 
-- 将审批、票据和账户从旧横向 Service 目录迁入纵向模块目录。
+- 审批用例已迁入 `approval.application`，并通过 `ApprovalEntityGateway` 隔离多态业务对象；继续将审批持久化 SQL 收口到基础设施仓储，并迁移票据的旧横向 Service。
+- 账户用例已归入 Finance 模块；继续清理跨模块直接仓储依赖，保持账户写入只经过 Finance 契约。
 - 给交易、账户、票据补齐 typed DTO 与客户端版本契约。
 - 将权限判断从旧整数角色进一步收口到 AccessContext。
 - 将组织人员和薪酬写用例逐步迁入 `people`、`workforce` 纵向目录；现有聚合读模型保持稳定契约。
