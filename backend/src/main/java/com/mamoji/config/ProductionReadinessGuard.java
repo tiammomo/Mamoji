@@ -31,6 +31,7 @@ public class ProductionReadinessGuard {
     private final String minioExternalUrl;
     private final long receiptStorageMaxBytesPerCompany;
     private final int receiptStorageWarningPercent;
+    private final boolean receiptStorageAuditEnabled;
 
     public ProductionReadinessGuard(
         Environment environment,
@@ -51,7 +52,8 @@ public class ProductionReadinessGuard {
         @Value("${mamoji.object-storage.secret-key:minioadmin}") String minioSecretKey,
         @Value("${mamoji.object-storage.external-url:}") String minioExternalUrl,
         @Value("${mamoji.object-storage.max-bytes-per-company:10737418240}") long receiptStorageMaxBytesPerCompany,
-        @Value("${mamoji.object-storage.warning-percent:80}") int receiptStorageWarningPercent
+        @Value("${mamoji.object-storage.warning-percent:80}") int receiptStorageWarningPercent,
+        @Value("${mamoji.object-storage.integrity-audit.enabled:false}") boolean receiptStorageAuditEnabled
     ) {
         this.production = isProduction(runtimeEnvironment, environment);
         this.bootstrapMode = value(bootstrapMode);
@@ -71,6 +73,7 @@ public class ProductionReadinessGuard {
         this.minioExternalUrl = value(minioExternalUrl);
         this.receiptStorageMaxBytesPerCompany = receiptStorageMaxBytesPerCompany;
         this.receiptStorageWarningPercent = receiptStorageWarningPercent;
+        this.receiptStorageAuditEnabled = receiptStorageAuditEnabled;
     }
 
     @PostConstruct
@@ -108,6 +111,9 @@ public class ProductionReadinessGuard {
         }
         if (receiptStorageWarningPercent <= 0 || receiptStorageWarningPercent >= 100) {
             problems.add("MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT must be between 1 and 99");
+        }
+        if (!receiptStorageAuditEnabled) {
+            problems.add("MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED must be true");
         }
 
         if (!problems.isEmpty()) {

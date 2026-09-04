@@ -31,7 +31,8 @@ class ProductionReadinessGuardTest {
             "minioadmin",
             "http://localhost:9000",
             0,
-            100
+            100,
+            false
         );
 
         assertThrows(IllegalStateException.class, guard::validate);
@@ -83,6 +84,35 @@ class ProductionReadinessGuardTest {
         ));
     }
 
+    @Test
+    void productionRequiresTheReadOnlyStorageAudit() {
+        ProductionReadinessGuard guard = new ProductionReadinessGuard(
+            new MockEnvironment(),
+            "production",
+            "bootstrap",
+            "ops@company.test",
+            "Admin-Password-123!",
+            "invite",
+            "https://mamoji.company.test",
+            true,
+            12,
+            true,
+            true,
+            true,
+            true,
+            "postgres-password-123!",
+            "minio-access-123",
+            "minio-secret-password-123!",
+            "https://mamoji.company.test",
+            10737418240L,
+            80,
+            false
+        );
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, guard::validate);
+        assertTrue(exception.getMessage().contains("MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED must be true"));
+    }
+
     private ProductionReadinessGuard hardenedProductionGuard(String minioExternalUrl) {
         return hardenedProductionGuard(minioExternalUrl, 10737418240L, 80);
     }
@@ -111,7 +141,8 @@ class ProductionReadinessGuardTest {
             "minio-secret-password-123!",
             minioExternalUrl,
             receiptStorageMaxBytesPerCompany,
-            receiptStorageWarningPercent
+            receiptStorageWarningPercent,
+            true
         );
     }
 }
