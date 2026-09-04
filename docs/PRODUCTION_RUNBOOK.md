@@ -10,6 +10,7 @@
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会生成测试账号、演示流水、演示员工、演示税费或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
 - 应用运行时不具备兼容建表通道；所有 schema 变更必须先以 Flyway migration 发布。
+- 已有公司数据经过 `EnterpriseDataInitializer` 时不会扫描或改写公司、员工和成员全表；成员授权以 `company_memberships` 为准，不从职位名称反向推断。若审计发现缺失关系，应依据真实授权记录显式修复。
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
 - 注册邀请原始 token 只在创建响应中返回一次，随后列表只展示元数据，PostgreSQL 仅保存 SHA-256 摘要。管理员应立即通过受控渠道发送邀请链接；若丢失原始 token，请创建新邀请，不要尝试从数据库或列表找回。
 - 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
