@@ -29,17 +29,6 @@ public final class Models {
         public String updatedAt;
     }
 
-    public static class EmploymentEvent {
-        public long id;
-        public long companyId;
-        public long employeeId;
-        public String type;
-        public String effectiveDate;
-        public String note;
-        public long operatorUserId;
-        public String createdAt;
-    }
-
     public static class EntityTransfer {
         public long id;
         public long fromEntityId;
