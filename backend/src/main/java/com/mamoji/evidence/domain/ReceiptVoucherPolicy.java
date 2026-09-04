@@ -1,6 +1,5 @@
 package com.mamoji.evidence.domain;
 
-import com.mamoji.domain.Models.ReceiptVoucher;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;

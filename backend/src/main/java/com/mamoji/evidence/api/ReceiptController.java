@@ -1,17 +1,17 @@
 package com.mamoji.evidence.api;
 
 import com.mamoji.common.PagedResponse;
-import com.mamoji.platform.audit.domain.AuditLog;
-import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.application.ReceiptApplicationService;
 import com.mamoji.evidence.application.ReceiptFileDownload;
+import com.mamoji.evidence.domain.ReceiptVoucher;
+import com.mamoji.platform.audit.domain.AuditLog;
+import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/v1/receipts")
@@ -87,21 +86,18 @@ public class ReceiptController {
     @PostMapping
     public ReceiptVoucher create(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody ReceiptCreateRequest request
     ) {
-        return service.create(authorization, body);
+        return service.create(authorization, request.toCommand());
     }
 
     @PutMapping("/{id}")
     public ReceiptVoucher update(
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id,
-        @RequestBody Map<String, Object> body
+        @Valid @RequestBody ReceiptUpdateRequest request
     ) {
-        if (body.containsKey("approvalStatus")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Approval status must be changed through the approval workflow");
-        }
-        return service.update(authorization, id, body);
+        return service.update(authorization, id, request.toCommand());
     }
 
     @PostMapping("/upload")

@@ -9,7 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.audit.application.AuditTrailService;

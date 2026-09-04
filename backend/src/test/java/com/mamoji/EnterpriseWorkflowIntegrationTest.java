@@ -123,6 +123,60 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void receiptJsonContractsValidateWritesAndPreserveExplicitNullUpdates() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Receipt contract " + System.nanoTime());
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        );
+
+        ApiResponse invalid = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "",
+            "voucherType", "unsupported",
+            "direction", "sideways",
+            "amount", -1,
+            "taxRate", 101,
+            "taxPeriod", "2026-13",
+            "approvalStatus", "approved",
+            "fileSize", -1
+        ), token);
+        assertValidationFields(invalid, Set.of(
+            "title", "voucherType", "direction", "amount", "taxRate", "taxPeriod", "approvalStatus", "fileSize"
+        ));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Typed receipt contract",
+            "voucherType", "purchase_invoice",
+            "direction", "expense",
+            "counterparty", "Supplier",
+            "amount", 120,
+            "taxPeriod", "2026-08",
+            "businessPurpose", "Project materials",
+            "dueDate", "2026-09-15",
+            "note", "Keep until cleared"
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        long voucherId = ((Number) parseMap(created.body()).get("id")).longValue();
+
+        Map<String, Object> clearFields = new LinkedHashMap<>();
+        clearFields.put("taxPeriod", null);
+        clearFields.put("dueDate", null);
+        clearFields.put("note", null);
+        ApiResponse updated = request("PUT", "/api/v1/receipts/" + voucherId, clearFields, token);
+        assertEquals(200, updated.status(), updated.body());
+        Map<String, Object> voucher = parseMap(updated.body());
+        assertNull(voucher.get("taxPeriod"));
+        assertNull(voucher.get("dueDate"));
+        assertNull(voucher.get("note"));
+        assertEquals("Project materials", voucher.get("businessPurpose"));
+    }
+
+    @Test
     void recurringItemCannotPostTwiceOnTheSameDay() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Recurring Lock " + System.nanoTime());
