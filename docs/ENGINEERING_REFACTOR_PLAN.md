@@ -63,9 +63,10 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 为通知 Outbox 实现可选外部消息总线适配层，并保留站内通知降级路径；
-2. 统一需要可重复测试的业务时钟边界，避免业务规则直接依赖系统时间；
-3. 继续把审批、票据和账户写用例迁入纵向应用层边界。
+1. 将首次管理员与首个公司创建收口为跨实例安全的 bootstrap 命令，并审计单实例 guard 的退场条件；
+2. 为通知 Outbox 实现可选外部消息总线适配层，并保留站内通知降级路径；
+3. 统一需要可重复测试的业务时钟边界，避免业务规则直接依赖系统时间；
+4. 继续把审批、票据和账户写用例迁入纵向应用层边界。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。
 
@@ -75,6 +76,7 @@ api -> application -> domain
 demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生产 Spring 上下文隔离 demo 初始化器](adr/0004-isolate-demo-initializers.md)。
 公司工作区默认数据的事务写入与历史补齐见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
 外部 Webhook 投递的租约 fencing 与幂等边界见 [ADR 0007：为外部通知投递增加租约 fencing](adr/0007-fence-notification-delivery-leases.md)。
+通知提醒的数据库时钟租约与恢复语义见 [ADR 0008：以持久化租约协调定时提醒](adr/0008-coordinate-reminders-with-database-leases.md)。
 票据派生默认值的一次性回填与生产启动修复 Bean 退场见 [ADR 0005：以 Flyway 接管票据兼容回填](adr/0005-migrate-receipt-compatibility-repair.md)。
 公司开通事务、历史工作区一次性补齐和生产账本/分类扫描退场见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
 

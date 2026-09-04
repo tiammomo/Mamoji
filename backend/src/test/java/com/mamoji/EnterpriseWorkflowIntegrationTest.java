@@ -3,12 +3,14 @@ package com.mamoji;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
+import com.mamoji.platform.scheduling.infrastructure.ScheduledJobLeaseRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -17,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -39,6 +42,9 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
 
     @Autowired
     NotificationDeliveryStatusRepository notificationDeliveryStatusRepository;
+
+    @Autowired
+    ScheduledJobLeaseRepository scheduledJobLeases;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -1229,6 +1235,59 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             String.class,
             failedId
         ));
+    }
+
+    @Test
+    void scheduledJobLeaseAllowsOneContenderAndFencesAnExpiredOwner() throws Exception {
+        String jobName = "integration-reminders-" + UUID.randomUUID();
+        String initialLease = scheduledJobLeases.tryAcquire(jobName, 600_000).orElseThrow();
+
+        assertTrue(scheduledJobLeases.tryAcquire(jobName, 600_000).isEmpty());
+        assertFalse(scheduledJobLeases.markCompleted(jobName, "stale-worker", 60_000));
+        assertTrue(scheduledJobLeases.markCompleted(jobName, initialLease, 60_000));
+        assertTrue(scheduledJobLeases.tryAcquire(jobName, 600_000).isEmpty());
+
+        jdbc.update("""
+            UPDATE scheduled_job_leases
+            SET next_run_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds'
+            WHERE job_name = ?
+            """, jobName);
+        CompletableFuture<Optional<String>> first = CompletableFuture.supplyAsync(
+            () -> scheduledJobLeases.tryAcquire(jobName, 600_000)
+        );
+        CompletableFuture<Optional<String>> second = CompletableFuture.supplyAsync(
+            () -> scheduledJobLeases.tryAcquire(jobName, 600_000)
+        );
+        List<String> contenderLeases = List.of(
+            first.get(10, TimeUnit.SECONDS),
+            second.get(10, TimeUnit.SECONDS)
+        ).stream().flatMap(Optional::stream).toList();
+        assertEquals(1, contenderLeases.size());
+        String expiredLease = contenderLeases.get(0);
+
+        jdbc.update("""
+            UPDATE scheduled_job_leases
+            SET last_started_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds',
+                locked_until = CURRENT_TIMESTAMP - INTERVAL '1 second',
+                next_run_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds'
+            WHERE job_name = ?
+            """, jobName);
+        String replacementLease = scheduledJobLeases.tryAcquire(jobName, 600_000).orElseThrow();
+        assertNotEquals(expiredLease, replacementLease);
+        assertFalse(scheduledJobLeases.markCompleted(jobName, expiredLease, 60_000));
+        assertTrue(scheduledJobLeases.markFailed(jobName, replacementLease, 60_000, "scan failed"));
+
+        Map<String, Object> failedLease = jdbc.queryForMap("""
+            SELECT lock_token, locked_until, last_error
+            FROM scheduled_job_leases
+            WHERE job_name = ?
+            """, jobName);
+        assertNull(failedLease.get("lock_token"));
+        assertNull(failedLease.get("locked_until"));
+        assertEquals("scan failed", failedLease.get("last_error"));
+        assertNotNull(jdbc.queryForObject("""
+            SELECT last_failed_at FROM scheduled_job_leases WHERE job_name = ?
+            """, java.time.OffsetDateTime.class, jobName));
     }
 
     private long approvalId(ApiResponse response) throws Exception {
