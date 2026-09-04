@@ -43,6 +43,33 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
     }
 
     @Test
+    void companyProvisioningSupportsTheMaximumCompanyNameAndCreatesRequiredDefaults() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "企".repeat(119) + "😀" + "企".repeat(79));
+
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ledgers WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+        assertEquals(120, jdbc.queryForObject(
+            "SELECT LENGTH(name) FROM ledgers WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+        assertEquals("😀", jdbc.queryForObject(
+            "SELECT RIGHT(name, 1) FROM ledgers WHERE company_id = ?",
+            String.class,
+            companyId
+        ));
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT COUNT(DISTINCT type) FROM categories WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+    }
+
+    @Test
     void crossOwnerTransactionIsRejectedWithoutChangingBalanceOrCreatingData() throws Exception {
         String memberToken = registerInvitedUser(uniqueEmail("account-owner"));
         long companyId = createCompany(memberToken, "Owner Scope " + System.nanoTime());

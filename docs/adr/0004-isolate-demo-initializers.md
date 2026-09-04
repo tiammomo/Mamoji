@@ -39,3 +39,5 @@
 ## 后续变化
 
 V27 已将第 4 项保留的票据历史修复迁为一次性 Flyway 回填，并删除 `ReceiptVoucherDataInitializer`；详情见 [ADR 0005：以 Flyway 接管票据兼容回填](0005-migrate-receipt-compatibility-repair.md)。
+
+V28 已将第 3 项中的生产通用分类补种和共享账本扫描迁出启动期；生产首次公司与线上新公司统一通过业务事务创建工作区，原账本初始化器仅作为 demo 条件 Bean 保留。详情见 [ADR 0006：将公司工作区创建收口到业务事务](0006-provision-company-workspaces-in-write-path.md)。

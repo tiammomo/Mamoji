@@ -500,7 +500,7 @@ public class JdbcFinanceRepository implements FinanceRepository {
         Ledger ledger = new Ledger();
         ledger.ownerId = ownerId;
         ledger.companyId = companyId;
-        ledger.name = textOr(subjectName, "经营主体") + "账本";
+        ledger.name = limited(textOr(subjectName, "经营主体") + "账本", 120);
         ledger.description = "主体默认经营账本";
         ledger.currency = textOr(currency, "CNY");
         ledger.isDefault = isDefault;
@@ -621,5 +621,11 @@ public class JdbcFinanceRepository implements FinanceRepository {
 
     private String textOr(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String limited(String value, int maxLength) {
+        int codePoints = value.codePointCount(0, value.length());
+        if (codePoints <= maxLength) return value;
+        return value.substring(0, value.offsetByCodePoints(0, maxLength));
     }
 }
