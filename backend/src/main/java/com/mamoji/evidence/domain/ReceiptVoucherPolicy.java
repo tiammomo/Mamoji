@@ -34,6 +34,9 @@ public final class ReceiptVoucherPolicy {
         voucher.approvalStatus = defaultApprovalStatus(voucher);
         voucher.accountingStatus = defaultAccountingStatus(voucher);
         voucher.accountingEntry = accountingEntryFor(voucher);
+        if ("posted".equals(voucher.accountingStatus)) {
+            voucher.accountedAt = timestamp;
+        }
         voucher.fileName = draft.fileName();
         voucher.fileSize = draft.fileSize();
         voucher.fileType = draft.fileType();

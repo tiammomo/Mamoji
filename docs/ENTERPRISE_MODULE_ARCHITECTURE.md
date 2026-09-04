@@ -234,6 +234,8 @@ V29 为外部 Webhook 投递增加唯一租约令牌和终态 fencing。`notific
 
 V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通知提醒以 PostgreSQL 时钟原子认领固定任务名，只有当前 token 可以完成或记录失败；完成时间决定下一次可运行时间，崩溃实例的租约过期后允许其他实例接管。提醒生成仍使用通知去重键保护部分执行后的重试，租约表作为运行态在结构化恢复时清空。
 
+V31 将票据金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以状态/金额/日期检查、公司与流水复合外键、公司归属不可变触发器和文件哈希复合外键保护 Evidence 数据。列表筛选与汇总直接使用 typed 列及公司前缀索引，不再在查询期清理并转换历史文本。
+
 生产首次管理员和首个公司已收口到 `ProductionBootstrapCommand`：命令在同一事务内取得固定 PostgreSQL transaction advisory lock，持锁后重新检查租户根，再一起写入管理员、公司工作区、管理部门、创始人员工档案、任职事件和审计记录。事务失败时全部回滚，等待锁的其他实例可继续重试；已存在用户但公司为空的旧中间态只读取一个首选管理员并补齐首家公司。
 
 审批用例与持久化边界已完成纵向收口：`ApprovalApplicationService` 只编排访问控制、状态机、审计和业务对象网关，`ApprovalRepository` 负责审批请求、动作轨迹、分页汇总以及幂等键/业务对象的 PostgreSQL 事务锁。响应记录已拆到稳定的 API/Domain 类型，HTTP JSON 契约保持不变。
@@ -253,7 +255,7 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 ### P0：完成核心边界
 
 - 审批用例、持久化端口和 JDBC 适配器已迁入纵向模块，并通过 `ApprovalEntityGateway` 隔离多态业务对象。
-- 票据 Controller、应用服务、仓储端口、领域模型、全部写命令及列表/汇总查询已迁入 Evidence 纵向模块；下一步以 Flyway 硬化票据金额、日期、状态和生命周期列。
+- 票据 Controller、应用服务、仓储端口、领域模型、全部写命令、列表/汇总查询及 V31 typed schema 已迁入 Evidence 纵向模块；下一步收口附件元数据与会计联动的跨模块查询契约。
 - 账户用例已归入 Finance 模块；继续清理跨模块直接仓储依赖，保持账户写入只经过 Finance 契约。
 - 给账户及其余聚合查询补齐 typed DTO 与客户端版本契约。
 - 将权限判断从旧整数角色进一步收口到 AccessContext。

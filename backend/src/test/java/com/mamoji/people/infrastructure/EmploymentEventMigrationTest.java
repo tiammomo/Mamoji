@@ -61,7 +61,7 @@ class EmploymentEventMigrationTest {
                 assertEquals("date", result.getString("effective_date_type"));
                 assertEquals("timestamp with time zone", result.getString("created_at_type"));
             }
-            assertEquals("30", latestVersion(statement));
+            assertEquals("31", latestVersion(statement));
             assertTrue(eventConstraints(statement).containsAll(Set.of(
                 "fk_employment_events_company",
                 "fk_employment_events_employee_company",
