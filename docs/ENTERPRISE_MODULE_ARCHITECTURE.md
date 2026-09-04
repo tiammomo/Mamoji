@@ -208,7 +208,7 @@ workforce/
 | `tax_items` | Tax | 专属 JDBC 仓储直接读写；企业汇总、通知和税务合规报告只读公司范围投影 |
 | `departments`、`employees`、`employment_events` | People Core | 部门、员工和追加式任职历史分别由 `DepartmentRepository`、`EmployeeRepository`、`EmploymentEventRepository` 直接读写 PostgreSQL；Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
 | `payroll_runs`、`payroll_run_items` | Workforce Cost | 报表与工作台只读已锁定或明确标识状态的快照 |
-| `approval_requests/actions` | Approvals | Workspace 只读待办数量 |
+| `approval_requests/actions` | Approvals | `ApprovalRepository` 是唯一写入口；Workspace 只读待办数量 |
 | `audit_logs` | Platform Audit | 业务模块只追加，不修改历史 |
 | `outbox_events` | Platform Events | 消费器按事件类型分发 |
 
@@ -236,13 +236,15 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 生产首次管理员和首个公司已收口到 `ProductionBootstrapCommand`：命令在同一事务内取得固定 PostgreSQL transaction advisory lock，持锁后重新检查租户根，再一起写入管理员、公司工作区、管理部门、创始人员工档案、任职事件和审计记录。事务失败时全部回滚，等待锁的其他实例可继续重试；已存在用户但公司为空的旧中间态只读取一个首选管理员并补齐首家公司。
 
+审批用例与持久化边界已完成纵向收口：`ApprovalApplicationService` 只编排访问控制、状态机、审计和业务对象网关，`ApprovalRepository` 负责审批请求、动作轨迹、分页汇总以及幂等键/业务对象的 PostgreSQL 事务锁。响应记录已拆到稳定的 API/Domain 类型，HTTP JSON 契约保持不变。
+
 生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；多副本发布自动逐实例验证 readiness、共享会话和全局注销，预生产可显式演练单副本停止与重新加入。扩容时仍必须合并计算数据库连接预算，并以双容器并发压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
 
 ## 10. 后续拆分顺序
 
 ### P0：完成核心边界
 
-- 审批用例已迁入 `approval.application`，并通过 `ApprovalEntityGateway` 隔离多态业务对象；继续将审批持久化 SQL 收口到基础设施仓储，并迁移票据的旧横向 Service。
+- 审批用例、持久化端口和 JDBC 适配器已迁入纵向模块，并通过 `ApprovalEntityGateway` 隔离多态业务对象；继续迁移票据的旧横向 Service。
 - 账户用例已归入 Finance 模块；继续清理跨模块直接仓储依赖，保持账户写入只经过 Finance 契约。
 - 给交易、账户、票据补齐 typed DTO 与客户端版本契约。
 - 将权限判断从旧整数角色进一步收口到 AccessContext。

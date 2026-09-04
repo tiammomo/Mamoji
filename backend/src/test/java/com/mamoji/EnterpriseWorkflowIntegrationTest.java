@@ -375,6 +375,33 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?", Integer.class, companyId
         ));
 
+        ApiResponse pageResponse = request(
+            "GET",
+            "/api/v1/approvals?companyId=" + companyId
+                + "&status=pending&requestType=other&keyword=Typed&page=0&size=10",
+            null,
+            token
+        );
+        assertEquals(200, pageResponse.status(), pageResponse.body());
+        Map<String, Object> page = parseMap(pageResponse.body());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> approvals = (List<Map<String, Object>>) page.get("content");
+        assertEquals(1, approvals.size());
+        assertEquals(approvalId, ((Number) approvals.getFirst().get("id")).longValue());
+        assertEquals(1, ((Number) page.get("totalElements")).intValue());
+
+        ApiResponse summaryResponse = request(
+            "GET",
+            "/api/v1/approvals/summary?companyId=" + companyId,
+            null,
+            token
+        );
+        assertEquals(200, summaryResponse.status(), summaryResponse.body());
+        Map<String, Object> summary = parseMap(summaryResponse.body());
+        assertEquals(requestsBefore + 1, ((Number) summary.get("total")).intValue());
+        assertEquals(requestsBefore + 1, ((Number) summary.get("pending")).intValue());
+        assertEquals(requestsBefore + 1, ((Number) summary.get("minePending")).intValue());
+
         ApiResponse invalidDecision = request(
             "POST",
             "/api/v1/approvals/" + approvalId + "/reject",
