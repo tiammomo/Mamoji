@@ -70,7 +70,7 @@ class EntityTransferMigrationTest {
                 assertEquals("date", result.getString("date_type"));
                 assertEquals("timestamp with time zone", result.getString("created_type"));
             }
-            assertEquals("26", latestVersion(statement));
+            assertEquals("27", latestVersion(statement));
             assertTrue(transferConstraints(statement).containsAll(Set.of(
                 "fk_entity_transfers_source",
                 "fk_entity_transfers_target",

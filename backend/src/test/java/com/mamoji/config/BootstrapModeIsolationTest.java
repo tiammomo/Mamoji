@@ -13,7 +13,6 @@ import com.mamoji.budget.application.BudgetRepository;
 import com.mamoji.budget.domain.BudgetPolicy;
 import com.mamoji.budget.infrastructure.BudgetDataInitializer;
 import com.mamoji.evidence.infrastructure.DemoReceiptVoucherDataInitializer;
-import com.mamoji.evidence.infrastructure.ReceiptVoucherDataInitializer;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.infrastructure.AccountDataInitializer;
@@ -54,7 +53,6 @@ class BootstrapModeIsolationTest {
             BudgetDataInitializer.class,
             RecurringItemDataInitializer.class,
             TaxItemDataInitializer.class,
-            ReceiptVoucherDataInitializer.class,
             DemoReceiptVoucherDataInitializer.class
         )
         .withBean("initialAdminDataInitializer", Object.class, Object::new)
@@ -85,7 +83,7 @@ class BootstrapModeIsolationTest {
         context.withPropertyValues("mamoji.bootstrap.mode=bootstrap").run(application -> {
             assertInstanceOf(EnterpriseDataInitializer.class, application.getBean("enterpriseDataInitializer"));
             assertInstanceOf(CategoryDataInitializer.class, application.getBean("categoryDataInitializer"));
-            assertTrue(application.containsBean("receiptVoucherDataInitializer"));
+            assertFalse(application.containsBean("receiptVoucherDataInitializer"));
             assertFalse(application.containsBean("demoEnterpriseDataInitializer"));
             assertFalse(application.containsBean("demoCategoryDataInitializer"));
             assertFalse(application.containsBean("accountDataInitializer"));
