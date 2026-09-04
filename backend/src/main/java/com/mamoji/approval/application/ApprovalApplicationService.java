@@ -1,18 +1,16 @@
-package com.mamoji.service;
+package com.mamoji.approval.application;
 
 import com.mamoji.approval.api.ApprovalActionRequest;
 import com.mamoji.approval.api.ApprovalCreateRequest;
+import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.approval.domain.ApprovalWorkflow.Action;
 import com.mamoji.approval.domain.ApprovalWorkflow.Transition;
-import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
-import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
-import com.mamoji.platform.identity.User;
 import com.mamoji.platform.audit.application.AuditTrailService;
+import com.mamoji.platform.identity.User;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -35,7 +33,7 @@ import org.springframework.web.server.ResponseStatusException;
 import static com.mamoji.common.PayloadReader.optionalLong;
 
 @Service
-public class ApprovalService {
+public class ApprovalApplicationService {
     private static final Set<String> REQUEST_TYPES = Set.of(
         "reimbursement", "payment", "budget_adjustment", "onboarding", "offboarding", "payroll_close", "other"
     );
@@ -46,21 +44,18 @@ public class ApprovalService {
     private final JdbcTemplate jdbc;
     private final AccessControlService accessControl;
     private final AuditTrailService auditTrail;
-    private final ReceiptVoucherRepository receiptVouchers;
-    private final ReceiptService receiptService;
+    private final ApprovalEntityGateway entityGateway;
 
-    public ApprovalService(
+    public ApprovalApplicationService(
         JdbcTemplate jdbc,
         AccessControlService accessControl,
         AuditTrailService auditTrail,
-        ReceiptVoucherRepository receiptVouchers,
-        ReceiptService receiptService
+        ApprovalEntityGateway entityGateway
     ) {
         this.jdbc = jdbc;
         this.accessControl = accessControl;
         this.auditTrail = auditTrail;
-        this.receiptVouchers = receiptVouchers;
-        this.receiptService = receiptService;
+        this.entityGateway = entityGateway;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -319,22 +314,11 @@ public class ApprovalService {
     }
 
     private void syncEntity(String authorization, ApprovalRequest request, String status) {
-        if ("receipt_voucher".equals(request.entityType) && request.entityId != null) {
-            receiptService.updateApprovalStatus(authorization, request.entityId, status);
-        }
+        entityGateway.synchronizeStatus(authorization, request.entityType, request.entityId, status);
     }
 
     private void validateEntity(User user, long companyId, String entityType, Long entityId) {
-        if (entityId == null) return;
-        if ("receipt_voucher".equals(entityType)) {
-            ReceiptVoucher voucher = receiptVouchers.findById(entityId).orElse(null);
-            if (voucher == null || voucher.companyId != companyId) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt voucher is outside the selected company");
-            }
-            if (!accessControl.hasFinanceManagerRole(user, companyId) && voucher.operatorUserId != user.id) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the submitter or a finance manager can submit this receipt");
-            }
-        }
+        entityGateway.validateReference(user, companyId, entityType, entityId);
     }
 
     private void validateAssignee(Company company, long assigneeId) {

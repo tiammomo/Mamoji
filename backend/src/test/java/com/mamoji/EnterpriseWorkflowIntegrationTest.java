@@ -391,6 +391,80 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void approvalEntityReferencesMustBelongToTheSelectedCompany() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long sourceCompanyId = createCompany(token, "Approval Entity Source " + System.nanoTime());
+        long selectedCompanyId = createCompany(token, "Approval Entity Target " + System.nanoTime());
+        String employeeToken = registerInvitedUser(uniqueEmail("approval-entity-employee"));
+        Map<String, Object> employeeUser = parseMap(request("GET", "/api/v1/auth/me", null, employeeToken).body());
+        Map<String, Object> employee = createEmployee(
+            token,
+            sourceCompanyId,
+            ((Number) employeeUser.get("id")).longValue(),
+            text(employeeUser.get("email")),
+            "employee"
+        );
+        Map<String, Object> account = createAccount(token, sourceCompanyId, "Approval entity account", "1000");
+        Map<String, Object> category = createCategory(token, sourceCompanyId, "Approval entity expense", "expense");
+        Map<String, Object> createdTransaction = createTransaction(token, sourceCompanyId, account, category, "20");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) createdTransaction.get("transaction");
+
+        ApiResponse budgetResponse = request("POST", "/api/v1/budgets", Map.of(
+            "companyId", sourceCompanyId,
+            "name", "Approval entity budget",
+            "amount", 100,
+            "categoryId", category.get("id"),
+            "startDate", "2026-07-01",
+            "endDate", "2026-07-31",
+            "warningThreshold", 85
+        ), token);
+        assertEquals(200, budgetResponse.status(), budgetResponse.body());
+
+        ApiResponse payrollRunResponse = request("POST", "/api/v1/payroll-runs", Map.of(
+            "companyId", sourceCompanyId,
+            "period", "2026-07"
+        ), token);
+        assertEquals(200, payrollRunResponse.status(), payrollRunResponse.body());
+
+        Map<String, Long> foreignReferences = new LinkedHashMap<>();
+        foreignReferences.put("transaction", ((Number) transaction.get("id")).longValue());
+        foreignReferences.put("budget", ((Number) parseMap(budgetResponse.body()).get("id")).longValue());
+        foreignReferences.put("employee", ((Number) employee.get("id")).longValue());
+        foreignReferences.put("payroll_run", ((Number) parseMap(payrollRunResponse.body()).get("id")).longValue());
+
+        int requestsBefore = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?",
+            Integer.class,
+            selectedCompanyId
+        );
+        for (Map.Entry<String, Long> reference : foreignReferences.entrySet()) {
+            ApiResponse response = request("POST", "/api/v1/approvals", Map.of(
+                "companyId", selectedCompanyId,
+                "requestType", "other",
+                "entityType", reference.getKey(),
+                "entityId", reference.getValue(),
+                "title", "Reject cross-company " + reference.getKey()
+            ), token);
+            assertEquals(400, response.status(), reference.getKey() + ": " + response.body());
+        }
+
+        ApiResponse missing = request("POST", "/api/v1/approvals", Map.of(
+            "companyId", selectedCompanyId,
+            "requestType", "other",
+            "entityType", "transaction",
+            "entityId", Long.MAX_VALUE,
+            "title", "Reject missing transaction"
+        ), token);
+        assertEquals(400, missing.status(), missing.body());
+        assertEquals(requestsBefore, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM approval_requests WHERE company_id = ?",
+            Integer.class,
+            selectedCompanyId
+        ));
+    }
+
+    @Test
     void globalSearchReturnsCompanyScopedBusinessRecords() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Search Flow " + System.nanoTime());
