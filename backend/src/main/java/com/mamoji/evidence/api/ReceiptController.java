@@ -14,6 +14,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -101,21 +102,21 @@ public class ReceiptController {
     }
 
     @PostMapping("/upload")
-    public Map<String, Object> upload(
+    public ReceiptUploadResponse upload(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam Map<String, String> params,
+        @Valid @ModelAttribute ReceiptUploadRequest request,
         @RequestParam("file") MultipartFile file
     ) {
-        return service.upload(authorization, file, params);
+        return ReceiptUploadResponse.uploaded(service.upload(authorization, file, request.toCommand()));
     }
 
     @PostMapping("/batch-upload")
-    public Map<String, Object> batchUpload(
+    public ReceiptBatchUploadResponse batchUpload(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam Map<String, String> params,
+        @Valid @ModelAttribute ReceiptUploadRequest request,
         @RequestParam("files") List<MultipartFile> files
     ) {
-        return service.batchUpload(authorization, files, params);
+        return ReceiptBatchUploadResponse.from(service.batchUpload(authorization, files, request.toCommand()));
     }
 
     private MediaType mediaType(String value) {
