@@ -3,6 +3,7 @@ package com.mamoji.evidence.api;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.evidence.application.ReceiptApplicationService;
 import com.mamoji.evidence.application.ReceiptFileDownload;
+import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.platform.audit.domain.AuditLog;
 import jakarta.validation.Valid;
@@ -37,17 +38,17 @@ public class ReceiptController {
     @GetMapping
     public PagedResponse<ReceiptVoucher> list(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam Map<String, String> params
+        @Valid @ModelAttribute ReceiptQueryRequest request
     ) {
-        return service.list(authorization, params);
+        return service.list(authorization, request.toQuery());
     }
 
     @GetMapping("/summary")
-    public Map<String, Object> summary(
+    public ReceiptSummary summary(
         @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam(value = "companyId", required = false) Long companyId
+        @Valid @ModelAttribute ReceiptSummaryRequest request
     ) {
-        return service.summary(authorization, companyId);
+        return service.summary(authorization, request.companyId());
     }
 
     @GetMapping("/{id}/audit-logs")

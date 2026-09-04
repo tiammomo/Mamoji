@@ -4,8 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.common.PagedResponse;
 import com.mamoji.evidence.api.ReceiptController;
 import com.mamoji.evidence.api.ReceiptCreateRequest;
+import com.mamoji.evidence.api.ReceiptQueryRequest;
+import com.mamoji.evidence.api.ReceiptSummaryRequest;
 import com.mamoji.evidence.api.ReceiptUpdateRequest;
 import com.mamoji.evidence.api.ReceiptUploadRequest;
 import com.mamoji.evidence.application.ReceiptApplicationService;
@@ -13,9 +16,11 @@ import com.mamoji.evidence.application.ReceiptApprovalStatusService;
 import com.mamoji.evidence.application.ReceiptBatchUploadResult;
 import com.mamoji.evidence.application.ReceiptCreateCommand;
 import com.mamoji.evidence.application.ReceiptFileHashRepository;
+import com.mamoji.evidence.application.ReceiptListQuery;
 import com.mamoji.evidence.application.ReceiptUpdateCommand;
 import com.mamoji.evidence.application.ReceiptUploadCommand;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
+import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.JdbcReceiptFileHashRepository;
 import com.mamoji.evidence.infrastructure.JdbcReceiptVoucherRepository;
@@ -58,7 +63,7 @@ class EvidenceModuleBoundaryTest {
     }
 
     @Test
-    void receiptDomainAndWriteContractsCannotReturnToSharedModelsOrMaps() throws Exception {
+    void receiptDomainAndContractsCannotReturnToSharedModelsOrMaps() throws Exception {
         assertEquals("com.mamoji.evidence.domain", ReceiptVoucher.class.getPackageName());
         assertEquals(
             ReceiptVoucher.class,
@@ -73,7 +78,7 @@ class EvidenceModuleBoundaryTest {
                 .getReturnType()
         );
         assertFalse(Arrays.stream(ReceiptApplicationService.class.getDeclaredMethods())
-            .filter(method -> Set.of("create", "update", "upload", "batchUpload").contains(method.getName()))
+            .filter(method -> Set.of("list", "create", "update", "upload", "batchUpload").contains(method.getName()))
             .flatMap(method -> Arrays.stream(method.getParameterTypes()))
             .anyMatch(Map.class::equals));
         assertFalse(Arrays.stream(com.mamoji.domain.Models.class.getDeclaredClasses())
@@ -81,6 +86,25 @@ class EvidenceModuleBoundaryTest {
         assertEquals(ReceiptCreateCommand.class, ReceiptCreateRequest.class.getDeclaredMethod("toCommand").getReturnType());
         assertEquals(ReceiptUpdateCommand.class, ReceiptUpdateRequest.class.getDeclaredMethod("toCommand").getReturnType());
         assertEquals(ReceiptUploadCommand.class, ReceiptUploadRequest.class.getDeclaredMethod("toCommand").getReturnType());
+        assertEquals(ReceiptListQuery.class, ReceiptQueryRequest.class.getDeclaredMethod("toQuery").getReturnType());
+        assertEquals(
+            PagedResponse.class,
+            ReceiptApplicationService.class
+                .getDeclaredMethod("list", String.class, ReceiptListQuery.class)
+                .getReturnType()
+        );
+        assertEquals(
+            ReceiptSummary.class,
+            ReceiptApplicationService.class
+                .getDeclaredMethod("summary", String.class, Long.class)
+                .getReturnType()
+        );
+        assertEquals(
+            ReceiptSummary.class,
+            ReceiptController.class
+                .getDeclaredMethod("summary", String.class, ReceiptSummaryRequest.class)
+                .getReturnType()
+        );
         assertEquals(
             ReceiptVoucher.class,
             ReceiptApplicationService.class
