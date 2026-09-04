@@ -104,7 +104,7 @@ public class WorkforceCostReadRepository {
             SELECT
                 employee.department_id,
                 COALESCE(NULLIF(department.name, ''), NULLIF(item.department_name, ''), '未分配部门') AS department_name,
-                COALESCE(CAST(NULLIF(department.budget, '') AS NUMERIC), 0) AS budget,
+                COALESCE(department.budget, 0) AS budget,
                 COUNT(*) AS employee_count,
                 COALESCE(SUM(CAST(NULLIF(item.salary, '') AS NUMERIC)), 0) AS salary,
                 COALESCE(SUM(GREATEST(
@@ -133,7 +133,7 @@ public class WorkforceCostReadRepository {
             SELECT
                 employee.department_id,
                 COALESCE(NULLIF(department.name, ''), '未分配部门') AS department_name,
-                COALESCE(CAST(NULLIF(department.budget, '') AS NUMERIC), 0) AS budget,
+                COALESCE(department.budget, 0) AS budget,
                 COUNT(*) AS employee_count,
                 COALESCE(SUM(CAST(NULLIF(employee.salary, '') AS NUMERIC)), 0) AS salary,
                 COALESCE(SUM(CAST(NULLIF(employee.overtime_pay, '') AS NUMERIC)), 0) AS overtime,
