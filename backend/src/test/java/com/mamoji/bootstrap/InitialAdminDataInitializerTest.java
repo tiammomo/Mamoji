@@ -1,7 +1,6 @@
 package com.mamoji.bootstrap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -20,29 +19,29 @@ import org.mockito.ArgumentCaptor;
 
 class InitialAdminDataInitializerTest {
     @Test
-    void leavesExistingUserAccountsUntouched() {
+    void leavesExistingDemoUserAccountsUntouched() {
         LocalUserAccountRepository users = mock(LocalUserAccountRepository.class);
         PasswordHasher passwordHasher = mock(PasswordHasher.class);
         when(users.count()).thenReturn(1L);
 
-        initializer(users, passwordHasher, "bootstrap", "ops@example.com", "Strong-pass-123!", true)
-            .initialize();
+        initializer(users, passwordHasher, "ops@example.com", "Strong-pass-123!").initialize();
 
         verify(users, never()).insert(any());
         verifyNoInteractions(passwordHasher);
     }
 
     @Test
-    void seedsTheConfiguredDemoAdministrator() {
+    void seedsAndNormalizesTheConfiguredDemoAdministrator() {
         LocalUserAccountRepository users = mock(LocalUserAccountRepository.class);
         PasswordHasher passwordHasher = mock(PasswordHasher.class);
         when(passwordHasher.hash("123456")).thenReturn("demo-hash");
 
-        initializer(users, passwordHasher, "demo", "test@mamoji.com", "123456", false)
-            .initialize();
+        initializer(users, passwordHasher, " Demo@Mamoji.COM ", "123456").initialize();
 
-        User inserted = captureInsertedUser(users);
-        assertEquals("test@mamoji.com", inserted.email);
+        ArgumentCaptor<User> user = ArgumentCaptor.forClass(User.class);
+        verify(users).insert(user.capture());
+        User inserted = user.getValue();
+        assertEquals("demo@mamoji.com", inserted.email);
         assertEquals("Administrator", inserted.nickname);
         assertEquals("demo-hash", inserted.passwordHash);
         assertEquals(Roles.ADMIN, inserted.role);
@@ -51,62 +50,18 @@ class InitialAdminDataInitializerTest {
         OffsetDateTime.parse(inserted.createdAt);
     }
 
-    @Test
-    void rejectsWeakProductionBootstrapCredentialsBeforeHashingOrWriting() {
-        LocalUserAccountRepository users = mock(LocalUserAccountRepository.class);
-        PasswordHasher passwordHasher = mock(PasswordHasher.class);
-        InitialAdminDataInitializer initializer = initializer(
-            users,
-            passwordHasher,
-            "bootstrap",
-            "ops@example.com",
-            "123456",
-            true
-        );
-
-        assertThrows(IllegalStateException.class, initializer::initialize);
-
-        verify(users, never()).insert(any());
-        verifyNoInteractions(passwordHasher);
-    }
-
-    @Test
-    void normalizesAndSeedsStrongProductionBootstrapCredentials() {
-        LocalUserAccountRepository users = mock(LocalUserAccountRepository.class);
-        PasswordHasher passwordHasher = mock(PasswordHasher.class);
-        when(passwordHasher.hash("Strong-pass-123!")).thenReturn("production-hash");
-
-        initializer(users, passwordHasher, "BOOTSTRAP", " Ops@Example.COM ", "Strong-pass-123!", true)
-            .initialize();
-
-        User inserted = captureInsertedUser(users);
-        assertEquals("ops@example.com", inserted.email);
-        assertEquals("production-hash", inserted.passwordHash);
-    }
-
     private InitialAdminDataInitializer initializer(
         LocalUserAccountRepository users,
         PasswordHasher passwordHasher,
-        String mode,
         String email,
-        String password,
-        boolean requireComplexity
+        String password
     ) {
         return new InitialAdminDataInitializer(
             users,
             passwordHasher,
-            mode,
             email,
             password,
-            "Administrator",
-            12,
-            requireComplexity
+            "Administrator"
         );
-    }
-
-    private User captureInsertedUser(LocalUserAccountRepository users) {
-        ArgumentCaptor<User> user = ArgumentCaptor.forClass(User.class);
-        verify(users).insert(user.capture());
-        return user.getValue();
     }
 }

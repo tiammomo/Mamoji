@@ -25,6 +25,11 @@ if ! [[ "$WAIT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MAMOJI_SERVICE_WAIT_TIMEOUT_SECONDS must be a positive integer" >&2
   exit 1
 fi
+BACKEND_REPLICAS="${MAMOJI_BACKEND_REPLICAS:-1}"
+if ! [[ "$BACKEND_REPLICAS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MAMOJI_BACKEND_REPLICAS must be a positive integer" >&2
+  exit 1
+fi
 
 compose() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
@@ -35,7 +40,7 @@ if [[ "$SKIP_BACKUP" != "true" ]]; then
 fi
 
 compose config >/dev/null
-compose up -d --build --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS"
+compose up -d --build --scale backend="$BACKEND_REPLICAS" --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS"
 compose ps
 
 if [[ "$SKIP_SMOKE" != "true" ]]; then

@@ -15,7 +15,6 @@ class ProductionReadinessGuardTest {
         ProductionReadinessGuard guard = new ProductionReadinessGuard(
             new MockEnvironment(),
             "production",
-            false,
             "demo",
             "admin@example.com",
             "123456",
@@ -69,7 +68,6 @@ class ProductionReadinessGuardTest {
         return new ProductionReadinessGuard(
             new MockEnvironment(),
             "production",
-            true,
             "bootstrap",
             "ops@company.test",
             "Admin-Password-123!",

@@ -52,6 +52,7 @@ class ProductionBootstrapIntegrationTest {
     @Test
     void bootstrapCreatesOnlyMinimalEnterpriseDataAndDoesNotRegisterDemoBeans() {
         assertInstanceOf(EnterpriseDataInitializer.class, application.getBean("enterpriseDataInitializer"));
+        assertFalse(application.containsBean("initialAdminDataInitializer"));
         assertFalse(application.containsBean("ledgerDataInitializer"));
         assertFalse(application.containsBean("categoryDataInitializer"));
         assertFalse(application.containsBean("receiptVoucherDataInitializer"));

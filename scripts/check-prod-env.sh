@@ -95,7 +95,6 @@ require_real_value MAMOJI_SMOKE_EMAIL 6
 require_real_value MAMOJI_SMOKE_PASSWORD 12
 
 require_equals MAMOJI_RUNTIME_ENVIRONMENT production
-require_equals MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED true
 require_equals MAMOJI_BOOTSTRAP_MODE bootstrap
 require_equals MAMOJI_REGISTRATION_MODE invite
 require_equals MAMOJI_PASSWORD_REQUIRE_COMPLEXITY true
@@ -136,6 +135,11 @@ db_pool_validation_timeout="${MAMOJI_DB_POOL_VALIDATION_TIMEOUT_MS:-2000}"
 http_max_threads="${MAMOJI_HTTP_MAX_THREADS:-100}"
 http_min_spare_threads="${MAMOJI_HTTP_MIN_SPARE_THREADS:-10}"
 http_max_connections="${MAMOJI_HTTP_MAX_CONNECTIONS:-4096}"
+backend_replicas="${MAMOJI_BACKEND_REPLICAS:-1}"
+
+if ! [[ "$backend_replicas" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_BACKEND_REPLICAS must be a positive integer"
+fi
 
 if ! [[ "$db_pool_max" =~ ^[1-9][0-9]*$ ]]; then
   fail "MAMOJI_DB_POOL_MAX_SIZE must be a positive integer"

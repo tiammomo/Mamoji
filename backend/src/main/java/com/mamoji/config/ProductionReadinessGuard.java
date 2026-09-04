@@ -14,7 +14,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProductionReadinessGuard {
     private final boolean production;
-    private final boolean singleInstanceGuardEnabled;
     private final String bootstrapMode;
     private final String bootstrapAdminEmail;
     private final String bootstrapAdminPassword;
@@ -34,7 +33,6 @@ public class ProductionReadinessGuard {
     public ProductionReadinessGuard(
         Environment environment,
         @Value("${mamoji.runtime.environment:local}") String runtimeEnvironment,
-        @Value("${mamoji.runtime.single-instance-guard-enabled:true}") boolean singleInstanceGuardEnabled,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.admin-email:test@mamoji.com}") String bootstrapAdminEmail,
         @Value("${mamoji.bootstrap.admin-password:123456}") String bootstrapAdminPassword,
@@ -52,7 +50,6 @@ public class ProductionReadinessGuard {
         @Value("${mamoji.object-storage.external-url:}") String minioExternalUrl
     ) {
         this.production = isProduction(runtimeEnvironment, environment);
-        this.singleInstanceGuardEnabled = singleInstanceGuardEnabled;
         this.bootstrapMode = value(bootstrapMode);
         this.bootstrapAdminEmail = value(bootstrapAdminEmail);
         this.bootstrapAdminPassword = value(bootstrapAdminPassword);
@@ -76,9 +73,6 @@ public class ProductionReadinessGuard {
             return;
         }
         List<String> problems = new ArrayList<>();
-        if (!singleInstanceGuardEnabled) {
-            problems.add("MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED must be true in production");
-        }
         requireEquals(problems, "MAMOJI_BOOTSTRAP_MODE", bootstrapMode, "bootstrap");
         requireEmail(problems, "MAMOJI_BOOTSTRAP_ADMIN_EMAIL", bootstrapAdminEmail);
         requireStrongSecret(problems, "MAMOJI_BOOTSTRAP_ADMIN_PASSWORD", bootstrapAdminPassword, 12);

@@ -74,7 +74,7 @@ flowchart TB
 
 `access-management` 是默认核心能力。`people-core`、`workforce-cost`、`talent-suite`（福利、绩效）、税务、政策和备份 UI 是可选能力包。任何可选能力都不允许成为核心模块的反向依赖。
 
-`bootstrap` 不是业务模块，也不向运行期用例暴露查询或写入 API；它只负责按配置编排首次管理员、首次企业数据和本地演示夹具。`bootstrap` 与 `demo` 使用条件装配的互斥企业/分类初始化器，并通过稳定 Bean 名维持 `InitialAdminDataInitializer -> enterpriseDataInitializer ->` 各模块初始化器的显式顺序；生产上下文不注册 demo 业务初始化器，不能依赖历史 Store 或未装配 Bean 的副作用。
+`bootstrap` 不是业务模块，也不向运行期用例暴露查询或写入 API；它只负责按配置编排首次管理员、首次企业数据和本地演示夹具。`demo` 通过 `InitialAdminDataInitializer -> DemoEnterpriseDataInitializer ->` 各模块初始化器维持显式夹具顺序；生产上下文不注册这些 demo Bean，而由 `EnterpriseDataInitializer` 一次调用事务型 `ProductionBootstrapCommand`，不能依赖历史 Store 或未装配 Bean 的副作用。
 
 ## 4. 统一访问上下文
 
@@ -234,10 +234,9 @@ V29 为外部 Webhook 投递增加唯一租约令牌和终态 fencing。`notific
 
 V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通知提醒以 PostgreSQL 时钟原子认领固定任务名，只有当前 token 可以完成或记录失败；完成时间决定下一次可运行时间，崩溃实例的租约过期后允许其他实例接管。提醒生成仍使用通知去重键保护部分执行后的重试，租约表作为运行态在结构化恢复时清空。
 
-当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
+生产首次管理员和首个公司已收口到 `ProductionBootstrapCommand`：命令在同一事务内取得固定 PostgreSQL transaction advisory lock，持锁后重新检查租户根，再一起写入管理员、公司工作区、管理部门、创始人员工档案、任职事件和审计记录。事务失败时全部回滚，等待锁的其他实例可继续重试；已存在用户但公司为空的旧中间态只读取一个首选管理员并补齐首家公司。
 
-1. 在真实 PostgreSQL 上通过双实例并发写、重复命令和故障重试测试；
-2. 将首次管理员与首个公司创建收口为一个跨实例安全、失败可重试的 bootstrap 数据库命令。
+生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；扩容时必须合并计算数据库连接预算，并继续以双容器端到端压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
 
 ## 10. 后续拆分顺序
 
@@ -252,7 +251,7 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 - 演示数据已按 `mamoji.bootstrap.mode=demo` 条件装配，生产 `bootstrap` 上下文不注册 demo 业务初始化器；后续可进一步迁为独立开发脚本。
 - `EnterpriseStore` 已完成退场；保持审计只能通过 `AuditTrailService` 追加，启动数据只能由 `EnterpriseDataInitializer` 编排。
-- `InMemoryStore` 已完成退场；首次管理员只能由 `InitialAdminDataInitializer` 创建，不得恢复进程内兼容集合或横向 Store 工具。
+- `InMemoryStore` 已完成退场；demo 管理员只能由 `InitialAdminDataInitializer` 创建，生产首次管理员只能由 `ProductionBootstrapCommand` 创建，不得恢复进程内兼容集合或横向 Store 工具。
 - 继续收紧公司、主体划转、人员、税务事项、分类、预算、周期事项、流水、资金账户、账本及成员之间的应用层契约，保持强类型持久化边界。
 
 ### P2：集成宿主平台

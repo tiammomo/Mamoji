@@ -4,8 +4,8 @@
 
 - `.env.production` 已从 `.env.production.example` 复制，并替换所有 `replace-with`、`example.com`、默认密码和默认 MinIO 密钥。
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`，`scripts/check-prod-env.sh` 已通过，生产启动 guard 未报错。
-- `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`，且部署未配置多个 backend 副本。
-- `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类；该模式不会向 Spring 上下文注册 demo 业务初始化器。
+- `MAMOJI_BACKEND_REPLICAS` 是正整数；大于 1 时已按“副本数 × 每实例 Hikari 上限”复核 PostgreSQL `max_connections` 与运维连接余量。
+- `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类；该模式不会注册 demo 初始化器，多个后端同时启动时只会原子创建一套管理员和公司工作区。
 - 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
 - 从 V13 及更早版本升级前，已确认 `users` 不存在规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳，V14 预检可以通过。
 - 升级到 V15 前，已确认 `recurring_items` 都有有效用户和公司归属，金额、频率、日期、日历字段及执行游标满足 V15 预检约束。

@@ -30,6 +30,16 @@ public class JdbcUserDirectory implements UserDirectory {
     }
 
     @Override
+    public Optional<Entry> findBootstrapOwner() {
+        return jdbc.query("""
+            SELECT %s
+            FROM users
+            ORDER BY CASE WHEN role = 1 THEN 0 ELSE 1 END, id
+            LIMIT 1
+            """.formatted(COLUMNS), this::map).stream().findFirst();
+    }
+
+    @Override
     public List<Entry> findAll() {
         return jdbc.query("SELECT " + COLUMNS + " FROM users ORDER BY id", this::map);
     }
