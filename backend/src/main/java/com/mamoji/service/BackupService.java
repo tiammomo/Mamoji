@@ -59,8 +59,8 @@ public class BackupService {
      * Business data included in the application-level portable snapshot.
      * Object payloads remain in MinIO and are protected by the production
      * postgres + MinIO backup scripts. Sessions, login throttles, delivery
-     * attempts and outbox leases are deliberately excluded because replaying
-     * ephemeral control state is unsafe.
+     * attempts, outbox leases and scheduled-job leases are deliberately
+     * excluded because replaying ephemeral control state is unsafe.
      */
     private static final List<String> BACKUP_TABLES = List.of(
         "users",
@@ -98,7 +98,8 @@ public class BackupService {
         "auth_tokens",
         "login_failure_states",
         "notification_deliveries",
-        "outbox_events"
+        "outbox_events",
+        "scheduled_job_leases"
     );
 
     private final AuditTrailService auditTrail;

@@ -33,6 +33,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -361,6 +362,13 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "SELECT COUNT(*) FROM company_memberships",
             Integer.class
         );
+        String scheduledJobName = "backup-reset-" + UUID.randomUUID();
+        jdbc.update("""
+            INSERT INTO scheduled_job_leases (
+                job_name, lock_token, locked_until, next_run_at, last_started_at,
+                created_at, updated_at
+            ) VALUES (?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, scheduledJobName);
 
         ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
         Map<String, Object> payload = exported.getBody();
@@ -373,7 +381,8 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "auth_tokens",
             "login_failure_states",
             "notification_deliveries",
-            "outbox_events"
+            "outbox_events",
+            "scheduled_job_leases"
         ));
         assertEquals(Set.copyOf(jdbc.queryForList("""
             SELECT tablename
@@ -398,6 +407,11 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         assertEquals(membershipsBefore, jdbc.queryForObject(
             "SELECT COUNT(*) FROM company_memberships",
             Integer.class
+        ));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM scheduled_job_leases WHERE job_name = ?",
+            Integer.class,
+            scheduledJobName
         ));
     }
 
@@ -801,7 +815,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("29", jdbc.queryForObject("""
+        assertEquals("30", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(Set.of("created_at", "updated_at"), Set.copyOf(jdbc.queryForList("""
@@ -829,6 +843,34 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
               AND table_name = 'outbox_events'
               AND column_name = 'lock_token'
             """, Integer.class));
+        assertEquals(Set.of(
+            "job_name",
+            "lock_token",
+            "locked_until",
+            "next_run_at",
+            "last_started_at",
+            "last_completed_at",
+            "last_failed_at",
+            "last_error",
+            "created_at",
+            "updated_at"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'scheduled_job_leases'
+            """, String.class)));
+        assertEquals(Set.of(
+            "scheduled_job_leases_pkey",
+            "ck_scheduled_job_leases_name",
+            "ck_scheduled_job_leases_lease",
+            "ck_scheduled_job_leases_lifecycle"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'scheduled_job_leases'::regclass
+              AND contype IN ('p', 'c')
+            """, String.class)));
         assertEquals(1, jdbc.queryForObject("""
             SELECT COUNT(*)
             FROM information_schema.columns

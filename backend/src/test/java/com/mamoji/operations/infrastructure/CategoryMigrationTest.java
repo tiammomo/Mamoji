@@ -59,7 +59,7 @@ class CategoryMigrationTest {
                 assertEquals("timestamp with time zone", result.getString("updated_type"));
                 assertFalse(result.next());
             }
-            assertEquals("29", latestVersion(statement));
+            assertEquals("30", latestVersion(statement));
             assertEquals(Set.of(
                 "uq_categories_company_id",
                 "uq_categories_company_user_type_name",

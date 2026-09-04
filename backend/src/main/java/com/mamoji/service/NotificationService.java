@@ -14,6 +14,7 @@ import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.product.ProductModuleCatalog;
+import com.mamoji.platform.scheduling.application.DistributedJobCoordinator;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.service.support.AccessControlService;
@@ -42,6 +43,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class NotificationService {
+    private static final String REMINDER_JOB_NAME = "notification-reminders";
+
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
     private final CompanyRepository companies;
@@ -53,12 +56,15 @@ public class NotificationService {
     private final ProductModuleCatalog modules;
     private final NotificationDeliveryService deliveryService;
     private final WebhookUrlValidator webhookUrlValidator;
+    private final DistributedJobCoordinator scheduledJobs;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
     private final boolean reminderEnabled;
     private final int taxLookaheadDays;
     private final int peopleLookaheadDays;
     private final int receiptLookaheadDays;
+    private final long reminderCadenceMillis;
+    private final long reminderLeaseMillis;
 
     public NotificationService(
         JdbcTemplate jdbc,
@@ -72,11 +78,14 @@ public class NotificationService {
         ProductModuleCatalog modules,
         NotificationDeliveryService deliveryService,
         WebhookUrlValidator webhookUrlValidator,
+        DistributedJobCoordinator scheduledJobs,
         @Value("${mamoji.notifications.enabled:true}") boolean enabled,
         @Value("${mamoji.notifications.reminder.enabled:true}") boolean reminderEnabled,
         @Value("${mamoji.notifications.reminder.tax-lookahead-days:7}") int taxLookaheadDays,
         @Value("${mamoji.notifications.reminder.people-lookahead-days:14}") int peopleLookaheadDays,
-        @Value("${mamoji.notifications.reminder.receipt-lookahead-days:7}") int receiptLookaheadDays
+        @Value("${mamoji.notifications.reminder.receipt-lookahead-days:7}") int receiptLookaheadDays,
+        @Value("${mamoji.notifications.reminder.fixed-delay-ms:60000}") long reminderCadenceMillis,
+        @Value("${mamoji.notifications.reminder.lease-ms:600000}") long reminderLeaseMillis
     ) {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
@@ -89,11 +98,14 @@ public class NotificationService {
         this.modules = modules;
         this.deliveryService = deliveryService;
         this.webhookUrlValidator = webhookUrlValidator;
+        this.scheduledJobs = scheduledJobs;
         this.enabled = enabled;
         this.reminderEnabled = reminderEnabled;
         this.taxLookaheadDays = Math.max(1, taxLookaheadDays);
         this.peopleLookaheadDays = Math.max(1, peopleLookaheadDays);
         this.receiptLookaheadDays = Math.max(1, receiptLookaheadDays);
+        this.reminderCadenceMillis = Math.max(1000, reminderCadenceMillis);
+        this.reminderLeaseMillis = Math.max(1000, reminderLeaseMillis);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -356,6 +368,15 @@ public class NotificationService {
         if (!enabled || !reminderEnabled) {
             return;
         }
+        scheduledJobs.runIfDue(
+            REMINDER_JOB_NAME,
+            reminderCadenceMillis,
+            reminderLeaseMillis,
+            this::generateDueRemindersWithLease
+        );
+    }
+
+    private void generateDueRemindersWithLease() {
         LocalDate today = LocalDate.now();
         if (modules.isEnabled("tax")) {
             generateTaxReminders(today);

@@ -232,10 +232,12 @@ V28 一次性规范历史公司所有者成员，并只补齐缺失的经营账�
 
 V29 为外部 Webhook 投递增加唯一租约令牌和终态 fencing。`notification_deliveries` 仍通过 `FOR UPDATE SKIP LOCKED` 抢占批次，但只有持有当前 `lock_token` 的工作线程可以写入 delivered、failed 或 dead；正式请求同时携带稳定的 `Idempotency-Key`，自建接收方负责按该键实现副作用幂等。
 
+V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通知提醒以 PostgreSQL 时钟原子认领固定任务名，只有当前 token 可以完成或记录失败；完成时间决定下一次可运行时间，崩溃实例的租约过期后允许其他实例接管。提醒生成仍使用通知去重键保护部分执行后的重试，租约表作为运行态在结构化恢复时清空。
+
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
 1. 在真实 PostgreSQL 上通过双实例并发写、重复命令和故障重试测试；
-2. 确认定时任务使用抢占锁或 `SKIP LOCKED`，不会被每个实例重复执行。
+2. 将首次管理员与首个公司创建收口为一个跨实例安全、失败可重试的 bootstrap 数据库命令。
 
 ## 10. 后续拆分顺序
 

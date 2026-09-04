@@ -10,11 +10,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * The current repositories keep a process-local read model. Until that read
- * model is replaced by database-backed queries, running multiple backend
- * processes would allow stale reads and stale full-row writes. A PostgreSQL
- * session advisory lock turns that unsupported topology into a fail-fast
- * startup error instead of silent accounting corruption.
+ * Production bootstrap still coordinates the first administrator and company
+ * across separate startup callbacks. Until that bootstrap path uses a fenced
+ * database command, a PostgreSQL session advisory lock turns concurrent
+ * production startup into a fail-fast error instead of duplicate tenant roots.
  */
 @Component
 public class SingleInstanceDatabaseGuard {
@@ -48,7 +47,7 @@ public class SingleInstanceDatabaseGuard {
                         connection = null;
                         throw new IllegalStateException(
                             "Another Mamoji backend already holds the database lease; "
-                                + "the current process-local read model supports exactly one backend instance"
+                                + "the current production bootstrap supports exactly one backend instance"
                         );
                     }
                 }

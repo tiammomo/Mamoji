@@ -122,6 +122,7 @@ mamoji:
     reminder:
       enabled: ${MAMOJI_NOTIFICATION_REMINDERS_ENABLED:true}
       fixed-delay-ms: ${MAMOJI_NOTIFICATION_REMINDER_FIXED_DELAY_MS:60000}
+      lease-ms: ${MAMOJI_NOTIFICATION_REMINDER_LEASE_MS:600000}
       tax-lookahead-days: ${MAMOJI_NOTIFICATION_TAX_LOOKAHEAD_DAYS:7}
       people-lookahead-days: ${MAMOJI_NOTIFICATION_PEOPLE_LOOKAHEAD_DAYS:14}
       receipt-lookahead-days: ${MAMOJI_NOTIFICATION_RECEIPT_LOOKAHEAD_DAYS:7}

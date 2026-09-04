@@ -23,6 +23,7 @@
 - 升级到 V27 前，已确认 `receipt_vouchers.amount`、`tax_amount` 与 `tax_rate` 均为空值或合法数字，并已在备份副本核对一次性派生默认值回填结果；生产应用启动后不再执行票据全表兼容修复。
 - 升级到 V28 前，已在备份副本核对每个公司的所有者成员关系、现有账本及所有者分类；迁移只为缺失工作区的公司创建默认账本，只补齐所有者缺失的收入/支出类型，不替换已有账本或自定义分类。升级后生产启动不再扫描公司补种账本或分类。
 - V29 已为 Webhook 投递增加唯一租约令牌；企业自建接收方已按 `Idempotency-Key` 去重，并接受第三方通知入口仍可能按至少一次语义产生重复消息。
+- V30 已创建 `scheduled_job_leases`，通知提醒只由持有当前数据库租约的实例扫描；`MAMOJI_NOTIFICATION_REMINDER_LEASE_MS` 大于一次完整提醒扫描的预期最长耗时。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
 - 已确认邀请原始 token 只在创建时展示一次，并使用受控渠道交付；邀请列表和数据库均不保存可直接使用的明文凭证。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。
@@ -41,7 +42,7 @@
 - `MAMOJI_FLYWAY_ENABLED=true`，数据库迁移由 Flyway 管理。
 - 正式投产前已执行一次 `scripts/backup-prod.sh`。
 - 已在预生产或临时恢复环境执行 `CONFIRM_RESTORE=yes scripts/restore-prod.sh <backup-dir>` 并验证业务可用。
-- 如使用应用内结构化备份，已确认格式为 `2.2`，且公司成员关系、账本成员公司范围与预算占用账本均包含在导出数据集中；恢复旧 `2.1`/`2.0` 文件前已排除无公司账本、无公司分类、孤立或重复税务事项、无公司成员关系及跨公司部门引用。
+- 如使用应用内结构化备份，已确认格式为 `2.2`，且公司成员关系、账本成员公司范围与预算占用账本均包含在导出数据集中；恢复会清空会话、投递、Outbox 和定时任务租约等运行态。恢复旧 `2.1`/`2.0` 文件前已排除无公司账本、无公司分类、孤立或重复税务事项、无公司成员关系及跨公司部门引用。
 - 备份目录有独立磁盘或外部对象存储同步策略。
 - 已配置每日备份 cron，保留周期与公司数据恢复要求一致。
 - 已确认备份维护窗口会短暂停止入口、后端写入和 MinIO，并为探针设置了合理告警延迟。
@@ -63,6 +64,7 @@
 - `docker/prometheus/alerts.yml` 中的后端不可用、5xx、堆内存和连接池告警规则已加载。
 - `outbox_events` 没有 `dead` 状态事件，`pending/failed` 没有持续积压。
 - `notification_deliveries` 没有 `dead` 状态投递，`pending/failed` 没有持续积压，外部 Webhook 没有持续失败。
+- `scheduled_job_leases` 中不存在长期超过 `locked_until` 仍未被接管的提醒任务，最近完成或失败时间符合提醒周期。
 - 告警通知渠道已接入公司现有平台，或已规划 Alertmanager 接入。
 - `/healthz` 已接入负载均衡或外部探针。
 - Docker 后端探针使用 `/actuator/health/readiness` 且数据库中断时会转为非就绪；`/actuator/health/liveness` 不依赖外部服务。
