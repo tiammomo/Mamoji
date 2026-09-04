@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 /** Owns local evidence fixtures and is absent from production bootstrap contexts. */
 @Component
 @ConditionalOnProperty(name = "mamoji.bootstrap.mode", havingValue = "demo", matchIfMissing = true)
-@DependsOn({"receiptVoucherDataInitializer", "enterpriseDataInitializer"})
+@DependsOn("enterpriseDataInitializer")
 public class DemoReceiptVoucherDataInitializer {
     private final ReceiptVoucherRepository receiptVouchers;
     private final CompanyRepository companies;

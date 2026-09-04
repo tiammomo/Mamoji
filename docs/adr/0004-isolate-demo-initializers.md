@@ -35,3 +35,7 @@
 ## 回滚
 
 没有 schema 迁移，可以直接回滚应用镜像。回滚后生产 `bootstrap` 模式仍会在各 demo 初始化器方法入口返回，不会补种 demo 数据，但这些 Bean 会重新进入生产上下文；票据兼容修复与首次企业数据格式保持兼容。
+
+## 后续变化
+
+V27 已将第 4 项保留的票据历史修复迁为一次性 Flyway 回填，并删除 `ReceiptVoucherDataInitializer`；详情见 [ADR 0005：以 Flyway 接管票据兼容回填](0005-migrate-receipt-compatibility-repair.md)。
