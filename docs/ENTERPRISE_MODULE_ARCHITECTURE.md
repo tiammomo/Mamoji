@@ -236,7 +236,7 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 生产首次管理员和首个公司已收口到 `ProductionBootstrapCommand`：命令在同一事务内取得固定 PostgreSQL transaction advisory lock，持锁后重新检查租户根，再一起写入管理员、公司工作区、管理部门、创始人员工档案、任职事件和审计记录。事务失败时全部回滚，等待锁的其他实例可继续重试；已存在用户但公司为空的旧中间态只读取一个首选管理员并补齐首家公司。
 
-生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；扩容时必须合并计算数据库连接预算，并继续以双容器端到端压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
+生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；多副本发布自动逐实例验证 readiness、共享会话和全局注销，预生产可显式演练单副本停止与重新加入。扩容时仍必须合并计算数据库连接预算，并以双容器并发压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
 
 ## 10. 后续拆分顺序
 

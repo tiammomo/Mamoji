@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${MAMOJI_REPLICA_SMOKE_FAKE_STATE_DIR:?fake state directory is required}"
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$*" >>"$STATE_DIR/docker.log"
+
+case "${1:-}" in
+  compose)
+    if [[ " $* " == *" ps -q backend "* ]]; then
+      count="${MAMOJI_REPLICA_SMOKE_FAKE_REPLICAS:-2}"
+      for ((index = 1; index <= count; index += 1)); do
+        printf 'backend-%s\n' "$index"
+      done
+      exit 0
+    fi
+    ;;
+  inspect)
+    container_id="${*: -1}"
+    if [[ -f "$STATE_DIR/$container_id.stopped" ]]; then
+      if [[ " $* " == *".State.Running"* ]]; then
+        echo false
+      else
+        echo unhealthy
+      fi
+    elif [[ " $* " == *".State.Running"* ]]; then
+      echo true
+    else
+      echo healthy
+    fi
+    exit 0
+    ;;
+  exec)
+    if [[ "${2:-}" == "-i" ]]; then
+      container_id="${3:-}"
+    else
+      container_id="${2:-}"
+    fi
+    if [[ -f "$STATE_DIR/$container_id.stopped" ]]; then
+      echo "cannot exec in stopped container" >&2
+      exit 1
+    fi
+    if [[ " $* " == *"/actuator/health/readiness"* ]]; then
+      echo '{"status":"UP"}'
+      exit 0
+    fi
+    if [[ " $* " == *"/api/v1/auth/login"* ]]; then
+      input="$(</dev/stdin)"
+      [[ "$input" == *'"email":"smoke@mamoji.test"'* ]]
+      [[ "$input" == *'"password":"Strong-smoke-password-123!"'* ]]
+      echo '{"token":"fake-token-that-is-long-enough-for-replica-smoke-1234567890","tokenExpiresAt":"2099-01-01T00:00:00Z"}'
+      exit 0
+    fi
+    if [[ " $* " == *"/api/v1/auth/logout"* ]]; then
+      config="$(</dev/stdin)"
+      [[ "$config" == 'header = "Authorization: Bearer fake-token-that-is-long-enough-for-replica-smoke-1234567890"' ]]
+      touch "$STATE_DIR/token.revoked"
+      printf '200'
+      exit 0
+    fi
+    if [[ " $* " == *"/api/v1/auth/me"* ]]; then
+      config="$(</dev/stdin)"
+      [[ "$config" == 'header = "Authorization: Bearer fake-token-that-is-long-enough-for-replica-smoke-1234567890"' ]]
+      if [[ -f "$STATE_DIR/token.revoked" ]]; then
+        printf '401'
+      else
+        printf '200'
+      fi
+      exit 0
+    fi
+    ;;
+  stop)
+    container_id="${*: -1}"
+    touch "$STATE_DIR/$container_id.stopped"
+    printf 'stop %s\n' "$container_id" >>"$STATE_DIR/lifecycle.log"
+    echo "$container_id"
+    exit 0
+    ;;
+  start)
+    container_id="${*: -1}"
+    rm -f "$STATE_DIR/$container_id.stopped"
+    printf 'start %s\n' "$container_id" >>"$STATE_DIR/lifecycle.log"
+    echo "$container_id"
+    exit 0
+    ;;
+esac
+
+echo "unexpected fake docker invocation: $*" >&2
+exit 1

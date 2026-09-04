@@ -6,6 +6,7 @@
 - 如同一台服务器存在多套环境，确保 `MAMOJI_COMPOSE_PROJECT_NAME` 不同，避免复用同名 volume。
 - 设置 `MAMOJI_RUNTIME_ENVIRONMENT=production`，启用生产启动 guard。guard 会拒绝 demo/open/localhost/default secret 等高风险配置。
 - `MAMOJI_BACKEND_REPLICAS` 默认为 1，可按容量改为多个后端副本；部署脚本会显式传给 Compose。扩容前必须按副本总数核算数据库连接、CPU、内存和外部 Webhook 吞吐。
+- 当 `MAMOJI_BACKEND_REPLICAS` 大于 1 时，部署脚本会自动执行逐副本运行验收：检查实际副本数和每个实例的 readiness，在第一个实例登录后逐一访问其余实例，并从最后一个实例注销后确认第一个实例立即拒绝旧令牌。只有紧急处置时才使用 `SKIP_REPLICA_SMOKE=true` 跳过，并在发布记录中说明原因。
 - 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。首次管理员、公司主体、工作区、管理部门和管理员员工档案由同一个事务命令创建；多个副本同时启动时通过 PostgreSQL transaction advisory lock 串行化，失败事务完整回滚，等待实例随后可重试。系统已有公司后，改密码请走应用内操作。
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会注册 demo 初始化器，也不会生成测试账号、演示账户、演示流水、演示员工、演示预算、演示周期事项、演示税费、演示票据或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
@@ -69,6 +70,28 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec backen
 
 Docker 使用 `/actuator/health/readiness`，其中包含应用 readiness 与数据库检查；`/actuator/health/liveness` 只判断进程自身。公网继续只暴露 `/healthz`，不要开放完整 actuator。
 
+## 多副本运行验收
+
+`scripts/replica-smoke.sh` 直接枚举当前 Compose 项目的后端容器，不依赖负载均衡碰巧把请求分配到不同实例。默认验收不会停止服务，只执行以下检查：
+
+- 实际运行的后端容器数与 `MAMOJI_BACKEND_REPLICAS` 一致，且每个容器的 Docker health 与 Spring readiness 都正常。
+- 在一个实例签发的数据库会话令牌可被全部实例读取。
+- 从另一个实例注销后，原实例立即返回 401，证明撤销状态也不是进程内状态。
+
+多副本部署会自动运行默认验收，也可以单独重复执行：
+
+```bash
+scripts/replica-smoke.sh
+```
+
+预生产首次扩容或更改 Caddy、Docker 网络和停止宽限期后，再执行单副本故障切换演练：
+
+```bash
+MAMOJI_REPLICA_SMOKE_ALLOW_RESTART=yes scripts/replica-smoke.sh
+```
+
+该模式会优雅停止第一个后端容器，确认剩余实例保持就绪，公网 `/healthz` 和带原会话的 `/api/v1/auth/me` 仍可用，然后重新启动被停止实例并确认它恢复就绪且仍接受共享会话。只有在至少两个健康副本的预生产或批准维护窗口执行；脚本异常退出时会尝试恢复被停止的容器并撤销临时会话。原始令牌通过标准输入传给 `curl`，不会出现在 Docker 或 curl 命令参数中。
+
 ## 运行容量与超时
 
 默认值面向单副本、中小规模生产部署，并避免数据库故障时请求线程无限堆积；多副本使用相同的每实例默认值：
@@ -94,7 +117,8 @@ Docker 使用 `/actuator/health/readiness`，其中包含应用 readiness 与数
 2. 执行 `mvn --settings docker/maven-settings.xml -f backend/pom.xml test`。
 3. 执行 `cd frontend && npm audit --omit=dev --registry=https://registry.npmjs.org && npm run lint && npm run build`。
 4. 执行 `scripts/deploy-prod.sh`。脚本会先备份，再重建服务，最后自动冒烟。
-5. 人工抽查登录、员工列表、薪酬页、薪酬月结生成/锁定、税务合规、票据上传/下载和审计日志查询。
+5. 多副本部署确认 `scripts/replica-smoke.sh` 自动验收通过；首次扩容在预生产显式执行一次允许重启的故障切换演练。
+6. 人工抽查登录、员工列表、薪酬页、薪酬月结生成/锁定、税务合规、票据上传/下载和审计日志查询。
 
 可在低峰发布时增加并发只读闸门：
 
