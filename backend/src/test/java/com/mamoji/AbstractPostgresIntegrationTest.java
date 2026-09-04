@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.TransactionImportService;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -59,9 +58,6 @@ abstract class AbstractPostgresIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbc;
-
-    @Autowired
-    InMemoryStore coreStore;
 
     @Autowired
     DataSource dataSource;

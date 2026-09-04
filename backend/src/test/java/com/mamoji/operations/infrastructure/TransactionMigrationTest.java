@@ -34,6 +34,8 @@ class TransactionMigrationTest {
             long userId = insertUser(statement, "transaction-migration@mamoji.test");
             companyId = insertCompany(statement, userId, "Migration Company");
             otherCompanyId = insertCompany(statement, userId, "Other Company");
+            insertMembership(statement, companyId, userId);
+            insertMembership(statement, otherCompanyId, userId);
             long accountId = insertAccount(statement, userId, companyId);
             long categoryId = insertCategory(statement, userId, companyId);
             long originalId = insertExpense(statement, userId, companyId, accountId, categoryId);
@@ -68,7 +70,7 @@ class TransactionMigrationTest {
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("19", version.getString("version"));
+                assertEquals("20", version.getString("version"));
             }
             try (ResultSet constraints = statement.executeQuery("""
                 SELECT conname
@@ -134,6 +136,7 @@ class TransactionMigrationTest {
             try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
                 long userId = insertUser(statement, "dirty-transaction@mamoji.test");
                 long companyId = insertCompany(statement, userId, "Dirty Company");
+                insertMembership(statement, companyId, userId);
                 long accountId = insertAccount(statement, userId, companyId);
                 long categoryId = insertCategory(statement, userId, companyId);
                 insertTransaction(statement, userId, null, accountId, categoryId, null, 2, "100.00", "0", 1,
@@ -211,6 +214,17 @@ class TransactionMigrationTest {
             result.next();
             return result.getLong("id");
         }
+    }
+
+    private static void insertMembership(Statement statement, long companyId, long userId)
+        throws SQLException {
+        statement.executeUpdate("""
+            INSERT INTO company_memberships (
+                company_id, user_id, role, scope, status, created_at, updated_at
+            ) VALUES (
+                %d, %d, 'founder', 'company', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """.formatted(companyId, userId));
     }
 
     private static long insertCategory(Statement statement, long userId, long companyId) throws SQLException {

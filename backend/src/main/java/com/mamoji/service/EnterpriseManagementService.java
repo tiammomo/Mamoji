@@ -14,7 +14,6 @@ import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
 import java.math.BigDecimal;
@@ -43,7 +42,6 @@ import static com.mamoji.service.support.DomainSupport.touch;
 @Service
 public class EnterpriseManagementService {
     private final EnterpriseStore enterpriseStore;
-    private final InMemoryStore coreStore;
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
     private final AccessControlService accessControl;
@@ -54,7 +52,6 @@ public class EnterpriseManagementService {
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
-        InMemoryStore coreStore,
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
         AccessControlService accessControl,
@@ -64,7 +61,6 @@ public class EnterpriseManagementService {
         CompanyMembershipRepository memberships
     ) {
         this.enterpriseStore = enterpriseStore;
-        this.coreStore = coreStore;
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
         this.accessControl = accessControl;

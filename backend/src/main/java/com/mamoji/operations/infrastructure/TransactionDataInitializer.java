@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
 
 /** Owns optional transaction demo data after company-scoped accounting data exists. */
 @Component
-@DependsOn("accountDataInitializer")
+@DependsOn({"accountDataInitializer", "categoryDataInitializer"})
 public class TransactionDataInitializer {
     private final TransactionQueryRepository transactions;
     private final TransactionWriteRepository transactionWrites;

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
 import com.mamoji.repository.EnterpriseStore;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -102,7 +101,6 @@ public class BackupService {
         "outbox_events"
     );
 
-    private final InMemoryStore store;
     private final EnterpriseStore enterpriseStore;
     private final AccessControlService accessControl;
     private final JdbcTemplate jdbc;
@@ -110,13 +108,11 @@ public class BackupService {
     private final TransactionTemplate snapshotTransaction;
 
     public BackupService(
-        InMemoryStore store,
         EnterpriseStore enterpriseStore,
         AccessControlService accessControl,
         JdbcTemplate jdbc,
         PlatformTransactionManager transactionManager
     ) {
-        this.store = store;
         this.enterpriseStore = enterpriseStore;
         this.accessControl = accessControl;
         this.jdbc = jdbc;
@@ -224,7 +220,6 @@ public class BackupService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    store.reloadFromDatabase();
                     enterpriseStore.reloadFromDatabase();
                     enterpriseStore.auditLog(
                         0,

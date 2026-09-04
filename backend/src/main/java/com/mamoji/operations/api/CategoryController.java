@@ -1,20 +1,25 @@
-package com.mamoji.controller;
+package com.mamoji.operations.api;
 
 import com.mamoji.operations.application.CategoryApplicationService;
 import com.mamoji.operations.domain.Category;
+import com.mamoji.platform.identity.ActorContext;
+import com.mamoji.platform.identity.CurrentActor;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import java.util.List;
-import java.util.Map;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+@Validated
 @RestController
 @RequestMapping("/api/v1/categories")
 public class CategoryController {
@@ -26,37 +31,38 @@ public class CategoryController {
 
     @GetMapping
     public List<Category> list(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
+        @CurrentActor ActorContext actor,
+        @Pattern(regexp = "(?i)\\s*(income|expense)\\s*")
         @RequestParam(value = "type", required = false) String type,
-        @RequestParam(value = "companyId", required = false) Long companyId
+        @Positive @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        return service.listCategories(authorization, type, companyId);
+        return service.listCategories(actor, type, companyId);
     }
 
     @PostMapping
     public Category create(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
+        @CurrentActor ActorContext actor,
+        @Valid @RequestBody CategoryCreateRequest request
     ) {
-        return service.createCategory(authorization, body);
+        return service.createCategory(actor, request);
     }
 
     @PutMapping("/{id}")
     public Category update(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @PathVariable long id,
-        @RequestParam(value = "companyId", required = false) Long companyId,
-        @RequestBody Map<String, Object> body
+        @CurrentActor ActorContext actor,
+        @Positive @PathVariable long id,
+        @Positive @RequestParam(value = "companyId", required = false) Long companyId,
+        @Valid @RequestBody CategoryUpdateRequest request
     ) {
-        return service.updateCategory(authorization, id, companyId, body);
+        return service.updateCategory(actor, id, companyId, request);
     }
 
     @DeleteMapping("/{id}")
     public void delete(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @PathVariable long id,
-        @RequestParam(value = "companyId", required = false) Long companyId
+        @CurrentActor ActorContext actor,
+        @Positive @PathVariable long id,
+        @Positive @RequestParam(value = "companyId", required = false) Long companyId
     ) {
-        service.deleteCategory(authorization, id, companyId);
+        service.deleteCategory(actor, id, companyId);
     }
 }
