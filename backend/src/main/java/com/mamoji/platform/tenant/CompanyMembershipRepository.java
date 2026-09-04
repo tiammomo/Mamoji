@@ -1,7 +1,7 @@
 package com.mamoji.platform.tenant;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Employee;
+import com.mamoji.people.domain.Employee;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;

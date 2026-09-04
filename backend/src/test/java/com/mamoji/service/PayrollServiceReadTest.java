@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.mamoji.domain.Models.Company;
 import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.domain.Models.PayrollRunItem;
+import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
@@ -34,6 +35,7 @@ class PayrollServiceReadTest {
         PayrollService service = new PayrollService(
             jdbc,
             mock(EnterpriseStore.class),
+            mock(EmployeeRepository.class),
             accessControl,
             mock(OutboxEventService.class)
         );

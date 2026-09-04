@@ -60,7 +60,7 @@ class BudgetMigrationTest {
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("22", version.getString("version"));
+                assertEquals("23", version.getString("version"));
             }
             try (ResultSet constraints = statement.executeQuery("""
                 SELECT conname

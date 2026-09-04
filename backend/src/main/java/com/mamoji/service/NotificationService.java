@@ -6,10 +6,11 @@ import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.notification.domain.OutboxEvent;
+import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.product.ProductModuleCatalog;
@@ -44,6 +45,7 @@ public class NotificationService {
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
     private final EnterpriseStore enterpriseStore;
+    private final EmployeeRepository employees;
     private final TaxItemRepository taxItems;
     private final ReceiptVoucherRepository receiptVouchers;
     private final AccessControlService accessControl;
@@ -62,6 +64,7 @@ public class NotificationService {
         JdbcTemplate jdbc,
         UserDirectory userDirectory,
         EnterpriseStore enterpriseStore,
+        EmployeeRepository employees,
         TaxItemRepository taxItems,
         ReceiptVoucherRepository receiptVouchers,
         AccessControlService accessControl,
@@ -78,6 +81,7 @@ public class NotificationService {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
         this.enterpriseStore = enterpriseStore;
+        this.employees = employees;
         this.taxItems = taxItems;
         this.receiptVouchers = receiptVouchers;
         this.accessControl = accessControl;
@@ -389,7 +393,7 @@ public class NotificationService {
 
     private void generatePeopleReminders(LocalDate today) {
         LocalDate latest = today.plusDays(peopleLookaheadDays);
-        for (Employee employee : enterpriseStore.allEmployees()) {
+        for (Employee employee : employees.findAll()) {
             if ("departed".equals(employee.status)) {
                 continue;
             }
