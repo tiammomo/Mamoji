@@ -6,17 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.service.TransactionImportService;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import javax.sql.DataSource;
@@ -348,6 +351,45 @@ abstract class AbstractPostgresIntegrationTest {
         return new ApiResponse(response.statusCode(), response.body(), response.headers());
     }
 
+    protected ApiResponse multipartRequest(
+        String path,
+        Map<String, String> fields,
+        List<MultipartPart> files,
+        String token
+    ) throws Exception {
+        String boundary = "MamojiBoundary" + UUID.randomUUID().toString().replace("-", "");
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        fields.forEach((name, value) -> {
+            writeMultipart(body, "--" + boundary + "\r\n");
+            writeMultipart(body, "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n");
+            writeMultipart(body, value + "\r\n");
+        });
+        files.forEach(file -> {
+            writeMultipart(body, "--" + boundary + "\r\n");
+            writeMultipart(body, "Content-Disposition: form-data; name=\"" + file.name()
+                + "\"; filename=\"" + file.fileName() + "\"\r\n");
+            writeMultipart(body, "Content-Type: " + file.contentType() + "\r\n\r\n");
+            body.writeBytes(file.content());
+            writeMultipart(body, "\r\n");
+        });
+        writeMultipart(body, "--" + boundary + "--\r\n");
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+            .uri(URI.create("http://localhost:" + port + path))
+            .timeout(Duration.ofSeconds(10))
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary);
+        if (token != null && !token.isBlank()) {
+            builder.header("Authorization", "Bearer " + token);
+        }
+        builder.POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
+        HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        return new ApiResponse(response.statusCode(), response.body(), response.headers());
+    }
+
+    private static void writeMultipart(ByteArrayOutputStream output, String value) {
+        output.writeBytes(value.getBytes(StandardCharsets.UTF_8));
+    }
+
     protected Map<String, Object> parseMap(String body) throws Exception {
         return MAPPER.readValue(body, MAP_TYPE);
     }
@@ -377,6 +419,9 @@ abstract class AbstractPostgresIntegrationTest {
     }
 
     protected record ApiResponse(int status, String body, HttpHeaders headers) {
+    }
+
+    protected record MultipartPart(String name, String fileName, String contentType, byte[] content) {
     }
 
     protected static final class Roles {
