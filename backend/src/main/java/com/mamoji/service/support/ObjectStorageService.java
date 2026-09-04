@@ -12,9 +12,10 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -58,6 +59,19 @@ public class ObjectStorageService {
 
     public StoredObject storeReceiptFile(long companyId, MultipartFile file) {
         ReceiptFileValidator.ValidatedReceiptFile validated = receiptFileValidator.validate(file);
+        return storeReceiptFile(companyId, file, validated);
+    }
+
+    public ReceiptFileValidator.ValidatedReceiptFile validateReceiptFile(MultipartFile file) {
+        return receiptFileValidator.validate(file);
+    }
+
+    public StoredObject storeReceiptFile(
+        long companyId,
+        MultipartFile file,
+        ReceiptFileValidator.ValidatedReceiptFile validated
+    ) {
+        Objects.requireNonNull(validated, "validated");
         String objectKey = objectKey(companyId, validated.originalFilename());
         String contentType = validated.contentType();
         if (!enabled) {
