@@ -76,7 +76,7 @@ export const enterpriseApi = {
   createEntityTransfer: (data: {
     fromEntityId: number;
     toEntityId: number;
-    transferType: string;
+    transferType: EntityTransfer["transferType"];
     amount: number;
     currency?: string;
     transferDate?: string;

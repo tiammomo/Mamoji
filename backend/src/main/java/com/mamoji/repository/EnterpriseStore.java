@@ -1,7 +1,6 @@
 package com.mamoji.repository;
 
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
 import com.mamoji.platform.audit.domain.AuditLog;
@@ -15,29 +14,22 @@ import com.mamoji.people.domain.EmployeeCompensationPolicy;
 import com.mamoji.people.domain.EmploymentEvent;
 import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
+import com.mamoji.platform.tenant.EntityTransfer;
+import com.mamoji.platform.tenant.EntityTransferRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Component;
 
 @Component
 public class EnterpriseStore {
-    public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     private static final String DEMO_COMPANY_CREDIT_CODE = "DEMO-COMPANY-CREDIT-CODE";
     private static final int[] COMPENSATION_BENCHMARK_SALARIES = {
         3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
@@ -57,6 +49,7 @@ public class EnterpriseStore {
     private final EmployeeRepository employeeRepository;
     private final EmploymentEventRepository employmentEventRepository;
     private final CompanyRepository companyRepository;
+    private final EntityTransferRepository entityTransferRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
     private final String bootstrapCompanyCreditCode;
@@ -72,6 +65,7 @@ public class EnterpriseStore {
         EmployeeRepository employeeRepository,
         EmploymentEventRepository employmentEventRepository,
         CompanyRepository companyRepository,
+        EntityTransferRepository entityTransferRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
@@ -86,6 +80,7 @@ public class EnterpriseStore {
         this.employeeRepository = employeeRepository;
         this.employmentEventRepository = employmentEventRepository;
         this.companyRepository = companyRepository;
+        this.entityTransferRepository = entityTransferRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
         this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
@@ -96,7 +91,6 @@ public class EnterpriseStore {
 
     @PostConstruct
     void initialize() {
-        loadAll();
         ensureInitialEnterpriseData();
         ensureCompanyPolicyDefaults();
         if (!isBootstrapMode()) {
@@ -106,17 +100,6 @@ public class EnterpriseStore {
         }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
-    }
-
-    private void loadAll() {
-        entityTransfers.clear();
-
-        forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
-    }
-
-    /** Reload the process-local compatibility view after a controlled restore. */
-    public synchronized void reloadFromDatabase() {
-        loadAll();
     }
 
     private void ensureInitialEnterpriseData() {
@@ -390,10 +373,7 @@ public class EnterpriseStore {
         }
         long companyId = company.get().id;
         long householdId = household.get().id;
-        boolean hasPairTransfer = entityTransfers.values().stream().anyMatch(transfer ->
-            (transfer.fromEntityId == companyId && transfer.toEntityId == householdId)
-                || (transfer.fromEntityId == householdId && transfer.toEntityId == companyId));
-        if (hasPairTransfer) {
+        if (entityTransferRepository.existsBetween(companyId, householdId)) {
             return;
         }
         UserDirectory.Entry owner = initialOwner().orElse(null);
@@ -401,13 +381,13 @@ public class EnterpriseStore {
             return;
         }
         String currency = isBlank(company.get().currency) ? "CNY" : company.get().currency;
-        entityTransfer(householdId, companyId, "shareholder_advance", "50000", currency, "2026-02-01",
+        seedEntityTransfer(householdId, companyId, "shareholder_advance", "50000", currency, "2026-02-01",
             "家庭资金垫付公司启动备用金", "recorded", owner.id());
-        entityTransfer(companyId, householdId, "advance_repayment", "12000", currency, "2026-04-15",
+        seedEntityTransfer(companyId, householdId, "advance_repayment", "12000", currency, "2026-04-15",
             "公司归还部分家庭垫资", "recorded", owner.id());
-        entityTransfer(householdId, companyId, "expense_reimbursement", "2680", currency, "2026-05-08",
+        seedEntityTransfer(householdId, companyId, "expense_reimbursement", "2680", currency, "2026-05-08",
             "家庭账户代垫 SaaS 订阅和办公采购", "recorded", owner.id());
-        entityTransfer(companyId, householdId, "reimbursement_payment", "2680", currency, "2026-05-20",
+        seedEntityTransfer(companyId, householdId, "reimbursement_payment", "2680", currency, "2026-05-20",
             "公司报销家庭代垫支出", "recorded", owner.id());
     }
 
@@ -460,25 +440,6 @@ public class EnterpriseStore {
             }
             employeeRepository.update(employee);
         });
-    }
-
-    public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
-        Set<Long> accessible = new HashSet<>(accessibleEntityIds);
-        return jdbc.query("""
-            SELECT transfer.*, source.name AS resolved_from_name, target.name AS resolved_to_name
-            FROM entity_transfers transfer
-            LEFT JOIN companies source ON source.id = transfer.from_entity_id
-            LEFT JOIN companies target ON target.id = transfer.to_entity_id
-            ORDER BY transfer.transfer_date DESC, transfer.id
-            """, (rs, rowNum) -> {
-                EntityTransfer transfer = mapEntityTransfer(rs);
-                transfer.fromEntityName = rs.getString("resolved_from_name");
-                transfer.toEntityName = rs.getString("resolved_to_name");
-                return transfer;
-            }).stream()
-            .filter(transfer -> accessible.contains(transfer.fromEntityId) || accessible.contains(transfer.toEntityId))
-            .filter(transfer -> entityId == null || transfer.fromEntityId == entityId || transfer.toEntityId == entityId)
-            .toList();
     }
 
     public List<AuditLog> sortedAuditLogs(long companyId, String entityType, long entityId) {
@@ -587,7 +548,7 @@ public class EnterpriseStore {
         return employmentEventRepository.append(event);
     }
 
-    public EntityTransfer entityTransfer(
+    private EntityTransfer seedEntityTransfer(
         long fromEntityId,
         long toEntityId,
         String transferType,
@@ -608,16 +569,7 @@ public class EnterpriseStore {
         transfer.note = note;
         transfer.status = status == null || status.isBlank() ? "recorded" : status;
         transfer.operatorUserId = operatorUserId;
-        stamp(transfer);
-        transfer.id = insert("""
-            INSERT INTO entity_transfers (
-                from_entity_id, to_entity_id, transfer_type, amount, currency, transfer_date, note, status,
-                operator_user_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindEntityTransfer(ps, transfer));
-        attachEntityTransferNames(transfer);
-        entityTransfers.put(transfer.id, transfer);
-        return transfer;
+        return entityTransferRepository.append(transfer);
     }
 
     public AuditLog auditLog(
@@ -641,15 +593,6 @@ public class EnterpriseStore {
         ));
     }
 
-    private void attachEntityTransferNames(EntityTransfer transfer) {
-        transfer.fromEntityName = companyRepository.findById(transfer.fromEntityId)
-            .map(company -> company.name)
-            .orElse(null);
-        transfer.toEntityName = companyRepository.findById(transfer.toEntityId)
-            .map(company -> company.name)
-            .orElse(null);
-    }
-
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
@@ -666,75 +609,12 @@ public class EnterpriseStore {
         return "bootstrap".equals(bootstrapMode);
     }
 
-    private EntityTransfer mapEntityTransfer(ResultSet rs) throws SQLException {
-        EntityTransfer transfer = new EntityTransfer();
-        transfer.id = rs.getLong("id");
-        transfer.fromEntityId = rs.getLong("from_entity_id");
-        transfer.toEntityId = rs.getLong("to_entity_id");
-        transfer.transferType = rs.getString("transfer_type");
-        transfer.amount = money(rs.getString("amount"));
-        transfer.currency = rs.getString("currency");
-        transfer.transferDate = rs.getString("transfer_date");
-        transfer.note = rs.getString("note");
-        transfer.status = rs.getString("status");
-        transfer.operatorUserId = rs.getLong("operator_user_id");
-        transfer.createdAt = rs.getString("created_at");
-        transfer.updatedAt = rs.getString("updated_at");
-        attachEntityTransferNames(transfer);
-        return transfer;
-    }
-
-    private void bindEntityTransfer(PreparedStatement ps, EntityTransfer transfer) throws SQLException {
-        ps.setLong(1, transfer.fromEntityId);
-        ps.setLong(2, transfer.toEntityId);
-        ps.setString(3, transfer.transferType);
-        ps.setString(4, moneyText(transfer.amount));
-        ps.setString(5, transfer.currency);
-        ps.setString(6, transfer.transferDate);
-        ps.setString(7, transfer.note);
-        ps.setString(8, transfer.status);
-        ps.setLong(9, transfer.operatorUserId);
-        ps.setString(10, transfer.createdAt);
-        ps.setString(11, transfer.updatedAt);
-    }
-
-    private long insert(String sql, SqlBinder binder) {
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, new String[] { "id" });
-            binder.bind(ps);
-            return ps;
-        }, keyHolder);
-        Number key = keyHolder.getKey();
-        if (key == null) {
-            throw new IllegalStateException("Database did not return a generated key");
-        }
-        return key.longValue();
-    }
-
-    private void forEachRow(String sql, SqlRowConsumer consumer) {
-        jdbc.query(sql, (org.springframework.jdbc.core.RowCallbackHandler) consumer::accept);
-    }
-
     private static BigDecimal money(Object value) {
         return InMemoryStore.money(value);
-    }
-
-    private static String moneyText(BigDecimal value) {
-        return InMemoryStore.nullToZero(value).stripTrailingZeros().toPlainString();
     }
 
     private static void stamp(Object model) {
         InMemoryStore.stamp(model);
     }
 
-    @FunctionalInterface
-    private interface SqlBinder {
-        void bind(PreparedStatement ps) throws SQLException;
-    }
-
-    @FunctionalInterface
-    private interface SqlRowConsumer {
-        void accept(ResultSet rs) throws SQLException;
-    }
 }

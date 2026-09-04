@@ -7,23 +7,6 @@ public final class Models {
     private Models() {
     }
 
-    public static class EntityTransfer {
-        public long id;
-        public long fromEntityId;
-        public long toEntityId;
-        public String fromEntityName;
-        public String toEntityName;
-        public String transferType;
-        public BigDecimal amount;
-        public String currency;
-        public String transferDate;
-        public String note;
-        public String status;
-        public long operatorUserId;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class ReceiptVoucher {
         public long id;
         public long version;

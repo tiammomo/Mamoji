@@ -82,7 +82,7 @@
 - `policy_rules`：可计算规则，按税务、人事、社保、公积金、申报日历等分类。
 - `company_policy_overrides`：公司自定义覆盖项。
 - `employee_locations`：员工工作地、社保地、公积金地和生效期。
-- `entity_transfers`：主体间往来，记录家庭与公司、公司与公司之间的资金流动。
+- `entity_transfers`：主体间往来，记录家庭与公司、公司与公司之间的资金流动；V26 起采用强类型金额/日期、双边主体和操作者外键，并保持追加式历史。
 - `policy_audit_logs`：政策同步、确认、覆盖、回滚的审计记录。
 
 第三阶段把现有经营数据全部补齐 `company_id`：
