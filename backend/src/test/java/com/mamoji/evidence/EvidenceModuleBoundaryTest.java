@@ -24,6 +24,7 @@ import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.JdbcReceiptFileHashRepository;
 import com.mamoji.evidence.infrastructure.JdbcReceiptVoucherRepository;
+import com.mamoji.operations.application.TransactionLinkQuery;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -36,7 +37,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 class EvidenceModuleBoundaryTest {
     @Test
-    void receiptUseCaseLivesBehindEvidenceApplicationPorts() {
+    void receiptUseCaseLivesBehindEvidenceApplicationPorts() throws Exception {
         assertEquals("com.mamoji.evidence.api", ReceiptController.class.getPackageName());
         assertEquals("com.mamoji.evidence.application", ReceiptApplicationService.class.getPackageName());
         assertTrue(ReceiptApprovalStatusService.class.isAssignableFrom(ReceiptApplicationService.class));
@@ -46,9 +47,16 @@ class EvidenceModuleBoundaryTest {
             .collect(Collectors.toSet());
         assertTrue(dependencyTypes.contains(ReceiptVoucherRepository.class.getName()));
         assertTrue(dependencyTypes.contains(ReceiptFileHashRepository.class.getName()));
+        assertTrue(dependencyTypes.contains(TransactionLinkQuery.class.getName()));
         assertFalse(dependencyTypes.contains("org.springframework.jdbc.core.JdbcTemplate"));
         assertFalse(dependencyTypes.contains(JdbcReceiptVoucherRepository.class.getName()));
         assertFalse(dependencyTypes.contains(JdbcReceiptFileHashRepository.class.getName()));
+        assertFalse(dependencyTypes.contains("com.mamoji.operations.application.TransactionQueryRepository"));
+        String source = Files.readString(Path.of(
+            "src/main/java/com/mamoji/evidence/application/ReceiptApplicationService.java"
+        ));
+        assertFalse(source.contains("TransactionQueryRepository"));
+        assertFalse(source.contains("TransactionRecord"));
     }
 
     @Test

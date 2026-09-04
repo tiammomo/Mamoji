@@ -33,6 +33,7 @@ flowchart TB
     access --> workforce[Workforce Cost]
 
     operations --> budget
+    evidence -->|TransactionLinkQuery| operations
     approvals --> evidence
     finance --> workspace
     evidence --> workspace
@@ -62,7 +63,7 @@ flowchart TB
 | `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
 | `workspace` | 无业务写入 | 跨模块健康度、待办、指标 | SQL 投影 | `GET /workspace` |
 | `approvals` | 提交、通过、驳回、撤回 | 我的申请/待办/轨迹 | `approval_requests/actions` | `/approvals`、Outbox |
-| `operations` | 流水、分类 | 趋势、结构、经营风险 | `transactions/categories` | `/transactions`、`/stats` |
+| `operations` | 流水、分类 | 趋势、结构、经营风险及最小关联身份 | `transactions/categories` | `/transactions`、`/stats`、`TransactionLinkQuery` |
 | `recurring` | 周期规则维护、启停和执行 | 下次执行日、执行次数 | `recurring_items` | `/recurring`、`RecurringItemRepository` |
 | `budget` | 创建、调整、停用预算 | 执行额、使用率、风险 | `budgets` + 流水投影 | `/budgets`、Outbox |
 | `finance` | 账户维护、余额调整、对账 | 可用资金、账户风险 | `accounts/ledgers` | `/accounts`、`/ledgers` |
@@ -200,7 +201,7 @@ workforce/
 | `auth_tokens` | Platform Identity | 本地身份适配器按令牌摘要创建、认证、撤销和清理，其他模块不得直接访问 |
 | `registration_invites` | Platform Identity | 邀请仓储按 SHA-256 摘要发行并以行锁单次消费；原始凭证只在创建响应披露一次 |
 | `login_failure_states` | Platform Identity | 登录安全服务按摘要键原子累加和清理，业务模块不得直接读写 |
-| `transactions`、`categories` | Operations | 流水通过 `TransactionWriteRepository`/`TransactionQueryRepository`、分类通过 `CategoryRepository` 直接读写 PostgreSQL；Budget/Workspace 仅使用公司范围内的契约或 SQL 投影 |
+| `transactions`、`categories` | Operations | 流水通过 `TransactionWriteRepository`/`TransactionQueryRepository`、分类通过 `CategoryRepository` 直接读写 PostgreSQL；Evidence 只通过 `TransactionLinkQuery` 读取流水 ID、公司和所有者，Budget/Workspace 仅使用公司范围内的契约或 SQL 投影 |
 | `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
 | `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers`、`ledger_members` | Finance | Operations 通过账户 ID 和公司内可访问账本契约校验与调整 |
@@ -237,6 +238,8 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 V31 将票据金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以状态/金额/日期检查、公司与流水复合外键、公司归属不可变触发器和文件哈希复合外键保护 Evidence 数据。列表筛选与汇总直接使用 typed 列及公司前缀索引，不再在查询期清理并转换历史文本。
 
 V32 将附件 SHA-256 收口为规范值对象和数据库 `VARCHAR(64)`，文件名统一为有界 basename，创建时间改为 `TIMESTAMPTZ`；附件登记使用 typed command，数据库拒绝非法摘要、路径、负大小、非有限时间和原位修改。上传在读取完整内容前完成大小、名称和文件真实性校验，结构化备份验证 typed 附件元数据可往返恢复。
+
+票据关联流水只通过 Operations 应用层的 `TransactionLinkQuery` 读取不可变的 `TransactionLinkTarget`；该投影仅含流水、公司和所有者 ID，避免 Evidence 依赖通用流水仓储、可变聚合以及账户/分类联表。
 
 生产首次管理员和首个公司已收口到 `ProductionBootstrapCommand`：命令在同一事务内取得固定 PostgreSQL transaction advisory lock，持锁后重新检查租户根，再一起写入管理员、公司工作区、管理部门、创始人员工档案、任职事件和审计记录。事务失败时全部回滚，等待锁的其他实例可继续重试；已存在用户但公司为空的旧中间态只读取一个首选管理员并补齐首家公司。
 

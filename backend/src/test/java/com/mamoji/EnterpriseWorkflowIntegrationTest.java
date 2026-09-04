@@ -141,6 +141,45 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void receiptTransactionLinkPreservesNotFoundAndOwnerBoundaries() throws Exception {
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(adminToken, "Receipt Link Scope " + System.nanoTime());
+
+        ApiResponse missing = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "transactionId", Long.MAX_VALUE,
+            "title", "Missing transaction voucher",
+            "amount", 20
+        ), adminToken);
+        assertEquals(404, missing.status(), missing.body());
+
+        String memberToken = registerInvitedUser(uniqueEmail("receipt-link-owner"));
+        Map<String, Object> member = parseMap(request("GET", "/api/v1/auth/me", null, memberToken).body());
+        long memberUserId = ((Number) member.get("id")).longValue();
+        String memberEmail = text(member.get("email"));
+        createEmployee(adminToken, companyId, memberUserId, memberEmail, "finance_admin");
+        Map<String, Object> account = createAccount(memberToken, companyId, "Member receipt link account", "1000");
+        Map<String, Object> category = createCategory(memberToken, companyId, "Member receipt link expense", "expense");
+        Map<String, Object> created = createTransaction(memberToken, companyId, account, category, "20");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+
+        ApiResponse differentOwner = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "transactionId", transaction.get("id"),
+            "title", "Different owner voucher",
+            "amount", 20
+        ), adminToken);
+        assertEquals(403, differentOwner.status(), differentOwner.body());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE title IN (?, ?)",
+            Integer.class,
+            "Missing transaction voucher",
+            "Different owner voucher"
+        ));
+    }
+
+    @Test
     void receiptJsonContractsValidateWritesAndPreserveExplicitNullUpdates() throws Exception {
         String token = text(login("test@mamoji.com", "123456").get("token"));
         long companyId = createCompany(token, "Receipt contract " + System.nanoTime());
