@@ -18,7 +18,7 @@ import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransfer;
 import com.mamoji.platform.tenant.EntityTransferRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
 import com.mamoji.tax.application.TaxItemRepository;
@@ -49,7 +49,7 @@ import static com.mamoji.service.support.DomainSupport.touch;
 
 @Service
 public class EnterpriseManagementService {
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
     private final DepartmentRepository departments;
@@ -65,7 +65,7 @@ public class EnterpriseManagementService {
     private final EntityTransferRepository entityTransfers;
 
     public EnterpriseManagementService(
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
         DepartmentRepository departments,
@@ -80,7 +80,7 @@ public class EnterpriseManagementService {
         CompanyRepository companies,
         EntityTransferRepository entityTransfers
     ) {
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
         this.departments = departments;
@@ -333,7 +333,7 @@ public class EnterpriseManagementService {
     }
 
     private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
-        enterpriseStore.auditLog(companyId, entityType, entityId, action, summary, user.id, user.nickname);
+        auditTrail.record(companyId, entityType, entityId, action, summary, user.id, user.nickname);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("summary", summary);
         payload.put("actorName", user.nickname);

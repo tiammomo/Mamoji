@@ -13,7 +13,7 @@ import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -37,7 +37,7 @@ public class BudgetApplicationService {
     private final BudgetReservationRepository reservationRepository;
     private final BudgetPolicy policy;
     private final AccessContextService accessContext;
-    private final EnterpriseStore auditStore;
+    private final AuditTrailService auditTrail;
     private final OutboxEventService outbox;
 
     public BudgetApplicationService(
@@ -45,14 +45,14 @@ public class BudgetApplicationService {
         BudgetReservationRepository reservationRepository,
         BudgetPolicy policy,
         AccessContextService accessContext,
-        EnterpriseStore auditStore,
+        AuditTrailService auditTrail,
         OutboxEventService outbox
     ) {
         this.repository = repository;
         this.reservationRepository = reservationRepository;
         this.policy = policy;
         this.accessContext = accessContext;
-        this.auditStore = auditStore;
+        this.auditTrail = auditTrail;
         this.outbox = outbox;
     }
 
@@ -269,7 +269,7 @@ public class BudgetApplicationService {
     }
 
     private void audit(long companyId, Budget budget, String action, String summary, ActorContext actor) {
-        auditStore.auditLog(companyId, "budget", budget.id, action, summary, actor.userId(), actor.user().nickname);
+        auditTrail.record(companyId, "budget", budget.id, action, summary, actor.userId(), actor.user().nickname);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("summary", summary);
         payload.put("budgetName", budget.name);

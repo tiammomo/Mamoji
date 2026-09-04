@@ -12,7 +12,7 @@ import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -44,20 +44,20 @@ public class ApprovalService {
 
     private final JdbcTemplate jdbc;
     private final AccessControlService accessControl;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final ReceiptVoucherRepository receiptVouchers;
     private final ReceiptService receiptService;
 
     public ApprovalService(
         JdbcTemplate jdbc,
         AccessControlService accessControl,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         ReceiptVoucherRepository receiptVouchers,
         ReceiptService receiptService
     ) {
         this.jdbc = jdbc;
         this.accessControl = accessControl;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.receiptVouchers = receiptVouchers;
         this.receiptService = receiptService;
     }
@@ -211,7 +211,7 @@ public class ApprovalService {
             limitedNullable(blankToNull(command.comment()), 500, "comment")
         );
         syncEntity(authorization, request, submission.entityStatus());
-        enterpriseStore.auditLog(
+        auditTrail.record(
             company.id,
             "approval_request",
             request.id,
@@ -242,7 +242,7 @@ public class ApprovalService {
             transition.targetStatus().value(), transition.currentStep(), now, now, id);
         addAction(id, user.id, transition.action().value(), comment);
         syncEntity(authorization, request, transition.entityStatus());
-        enterpriseStore.auditLog(
+        auditTrail.record(
             request.companyId,
             "approval_request",
             id,
@@ -273,7 +273,7 @@ public class ApprovalService {
             limitedNullable(blankToNull(command.comment()), 500, "comment")
         );
         syncEntity(authorization, request, transition.entityStatus());
-        enterpriseStore.auditLog(
+        auditTrail.record(
             request.companyId,
             "approval_request",
             id,

@@ -8,7 +8,7 @@ import com.mamoji.domain.Models.PayrollRunItem;
 import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -38,7 +38,7 @@ import static com.mamoji.common.PayloadReader.textOr;
 @Service
 public class PayrollService {
     private final JdbcTemplate jdbc;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final EmployeeRepository employees;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
@@ -46,13 +46,13 @@ public class PayrollService {
 
     public PayrollService(
         JdbcTemplate jdbc,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         EmployeeRepository employees,
         AccessControlService accessControl,
         OutboxEventService outboxEventService
     ) {
         this.jdbc = jdbc;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.employees = employees;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
@@ -118,7 +118,7 @@ public class PayrollService {
                 """, ps -> bindItem(ps, item));
         }
         run.items = items;
-        enterpriseStore.auditLog(company.id, "payroll_run", run.id, "create", "生成薪酬月结批次: " + run.period, user.id, user.nickname);
+        auditTrail.record(company.id, "payroll_run", run.id, "create", "生成薪酬月结批次: " + run.period, user.id, user.nickname);
         outboxEventService.publish("payroll.run.created", company.id, "payroll_run", run.id, user.id, Map.of(
             "period", run.period,
             "employeeCount", run.employeeCount,
@@ -149,7 +149,7 @@ public class PayrollService {
         run.closedAt = now;
         run.updatedAt = now;
         PayrollRun closed = attachItems(run);
-        enterpriseStore.auditLog(company.id, "payroll_run", closed.id, "close", "锁定薪酬月结批次: " + closed.period, user.id, user.nickname);
+        auditTrail.record(company.id, "payroll_run", closed.id, "close", "锁定薪酬月结批次: " + closed.period, user.id, user.nickname);
         outboxEventService.publish("payroll.run.closed", company.id, "payroll_run", closed.id, user.id, Map.of(
             "period", closed.period,
             "employeeCount", closed.employeeCount,

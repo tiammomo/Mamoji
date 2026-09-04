@@ -11,7 +11,7 @@
 | P0 | 默认能力范围过宽 | 默认开放经营、财务、证据和权限核心，其他能力显式启用 | 已落地 |
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
-| P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 进行中：公司、成员关系与主体划转已迁入 `platform.tenant`，票据已迁入 `evidence`，税务事项已迁入 `tax`，部门、员工和任职事件已迁入 `people`；旧类已无业务集合，剩余启动编排与审计门面待退场 |
+| P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 已落地：各业务对象由所属模块仓储维护，审计统一经 `AuditTrailService` 追加，启动数据由 `EnterpriseDataInitializer` 显式编排，旧类已删除 |
 | P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance、budget、recurring 仓储 | 进行中：用户账户、权限、流水、分类、账户、账本、预算和周期事项均已有模块仓储；上述核心业务对象的进程缓存、双写及兼容入口已移除，流水由 V17、资金账户由 V18、账本及成员由 V19、分类由 V20 强类型 schema 保护；旧类当前只保留首次用户引导和通用时间/金额工具，后续继续拆名与收口 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 已落地：流水和分类归属 `operations`，账户、账本、成员和对账归属 `finance`，旧服务已删除 |
 | P1 | 预算仅按已入账流水事后汇总，并发写入可同时超额 | 引入占用、确认、释放账本，以预算行锁串行化容量检查 | 已落地 |
@@ -34,7 +34,9 @@ com.mamoji
     identity/          登录身份解析
     tenant/            公司成员关系
     access/            权限判定与数据范围
+    audit/             追加式审计轨迹
     product/           产品能力开关
+  bootstrap/           首次企业数据与本地演示数据编排
   accessmanagement/    成员和角色维护
   expense/             费用申请与状态机
   approval/            审批任务与轨迹
@@ -61,11 +63,13 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 拆分 `EnterpriseStore` 剩余的启动数据编排与审计门面并完成旧类退场；公司、主体划转、人员、税务事项及会计核心对象均已完成数据库单一事实源改造；
-2. 评估通知 Outbox 的外部消息适配层与失败重试边界；
-3. 将 `InMemoryStore` 中剩余的首次用户引导与通用工具拆到职责明确的组件并完成旧类退场。
+1. 将 `InMemoryStore` 中剩余的首次用户引导与通用工具拆到职责明确的组件并完成旧类退场；
+2. 把仍需在应用启动期执行的兼容修复迁移为一次性 migration 或独立 bootstrap job，为解除单实例保护做准备；
+3. 评估通知 Outbox 的外部消息适配层与失败重试边界。
 
 每批变更只处理一个业务边界，并保持可独立回滚。若必须同时修改三个以上业务模块，先补充架构决策记录、数据迁移方案和回滚路径。
+
+跨模块审计依赖与旧 Store 退场的决策、数据兼容性和回滚方式见 [ADR 0001：删除 EnterpriseStore 兼容层](adr/0001-retire-enterprise-store.md)。
 
 ## PostgreSQL 集成测试套件
 

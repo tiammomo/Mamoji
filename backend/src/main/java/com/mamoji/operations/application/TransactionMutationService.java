@@ -12,7 +12,7 @@ import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.operations.domain.UpdateTransactionCommand;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -32,7 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class TransactionMutationService {
     private final TransactionWriteRepository transactions;
     private final TransactionAccountingGateway accounting;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
@@ -40,14 +40,14 @@ public class TransactionMutationService {
     public TransactionMutationService(
         TransactionWriteRepository transactions,
         TransactionAccountingGateway accounting,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
     ) {
         this.transactions = transactions;
         this.accounting = accounting;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
@@ -334,7 +334,7 @@ public class TransactionMutationService {
     }
 
     private void audit(long companyId, long transactionId, String action, String summary, User user) {
-        enterpriseStore.auditLog(
+        auditTrail.record(
             companyId,
             "transaction",
             transactionId,

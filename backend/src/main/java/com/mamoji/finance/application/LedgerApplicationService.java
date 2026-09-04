@@ -9,7 +9,7 @@ import com.mamoji.finance.domain.LedgerMember;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -28,20 +28,20 @@ public class LedgerApplicationService {
     private final FinanceRepository repository;
     private final AccessContextService accessContext;
     private final CompanyMembershipRepository companyMemberships;
-    private final EnterpriseStore auditStore;
+    private final AuditTrailService auditTrail;
     private final OutboxEventService outbox;
 
     public LedgerApplicationService(
         FinanceRepository repository,
         AccessContextService accessContext,
         CompanyMembershipRepository companyMemberships,
-        EnterpriseStore auditStore,
+        AuditTrailService auditTrail,
         OutboxEventService outbox
     ) {
         this.repository = repository;
         this.accessContext = accessContext;
         this.companyMemberships = companyMemberships;
-        this.auditStore = auditStore;
+        this.auditTrail = auditTrail;
         this.outbox = outbox;
     }
 
@@ -209,7 +209,7 @@ public class LedgerApplicationService {
         ActorContext actor,
         Map<String, Object> attributes
     ) {
-        auditStore.auditLog(
+        auditTrail.record(
             companyId,
             "ledger",
             ledgerId,

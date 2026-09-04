@@ -6,7 +6,7 @@ import com.mamoji.people.api.DepartmentUpdateRequest;
 import com.mamoji.people.domain.Department;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -25,20 +25,20 @@ public class DepartmentApplicationService {
     private final DepartmentRepository repository;
     private final AccessContextService accessContext;
     private final AccessControlService accessControl;
-    private final EnterpriseStore auditStore;
+    private final AuditTrailService auditTrail;
     private final OutboxEventService outbox;
 
     public DepartmentApplicationService(
         DepartmentRepository repository,
         AccessContextService accessContext,
         AccessControlService accessControl,
-        EnterpriseStore auditStore,
+        AuditTrailService auditTrail,
         OutboxEventService outbox
     ) {
         this.repository = repository;
         this.accessContext = accessContext;
         this.accessControl = accessControl;
-        this.auditStore = auditStore;
+        this.auditTrail = auditTrail;
         this.outbox = outbox;
     }
 
@@ -104,7 +104,7 @@ public class DepartmentApplicationService {
     }
 
     private void audit(Department department, String action, String summary, ActorContext actor) {
-        auditStore.auditLog(
+        auditTrail.record(
             department.companyId,
             "department",
             department.id,
