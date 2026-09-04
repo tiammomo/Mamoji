@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.notification.domain.OutboxEvent;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.OutboxEventHandler;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -68,7 +67,7 @@ public class OutboxEventService {
         if (!enabled) {
             return;
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             INSERT INTO outbox_events (
                 event_id, event_type, aggregate_type, aggregate_id, company_id, actor_user_id,
@@ -106,7 +105,7 @@ public class OutboxEventService {
     private List<OutboxEvent> claimDueEvents() {
         return transactionTemplate.execute(status -> {
             recoverStaleProcessingEvents();
-            String now = InMemoryStore.now();
+            String now = OffsetDateTime.now().toString();
             List<OutboxEvent> events = jdbc.query("""
                 SELECT * FROM outbox_events
                 WHERE status IN ('pending', 'failed')
@@ -132,7 +131,7 @@ public class OutboxEventService {
     }
 
     private void recoverStaleProcessingEvents() {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         String staleBefore = OffsetDateTime.now().minusMinutes(staleLockMinutes).toString();
         int recovered = jdbc.update("""
             UPDATE outbox_events
@@ -148,7 +147,7 @@ public class OutboxEventService {
     }
 
     private void markProcessed(OutboxEvent event) {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         if (!statusRepository.markProcessed(event.id, event.lockToken, now)) {
             log.warn(
                 "Ignored processed transition for outbox event id={} because lease {} is no longer current",
@@ -159,7 +158,7 @@ public class OutboxEventService {
     }
 
     private void markFailed(OutboxEvent event, RuntimeException ex) {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         boolean exhausted = event.attempts >= maxAttempts;
         String nextAttemptAt = exhausted ? null : OffsetDateTime.now().plusSeconds(backoffSeconds(event.attempts)).toString();
         String status = exhausted ? "dead" : "failed";

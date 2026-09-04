@@ -17,6 +17,7 @@ import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -192,7 +193,7 @@ public class ApprovalService {
         String title = limited(valueOr(command.title(), "新审批申请"), 160, "title");
         String description = limitedNullable(blankToNull(command.description()), 1000, "description");
         BigDecimal amount = command.amount() == null ? BigDecimal.ZERO : command.amount();
-        String now = com.mamoji.repository.InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         Transition submission = ApprovalWorkflow.submission();
         ApprovalRequest request = jdbc.queryForObject("""
             INSERT INTO approval_requests (
@@ -237,7 +238,7 @@ public class ApprovalService {
         if (transition.commentRequired() && (comment == null || comment.isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection comment is required");
         }
-        String now = com.mamoji.repository.InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
             transition.targetStatus().value(), transition.currentStep(), now, now, id);
         addAction(id, user.id, transition.action().value(), comment);
@@ -263,7 +264,7 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the applicant can withdraw this request");
         }
         Transition transition = requireTransition(request, Action.WITHDRAW);
-        String now = com.mamoji.repository.InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("UPDATE approval_requests SET status = ?, current_step = ?, decided_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
             transition.targetStatus().value(), transition.currentStep(), now, now, id);
         addAction(
@@ -371,7 +372,7 @@ public class ApprovalService {
 
     private void addAction(long requestId, long actorUserId, String action, String comment) {
         jdbc.update("INSERT INTO approval_actions (request_id, actor_user_id, action, comment, created_at) VALUES (?, ?, ?, ?, ?)",
-            requestId, actorUserId, action, comment, com.mamoji.repository.InMemoryStore.now());
+            requestId, actorUserId, action, comment, OffsetDateTime.now().toString());
     }
 
     private void addFilter(StringBuilder where, List<Object> args, String column, String value) {

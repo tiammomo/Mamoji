@@ -14,21 +14,23 @@ import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransfer;
 import com.mamoji.platform.tenant.EntityTransferRepository;
-import com.mamoji.repository.InMemoryStore;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /** Owns configured first-run and local demo data initialization without exposing runtime business APIs. */
 @Component
+@DependsOn("initialAdminDataInitializer")
 public class EnterpriseDataInitializer {
     private static final String DEMO_COMPANY_CREDIT_CODE = "DEMO-COMPANY-CREDIT-CODE";
     private static final int[] COMPENSATION_BENCHMARK_SALARIES = {
@@ -426,7 +428,7 @@ public class EnterpriseDataInitializer {
             if (!role.equals(employee.accessRole) || !scope.equals(employee.accessScope)) {
                 employee.accessRole = role;
                 employee.accessScope = scope;
-                employee.updatedAt = InMemoryStore.now();
+                employee.updatedAt = now();
                 employeeRepository.update(employee);
             }
         });
@@ -435,7 +437,7 @@ public class EnterpriseDataInitializer {
     private void ensureEmployeePayrollDefaults() {
         employeeRepository.findAll().forEach(employee -> {
             if (EmployeeCompensationPolicy.hydrate(employee)) {
-                employee.updatedAt = InMemoryStore.now();
+                employee.updatedAt = now();
                 employeeRepository.update(employee);
             }
         });
@@ -470,7 +472,7 @@ public class EnterpriseDataInitializer {
         department.costCenter = costCenter == null ? "" : costCenter;
         department.budget = money(budget);
         department.status = 1;
-        String now = InMemoryStore.now();
+        String now = now();
         department.createdAt = now;
         department.updatedAt = now;
         return departmentRepository.insert(department);
@@ -580,11 +582,25 @@ public class EnterpriseDataInitializer {
     }
 
     private static BigDecimal money(Object value) {
-        return InMemoryStore.money(value);
+        if (value == null || String.valueOf(value).isBlank()) {
+            return BigDecimal.ZERO;
+        }
+        return new BigDecimal(String.valueOf(value));
     }
 
-    private static void stamp(Object model) {
-        InMemoryStore.stamp(model);
+    private static void stamp(Company company) {
+        String now = now();
+        company.createdAt = now;
+        company.updatedAt = now;
     }
 
+    private static void stamp(Employee employee) {
+        String now = now();
+        employee.createdAt = now;
+        employee.updatedAt = now;
+    }
+
+    private static String now() {
+        return OffsetDateTime.now().toString();
+    }
 }

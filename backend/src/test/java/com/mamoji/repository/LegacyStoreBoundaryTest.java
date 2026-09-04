@@ -8,7 +8,6 @@ import com.mamoji.platform.tenant.EntityTransferRepository;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.platform.identity.account.application.UserDirectory;
-import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -16,83 +15,10 @@ import org.junit.jupiter.api.Test;
 
 class LegacyStoreBoundaryTest {
     @Test
-    void inMemoryStoreDoesNotExposeModuleOwnedOrInternalCompatibilityOperations() {
-        assertNotPublic(InMemoryStore.class, Set.of(
-            "attachBudgetData",
-            "attachCategory",
-            "attachTransactionRelations",
-            "budget",
-            "budgetForUpdate",
-            "budgetHasTransactions",
-            "currentUser",
-            "deleteBudget",
-            "findUser",
-            "findUserByEmail",
-            "findRegistrationInviteByToken",
-            "findTransaction",
-            "registrationInvite",
-            "registrationInviteForUpdate",
-            "recalculateBudget",
-            "recurringForUpdate",
-            "refreshBudgetData",
-            "refreshBudgetDataAfterCommit",
-            "rememberToken",
-            "revokeToken",
-            "saveBudget",
-            "saveRecurring",
-            "saveRegistrationInvite",
-            "saveUser",
-            "snapshot",
-            "sortedAccounts",
-            "sortedBudgets",
-            "sortedCategories",
-            "sortedRegistrationInvites",
-            "sortedTransactions",
-            "sortedUsers",
-            "synchronizeAccountAfterCommit",
-            "synchronizeCategoryAfterCommit",
-            "synchronizeLedgerAfterCommit",
-            "synchronizeLedgerMemberAfterCommit",
-            "synchronizeTransactionAfterCommit",
-            "synchronizeUserAccessAfterCommit",
-            "deleteRecurring",
-            "queryAllTransactions",
-            "queryRecurring",
-            "removeAccountFromCompatibilityViewAfterCommit",
-            "removeCategoryFromCompatibilityViewAfterCommit",
-            "removeLedgerMemberFromCompatibilityViewAfterCommit",
-            "removeTransactionFromCompatibilityViewAfterCommit",
-            "updatePasswordHashIfCurrent",
-            "user",
-            "userForUpdate"
-        ));
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("registrationInvites")),
-            "Registration invitations must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("users")),
-            "Local user accounts must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("recurringItems")),
-            "Recurring items must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("budgets")),
-            "Budgets must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("transactions")),
-            "Transactions must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("accounts")),
-            "Accounts must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("ledgers")),
-            "Ledgers must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("ledgerMembers")),
-            "Ledger memberships must not return to the process-local compatibility view");
-        assertTrue(Arrays.stream(InMemoryStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("categories")),
-            "Categories must not return to the process-local compatibility view");
+    void inMemoryStoreCompatibilityClassCannotReturn() {
+        assertThrows(ClassNotFoundException.class, () ->
+            Class.forName("com.mamoji.repository.InMemoryStore")
+        );
     }
 
     @Test
@@ -151,14 +77,4 @@ class LegacyStoreBoundaryTest {
             "Credential-bearing account repositories must not provide bulk cross-module reads");
     }
 
-    private static void assertNotPublic(Class<?> storeType, Set<String> forbiddenMethods) {
-        Set<String> exposedMethods = Arrays.stream(storeType.getDeclaredMethods())
-            .filter(method -> Modifier.isPublic(method.getModifiers()))
-            .map(method -> method.getName())
-            .filter(forbiddenMethods::contains)
-            .collect(Collectors.toSet());
-
-        assertTrue(exposedMethods.isEmpty(), () -> storeType.getSimpleName()
-            + " must not expose legacy compatibility operations: " + exposedMethods);
-    }
 }
