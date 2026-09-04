@@ -110,7 +110,7 @@ class PlatformIdentityMigrationTest {
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("21", version.getString("version"));
+                assertEquals("22", version.getString("version"));
             }
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO auth_tokens (token, user_id, created_at, expires_at)

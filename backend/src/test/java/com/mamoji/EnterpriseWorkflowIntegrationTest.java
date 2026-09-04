@@ -743,6 +743,170 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void departmentCommandsValidateScopeAndPersistAuditOutbox() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Department Contract " + System.nanoTime());
+        long otherCompanyId = createCompany(token, "Department Other " + System.nanoTime());
+        int departmentsBefore = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM departments WHERE company_id = ?", Integer.class, companyId
+        );
+
+        ApiResponse invalid = request("POST", "/api/v1/enterprise/departments", Map.of(
+            "companyId", companyId,
+            "name", " ",
+            "costCenter", " ",
+            "budget", "-0.01",
+            "managerEmployeeId", -1,
+            "status", 2
+        ), token);
+        assertValidationFields(invalid, Set.of("name", "costCenter", "budget", "managerEmployeeId", "status"));
+        assertEquals(departmentsBefore, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM departments WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/enterprise/departments", Map.of(
+            "companyId", companyId,
+            "name", "  Product  ",
+            "costCenter", "  RND  ",
+            "budget", "1234.50",
+            "status", 1
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> department = parseMap(created.body());
+        long departmentId = id(department);
+        assertEquals("Product", department.get("name"));
+        assertEquals("RND", department.get("costCenter"));
+        assertEquals(0, new BigDecimal("1234.50").compareTo(decimal(department.get("budget"))));
+
+        ApiResponse duplicate = request("POST", "/api/v1/enterprise/departments", Map.of(
+            "companyId", companyId,
+            "name", "product",
+            "costCenter", "RND-2",
+            "budget", 0
+        ), token);
+        assertEquals(409, duplicate.status(), duplicate.body());
+        assertEquals("duplicate_record", parseMap(duplicate.body()).get("code"));
+
+        ApiResponse outsiderResponse = request("POST", "/api/v1/enterprise/employees", Map.of(
+            "companyId", otherCompanyId,
+            "name", "Other company manager",
+            "email", uniqueEmail("other-company-manager"),
+            "position", "Manager",
+            "employmentType", "full_time",
+            "status", "active",
+            "hireDate", "2026-09-01"
+        ), token);
+        assertEquals(200, outsiderResponse.status(), outsiderResponse.body());
+        long outsiderId = id(parseMap(outsiderResponse.body()));
+        ApiResponse crossCompanyManager = request(
+            "PUT",
+            "/api/v1/enterprise/departments/" + departmentId,
+            Map.of("companyId", companyId, "managerEmployeeId", outsiderId),
+            token
+        );
+        assertEquals(400, crossCompanyManager.status(), crossCompanyManager.body());
+
+        ApiResponse wrongScope = request(
+            "PUT",
+            "/api/v1/enterprise/departments/" + departmentId,
+            Map.of("companyId", otherCompanyId, "name", "Must not move"),
+            token
+        );
+        assertEquals(403, wrongScope.status(), wrongScope.body());
+
+        ApiResponse managerResponse = request("POST", "/api/v1/enterprise/employees", Map.of(
+            "companyId", companyId,
+            "departmentId", departmentId,
+            "name", "Product manager",
+            "email", uniqueEmail("product-manager"),
+            "position", "Manager",
+            "employmentType", "full_time",
+            "status", "active",
+            "hireDate", "2026-09-01"
+        ), token);
+        assertEquals(200, managerResponse.status(), managerResponse.body());
+        long managerId = id(parseMap(managerResponse.body()));
+        ApiResponse updated = request(
+            "PUT",
+            "/api/v1/enterprise/departments/" + departmentId,
+            Map.of(
+                "companyId", companyId,
+                "managerEmployeeId", managerId,
+                "budget", "2500.25",
+                "status", 0
+            ),
+            token
+        );
+        assertEquals(200, updated.status(), updated.body());
+        assertEquals(managerId, ((Number) parseMap(updated.body()).get("managerEmployeeId")).longValue());
+
+        jdbc.update("UPDATE departments SET name = 'Database Product' WHERE id = ?", departmentId);
+        ApiResponse listed = request(
+            "GET", "/api/v1/enterprise/departments?companyId=" + companyId, null, token
+        );
+        assertEquals(200, listed.status(), listed.body());
+        assertTrue(parseList(listed.body()).stream()
+            .anyMatch(row -> departmentId == id(row) && "Database Product".equals(row.get("name"))));
+
+        Map<String, Object> clearManager = new LinkedHashMap<>();
+        clearManager.put("companyId", companyId);
+        clearManager.put("managerEmployeeId", null);
+        ApiResponse cleared = request(
+            "PUT", "/api/v1/enterprise/departments/" + departmentId, clearManager, token
+        );
+        assertEquals(200, cleared.status(), cleared.body());
+        assertNull(parseMap(cleared.body()).get("managerEmployeeId"));
+        assertEquals(3, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'department' AND entity_id = ?
+            """, Integer.class, companyId, departmentId));
+        assertEquals(3, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND aggregate_type = 'department' AND aggregate_id = ?
+              AND event_type IN ('people.department.create', 'people.department.update')
+            """, Integer.class, companyId, departmentId));
+    }
+
+    @Test
+    void concurrentDepartmentCreationKeepsOneNormalizedCompanyName() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Department Race " + System.nanoTime());
+        String name = "Concurrent Product " + System.nanoTime();
+        Map<String, Object> firstBody = Map.of(
+            "companyId", companyId,
+            "name", name,
+            "costCenter", "RACE-A",
+            "budget", 0
+        );
+        Map<String, Object> secondBody = Map.of(
+            "companyId", companyId,
+            "name", name.toUpperCase(),
+            "costCenter", "RACE-B",
+            "budget", 0
+        );
+
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "POST", "/api/v1/enterprise/departments", firstBody, token
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "POST", "/api/v1/enterprise/departments", secondBody, token
+        );
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(List.of(200, 409), List.of(firstResponse.status(), secondResponse.status())
+            .stream().sorted().toList(), firstResponse.body() + " / " + secondResponse.body());
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM departments
+            WHERE company_id = ? AND LOWER(name) = LOWER(?)
+            """, Integer.class, companyId, name));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND event_type = 'people.department.create'
+            """, Integer.class, companyId));
+    }
+
+    @Test
     void outboxTerminalTransitionsRequireTheCurrentDeliveryLease() {
         String processedLease = "processed-owner-" + UUID.randomUUID();
         long processedId = processingOutboxEvent(processedLease);

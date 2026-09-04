@@ -1,7 +1,6 @@
 package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EmployeeCertificate;
 import com.mamoji.domain.Models.EmployeeExperience;
@@ -9,6 +8,7 @@ import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
+import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
@@ -45,6 +45,7 @@ public class EnterpriseManagementService {
     private final EnterpriseStore enterpriseStore;
     private final FinanceRepository financeRepository;
     private final CategoryRepository categoryRepository;
+    private final DepartmentRepository departments;
     private final TaxItemRepository taxItems;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
@@ -56,6 +57,7 @@ public class EnterpriseManagementService {
         EnterpriseStore enterpriseStore,
         FinanceRepository financeRepository,
         CategoryRepository categoryRepository,
+        DepartmentRepository departments,
         TaxItemRepository taxItems,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
@@ -66,6 +68,7 @@ public class EnterpriseManagementService {
         this.enterpriseStore = enterpriseStore;
         this.financeRepository = financeRepository;
         this.categoryRepository = categoryRepository;
+        this.departments = departments;
         this.taxItems = taxItems;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
@@ -97,7 +100,7 @@ public class EnterpriseManagementService {
             .count();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("company", company);
-        result.put("departmentCount", enterpriseStore.sortedDepartments(company.id).size());
+        result.put("departmentCount", departments.findByCompany(company.id).size());
         result.put("employeeCount", employees.size());
         result.put("activeEmployeeCount", employees.stream().filter(employee -> employee.status.equals("active") || employee.status.equals("probation")).count());
         result.put("onboardingCount", employees.stream().filter(employee -> employee.status.equals("onboarding")).count());
@@ -161,45 +164,6 @@ public class EnterpriseManagementService {
         enterpriseStore.saveCompany(company);
         audit(company.id, "company", company.id, "update", "更新公司主体: " + company.name, user);
         return company;
-    }
-
-    public List<Department> listDepartments(String authorization, Long companyId) {
-        Company company = accessControl.resolveCompany(accessControl.requireUser(authorization), companyId);
-        return enterpriseStore.sortedDepartments(company.id);
-    }
-
-    @Transactional
-    public Department createDepartment(String authorization, Map<String, Object> body) {
-        User user = accessControl.requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
-        accessControl.requirePeopleManager(user, company.id);
-        Department department = enterpriseStore.department(
-            company.id,
-            textOr(body.get("name"), "新部门"),
-            textOr(body.get("costCenter"), "GENERAL"),
-            String.valueOf(number(body.get("budget"), BigDecimal.ZERO))
-        );
-        applyDepartmentFields(department, body);
-        touch(department);
-        enterpriseStore.saveDepartment(department);
-        audit(company.id, "department", department.id, "create", "创建部门: " + department.name, user);
-        return department;
-    }
-
-    @Transactional
-    public Department updateDepartment(String authorization, long id, Map<String, Object> body) {
-        User user = accessControl.requireUser(authorization);
-        Department department = enterpriseStore.findDepartment(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Department not found"));
-        if (!accessControl.canAccessCompany(user, department.companyId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
-        }
-        accessControl.requirePeopleManager(user, department.companyId);
-        applyDepartmentFields(department, body);
-        touch(department);
-        enterpriseStore.saveDepartment(department);
-        audit(department.companyId, "department", department.id, "update", "更新部门: " + department.name, user);
-        return department;
     }
 
     public List<Employee> listEmployees(String authorization, Map<String, String> params) {
@@ -405,24 +369,6 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("fiscalYearStartMonth")) {
             company.fiscalYearStartMonth = intValue(body.get("fiscalYearStartMonth"), company.fiscalYearStartMonth);
-        }
-    }
-
-    private void applyDepartmentFields(Department department, Map<String, Object> body) {
-        if (body.containsKey("name")) {
-            department.name = textOr(body.get("name"), department.name);
-        }
-        if (body.containsKey("costCenter")) {
-            department.costCenter = textOr(body.get("costCenter"), department.costCenter);
-        }
-        if (body.containsKey("budget")) {
-            department.budget = number(body.get("budget"), department.budget);
-        }
-        if (body.containsKey("managerEmployeeId")) {
-            department.managerEmployeeId = optionalLong(body.get("managerEmployeeId")).orElse(null);
-        }
-        if (body.containsKey("status")) {
-            department.status = intValue(body.get("status"), department.status);
         }
     }
 

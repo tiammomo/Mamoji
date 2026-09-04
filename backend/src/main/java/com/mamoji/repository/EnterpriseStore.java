@@ -1,7 +1,6 @@
 package com.mamoji.repository;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EmployeeCertificate;
 import com.mamoji.domain.Models.EmployeeExperience;
@@ -12,6 +11,8 @@ import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
 import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.identity.account.application.UserDirectory;
+import com.mamoji.people.application.DepartmentRepository;
+import com.mamoji.people.domain.Department;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -38,7 +39,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class EnterpriseStore {
     public final Map<Long, Company> companies = new ConcurrentHashMap<>();
-    public final Map<Long, Department> departments = new ConcurrentHashMap<>();
     public final Map<Long, Employee> employees = new ConcurrentHashMap<>();
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
@@ -92,6 +92,7 @@ public class EnterpriseStore {
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
     private final AuditLogRepository auditLogRepository;
+    private final DepartmentRepository departmentRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
     private final String bootstrapCompanyCreditCode;
@@ -103,6 +104,7 @@ public class EnterpriseStore {
         JdbcTemplate jdbc,
         UserDirectory userDirectory,
         AuditLogRepository auditLogRepository,
+        DepartmentRepository departmentRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
@@ -113,6 +115,7 @@ public class EnterpriseStore {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
         this.auditLogRepository = auditLogRepository;
+        this.departmentRepository = departmentRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
         this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
@@ -138,13 +141,11 @@ public class EnterpriseStore {
 
     private void loadAll() {
         companies.clear();
-        departments.clear();
         employees.clear();
         entityTransfers.clear();
         employmentEvents.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
-        forEachRow("SELECT * FROM departments", rs -> departments.put(rs.getLong("id"), mapDepartment(rs)));
         forEachRow("SELECT * FROM employees", rs -> employees.put(rs.getLong("id"), mapEmployee(rs)));
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
@@ -193,7 +194,7 @@ public class EnterpriseStore {
         company.policyProfileKey = defaultPolicyProfileKey(company);
         saveCompany(company);
 
-        Department management = department(company.id, "管理层", "MGMT", "0");
+        Department management = createSeedDepartment(company.id, "管理层", "MGMT", "0");
         Employee founder = employee(
             company.id,
             owner.id(),
@@ -229,10 +230,10 @@ public class EnterpriseStore {
         }
 
         Company company = company(owner.id(), "深圳市示例电商科技有限公司", DEMO_COMPANY_CREDIT_CODE, "软件与信息技术服务", "小规模纳税人", "CNY");
-        Department management = department(company.id, "管理层", "CEO", "30000");
-        Department finance = department(company.id, "财务行政", "FIN-ADMIN", "42000");
-        Department product = department(company.id, "产品研发", "RND", "120000");
-        Department sales = department(company.id, "市场销售", "SALES", "65000");
+        Department management = createSeedDepartment(company.id, "管理层", "CEO", "30000");
+        Department finance = createSeedDepartment(company.id, "财务行政", "FIN-ADMIN", "42000");
+        Department product = createSeedDepartment(company.id, "产品研发", "RND", "120000");
+        Department sales = createSeedDepartment(company.id, "市场销售", "SALES", "65000");
 
         Employee founder = employee(company.id, owner.id(), management.id, owner.nickname(), owner.email(), "13800000001",
             "创始人 / CEO", "full_time", "active", "founder", "company", "2026-01-05", null,
@@ -276,11 +277,10 @@ public class EnterpriseStore {
     }
 
     private void ensureCompensationBenchmarkEmployees(Company company) {
-        Department benchmarkDepartment = departments.values().stream()
-            .filter(department -> department.companyId == company.id)
+        Department benchmarkDepartment = departmentRepository.findByCompany(company.id).stream()
             .filter(department -> "薪酬样例".equals(department.name))
             .min(Comparator.comparing(department -> department.id))
-            .orElseGet(() -> department(company.id, "薪酬样例", "PAY-SAMPLE", "780000"));
+            .orElseGet(() -> createSeedDepartment(company.id, "薪酬样例", "PAY-SAMPLE", "780000"));
         long operatorUserId = userDirectory.findById(company.ownerId).isPresent()
             ? company.ownerId
             : userDirectory.findAll().stream()
@@ -492,14 +492,6 @@ public class EnterpriseStore {
         return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
     }
 
-    public List<Department> sortedDepartments(long companyId) {
-        return jdbc.query(
-            "SELECT * FROM departments WHERE company_id = ? ORDER BY id",
-            (rs, rowNum) -> mapDepartment(rs),
-            companyId
-        );
-    }
-
     public List<Employee> sortedEmployees(long companyId) {
         return sortedEmployees(companyId, true);
     }
@@ -566,10 +558,6 @@ public class EnterpriseStore {
 
     public Optional<Company> findCompany(long id) {
         return jdbc.query("SELECT * FROM companies WHERE id = ?", (rs, rowNum) -> mapCompany(rs), id).stream().findFirst();
-    }
-
-    public Optional<Department> findDepartment(long id) {
-        return jdbc.query("SELECT * FROM departments WHERE id = ?", (rs, rowNum) -> mapDepartment(rs), id).stream().findFirst();
     }
 
     public Optional<Employee> findEmployee(long id) {
@@ -666,29 +654,17 @@ public class EnterpriseStore {
             company.taxAuthority, company.policyProfileKey, company.fiscalYearStartMonth, company.ownerId, company.updatedAt, company.id);
     }
 
-    public Department department(long companyId, String name, String costCenter, String budget) {
+    private Department createSeedDepartment(long companyId, String name, String costCenter, String budget) {
         Department department = new Department();
         department.companyId = companyId;
         department.name = name;
         department.costCenter = costCenter == null ? "" : costCenter;
         department.budget = money(budget);
         department.status = 1;
-        stamp(department);
-        department.id = insert("""
-            INSERT INTO departments (company_id, name, cost_center, manager_employee_id, budget, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindDepartment(ps, department));
-        departments.put(department.id, department);
-        return department;
-    }
-
-    public void saveDepartment(Department department) {
-        departments.put(department.id, department);
-        jdbc.update("""
-            UPDATE departments SET company_id = ?, name = ?, cost_center = ?, manager_employee_id = ?, budget = ?, status = ?, updated_at = ?
-            WHERE id = ?
-            """, department.companyId, department.name, department.costCenter, department.managerEmployeeId,
-            moneyText(department.budget), department.status, department.updatedAt, department.id);
+        String now = InMemoryStore.now();
+        department.createdAt = now;
+        department.updatedAt = now;
+        return departmentRepository.insert(department);
     }
 
     public Employee employee(
@@ -822,7 +798,6 @@ public class EnterpriseStore {
     }
 
     private void deleteEmployee(long id) {
-        jdbc.update("UPDATE departments SET manager_employee_id = NULL WHERE manager_employee_id = ?", id);
         jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employment_events WHERE employee_id = ?", id);
@@ -967,7 +942,7 @@ public class EnterpriseStore {
 
     private void attachDepartmentName(Employee employee) {
         employee.departmentName = Optional.ofNullable(employee.departmentId)
-            .flatMap(this::findDepartment)
+            .flatMap(departmentRepository::findById)
             .map(department -> department.name)
             .orElse(null);
     }
@@ -1058,20 +1033,6 @@ public class EnterpriseStore {
 
     private boolean isBootstrapMode() {
         return "bootstrap".equals(bootstrapMode);
-    }
-
-    private Department mapDepartment(ResultSet rs) throws SQLException {
-        Department department = new Department();
-        department.id = rs.getLong("id");
-        department.companyId = rs.getLong("company_id");
-        department.name = rs.getString("name");
-        department.costCenter = rs.getString("cost_center");
-        department.managerEmployeeId = nullableLong(rs, "manager_employee_id");
-        department.budget = money(rs.getString("budget"));
-        department.status = rs.getInt("status");
-        department.createdAt = rs.getString("created_at");
-        department.updatedAt = rs.getString("updated_at");
-        return department;
     }
 
     private Employee mapEmployee(ResultSet rs) throws SQLException {
@@ -1219,17 +1180,6 @@ public class EnterpriseStore {
         transfer.updatedAt = rs.getString("updated_at");
         attachEntityTransferNames(transfer);
         return transfer;
-    }
-
-    private void bindDepartment(PreparedStatement ps, Department department) throws SQLException {
-        ps.setLong(1, department.companyId);
-        ps.setString(2, department.name);
-        ps.setString(3, department.costCenter);
-        setLongOrNull(ps, 4, department.managerEmployeeId);
-        ps.setString(5, moneyText(department.budget));
-        ps.setInt(6, department.status);
-        ps.setString(7, department.createdAt);
-        ps.setString(8, department.updatedAt);
     }
 
     private void bindEmployee(PreparedStatement ps, Employee employee) throws SQLException {
