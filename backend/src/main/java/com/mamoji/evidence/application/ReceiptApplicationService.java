@@ -1,11 +1,12 @@
 package com.mamoji.evidence.application;
 
 import com.mamoji.common.PagedResponse;
-import com.mamoji.platform.audit.domain.AuditLog;
-import com.mamoji.platform.tenant.Company;
+import com.mamoji.evidence.domain.ReceiptFileDigest;
 import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
+import com.mamoji.platform.audit.domain.AuditLog;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
@@ -15,14 +16,12 @@ import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.ObjectStorageService.StoredObject;
 import com.mamoji.service.support.ObjectStorageService;
 import com.mamoji.service.support.ReceiptFileValidator.InvalidReceiptFileException;
+import com.mamoji.service.support.ReceiptFileValidator.ValidatedReceiptFile;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -179,18 +178,22 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         BigDecimal taxAmount = valueOr(request.taxAmount(), BigDecimal.ZERO);
         LocalDate issueDate = valueOr(request.issueDate(), LocalDate.now());
         validateVoucherBoundaries(amount, taxAmount, issueDate, request.dueDate());
-        String fileHash = sha256(file);
+        ValidatedReceiptFile validatedFile;
+        try {
+            validatedFile = objectStorageService.validateReceiptFile(file);
+        } catch (InvalidReceiptFileException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
+        ReceiptFileDigest fileHash = sha256(file);
         receiptFileHashes.lock(company.id, fileHash);
         OptionalLong duplicateVoucherId = receiptFileHashes.findVoucherId(company.id, fileHash);
         if (duplicateVoucherId.isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate receipt file; existing voucher #" + duplicateVoucherId.getAsLong());
         }
-        String filename = file.getOriginalFilename() == null ? "receipt" : file.getOriginalFilename();
+        String filename = validatedFile.originalFilename();
         StoredObject storedObject;
         try {
-            storedObject = objectStorageService.storeReceiptFile(company.id, file);
-        } catch (InvalidReceiptFileException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+            storedObject = objectStorageService.storeReceiptFile(company.id, file, validatedFile);
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage upload failed");
         }
@@ -229,14 +232,14 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         voucher.fileUrl = storedObject.url();
         voucher.riskLevel = riskFor(voucher);
         receiptVouchers.save(voucher);
-        receiptFileHashes.register(
+        receiptFileHashes.register(new ReceiptFileRegistration(
             company.id,
             voucher.id,
             fileHash,
             filename,
             file.getSize(),
-            OffsetDateTime.now().toString()
-        );
+            OffsetDateTime.now()
+        ));
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
         return voucher;
     }
@@ -269,13 +272,11 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         return new ReceiptBatchUploadResult(uploaded, failed);
     }
 
-    private String sha256(MultipartFile file) {
+    private ReceiptFileDigest sha256(MultipartFile file) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(file.getBytes()));
+            return ReceiptFileDigest.sha256(file.getBytes());
         } catch (IOException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt file could not be read");
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 is unavailable", ex);
         }
     }
 
