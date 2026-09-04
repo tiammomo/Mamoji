@@ -230,6 +230,8 @@ V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DA
 
 V28 一次性规范历史公司所有者成员，并只补齐缺失的经营账本、账本成员和所有者收入/支出分类。生产首次公司与 HTTP 在线创建公司统一由 `CompanyProvisioningService` 在业务事务内写入主体、成员、账本和分类；生产 `bootstrap` 上下文不再注册账本或分类扫描 Bean，相关扫描只保留在显式 demo 初始化器。生产启动也不再执行公司画像、员工薪酬、职位权限或票据的全表兼容修复。`EnterpriseStore` 和 `InMemoryStore` 均已删除：跨模块审计统一经 `AuditTrailService` 追加，所有在线业务数据均以 PostgreSQL 为唯一事实源。
 
+V29 为外部 Webhook 投递增加唯一租约令牌和终态 fencing。`notification_deliveries` 仍通过 `FOR UPDATE SKIP LOCKED` 抢占批次，但只有持有当前 `lock_token` 的工作线程可以写入 delivered、failed 或 dead；正式请求同时携带稳定的 `Idempotency-Key`，自建接收方负责按该键实现副作用幂等。
+
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
 1. 在真实 PostgreSQL 上通过双实例并发写、重复命令和故障重试测试；

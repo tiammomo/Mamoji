@@ -149,7 +149,7 @@ class ReceiptVoucherMigrationTest {
                 assertEquals(1, result.getLong("version"));
             }
             assertEquals(7, version(statement, completeId));
-            assertEquals("28", latestVersion(statement));
+            assertEquals("29", latestVersion(statement));
         }
     }
 
