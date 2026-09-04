@@ -7,7 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.platform.tenant.Company;
@@ -29,27 +28,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class TransactionDataInitializerTest {
-    @Test
-    void bootstrapModeDoesNotCreateDemoTransactions() {
-        TransactionQueryRepository transactions = mock(TransactionQueryRepository.class);
-        TransactionWriteRepository writes = mock(TransactionWriteRepository.class);
-        FinanceRepository finances = mock(FinanceRepository.class);
-        CategoryRepository categories = mock(CategoryRepository.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        TransactionDataInitializer initializer = new TransactionDataInitializer(
-            transactions,
-            writes,
-            finances,
-            categories,
-            companies,
-            "bootstrap"
-        );
-
-        initializer.initialize();
-
-        verifyNoInteractions(transactions, writes, finances, categories, companies);
-    }
-
     @Test
     void demoModeCreatesCompanyScopedTransactionsOnlyOnce() {
         TransactionQueryRepository transactions = mock(TransactionQueryRepository.class);
@@ -79,8 +57,7 @@ class TransactionDataInitializerTest {
             writes,
             finances,
             categories,
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();
@@ -127,8 +104,7 @@ class TransactionDataInitializerTest {
             writes,
             finances,
             categories,
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();
