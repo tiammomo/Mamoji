@@ -3,9 +3,10 @@ package com.mamoji.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.domain.Models.PayrollRunItem;
+import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.User;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.repository.InMemoryStore;
@@ -38,6 +39,7 @@ import static com.mamoji.common.PayloadReader.textOr;
 public class PayrollService {
     private final JdbcTemplate jdbc;
     private final EnterpriseStore enterpriseStore;
+    private final EmployeeRepository employees;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -45,11 +47,13 @@ public class PayrollService {
     public PayrollService(
         JdbcTemplate jdbc,
         EnterpriseStore enterpriseStore,
+        EmployeeRepository employees,
         AccessControlService accessControl,
         OutboxEventService outboxEventService
     ) {
         this.jdbc = jdbc;
         this.enterpriseStore = enterpriseStore;
+        this.employees = employees;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
     }
@@ -83,7 +87,7 @@ public class PayrollService {
         if (payrollRunExists(company.id, period)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Payroll run already exists for this period");
         }
-        List<PayrollRunItem> items = enterpriseStore.sortedEmployees(company.id, false).stream()
+        List<PayrollRunItem> items = employees.findByCompany(company.id, false).stream()
             .filter(employee -> List.of("active", "probation").contains(employee.status))
             .map(employee -> snapshotItem(company.id, period, employee))
             .toList();

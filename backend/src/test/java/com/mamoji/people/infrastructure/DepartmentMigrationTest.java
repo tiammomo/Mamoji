@@ -63,7 +63,7 @@ class DepartmentMigrationTest {
                 assertEquals("timestamp with time zone", result.getString("created_type"));
                 assertFalse(result.next());
             }
-            assertEquals("22", latestVersion(statement));
+            assertEquals("23", latestVersion(statement));
             assertEquals(Set.of(
                 "uq_departments_id_company",
                 "fk_departments_company",

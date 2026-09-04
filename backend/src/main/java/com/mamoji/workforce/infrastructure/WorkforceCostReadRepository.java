@@ -56,11 +56,11 @@ public class WorkforceCostReadRepository {
         return jdbc.queryForObject("""
             SELECT
                 COUNT(*) AS employee_count,
-                COALESCE(SUM(CAST(NULLIF(employee.salary, '') AS NUMERIC)), 0) AS salary,
-                COALESCE(SUM(CAST(NULLIF(employee.overtime_pay, '') AS NUMERIC)), 0) AS overtime,
-                COALESCE(SUM(CAST(NULLIF(employee.social_insurance_company_amount, '') AS NUMERIC)), 0) AS employer_social,
-                COALESCE(SUM(CAST(NULLIF(employee.housing_fund_company_amount, '') AS NUMERIC)), 0) AS employer_housing,
-                COALESCE(SUM(CAST(NULLIF(employee.monthly_cost, '') AS NUMERIC)), 0) AS total
+                COALESCE(SUM(employee.salary), 0) AS salary,
+                COALESCE(SUM(employee.overtime_pay), 0) AS overtime,
+                COALESCE(SUM(employee.social_insurance_company_amount), 0) AS employer_social,
+                COALESCE(SUM(employee.housing_fund_company_amount), 0) AS employer_housing,
+                COALESCE(SUM(employee.monthly_cost), 0) AS total
             FROM employees employee
             WHERE employee.company_id = ? AND employee.status IN ('active', 'probation')
               AND (? OR employee.user_id = ? OR (
@@ -82,8 +82,7 @@ public class WorkforceCostReadRepository {
                 COUNT(*) FILTER (WHERE employee.status = 'probation') AS probation_count,
                 COUNT(*) FILTER (WHERE employee.status = 'onboarding') AS onboarding_count,
                 COUNT(*) FILTER (
-                    WHERE employee.leave_date IS NOT NULL AND employee.leave_date <> ''
-                      AND employee.leave_date BETWEEN ? AND ?
+                    WHERE employee.leave_date BETWEEN ? AND ?
                 ) AS departed_count
             FROM employees employee
             WHERE employee.company_id = ?
@@ -95,7 +94,7 @@ public class WorkforceCostReadRepository {
                 rs.getInt("probation_count"),
                 rs.getInt("onboarding_count"),
                 rs.getInt("departed_count")
-            ), periodStart.toString(), periodEnd.toString(), companyId, scope.companyWide(), scope.actorUserId(),
+            ), periodStart, periodEnd, companyId, scope.companyWide(), scope.actorUserId(),
             scope.departmentId(), scope.departmentId());
     }
 
@@ -135,11 +134,11 @@ public class WorkforceCostReadRepository {
                 COALESCE(NULLIF(department.name, ''), '未分配部门') AS department_name,
                 COALESCE(department.budget, 0) AS budget,
                 COUNT(*) AS employee_count,
-                COALESCE(SUM(CAST(NULLIF(employee.salary, '') AS NUMERIC)), 0) AS salary,
-                COALESCE(SUM(CAST(NULLIF(employee.overtime_pay, '') AS NUMERIC)), 0) AS overtime,
-                COALESCE(SUM(CAST(NULLIF(employee.social_insurance_company_amount, '') AS NUMERIC)), 0) AS employer_social,
-                COALESCE(SUM(CAST(NULLIF(employee.housing_fund_company_amount, '') AS NUMERIC)), 0) AS employer_housing,
-                COALESCE(SUM(CAST(NULLIF(employee.monthly_cost, '') AS NUMERIC)), 0) AS total
+                COALESCE(SUM(employee.salary), 0) AS salary,
+                COALESCE(SUM(employee.overtime_pay), 0) AS overtime,
+                COALESCE(SUM(employee.social_insurance_company_amount), 0) AS employer_social,
+                COALESCE(SUM(employee.housing_fund_company_amount), 0) AS employer_housing,
+                COALESCE(SUM(employee.monthly_cost), 0) AS total
             FROM employees employee
             LEFT JOIN departments department
               ON department.id = employee.department_id AND department.company_id = employee.company_id
