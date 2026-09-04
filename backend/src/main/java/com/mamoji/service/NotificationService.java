@@ -16,7 +16,6 @@ import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.WebhookUrlValidator;
 import com.mamoji.tax.application.TaxItemRepository;
@@ -24,6 +23,7 @@ import com.mamoji.tax.domain.TaxItem;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -157,7 +157,7 @@ public class NotificationService {
         if (webhookEnabled && webhookUrl == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook URL is required when webhook delivery is enabled");
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             INSERT INTO notification_preferences (
                 user_id, enabled, webhook_enabled, webhook_provider, webhook_url,
@@ -200,7 +200,7 @@ public class NotificationService {
         User user = accessControl.requireUser(authorization);
         NotificationView existing = findForUser(user.id, id);
         if (existing.readAt() == null || existing.readAt().isBlank()) {
-            String now = InMemoryStore.now();
+            String now = OffsetDateTime.now().toString();
             jdbc.update("UPDATE notifications SET read_at = ?, updated_at = ? WHERE id = ? AND user_id = ?", now, now, id, user.id);
         }
         return findForUser(user.id, id);
@@ -208,7 +208,7 @@ public class NotificationService {
 
     public Map<String, Object> markAllRead(String authorization) {
         User user = accessControl.requireUser(authorization);
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         int updated = jdbc.update(
             "UPDATE notifications SET read_at = ?, updated_at = ? WHERE user_id = ? AND read_at IS NULL",
             now,
@@ -476,7 +476,7 @@ public class NotificationService {
         if (!preference.enabled() || preference.mutedTypes().contains(draft.type()) || !severityEnabled(draft.severity(), preference.minSeverity())) {
             return;
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         List<Long> insertedIds = jdbc.query("""
             INSERT INTO notifications (
                 user_id, company_id, type, severity, title, content, target_url,
@@ -623,7 +623,7 @@ public class NotificationService {
         if (!preferences.isEmpty()) {
             return preferences.get(0);
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             INSERT INTO notification_preferences (
                 user_id, enabled, webhook_enabled, webhook_provider, webhook_url,

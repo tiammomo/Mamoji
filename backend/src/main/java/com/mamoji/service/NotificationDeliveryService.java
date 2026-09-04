@@ -2,7 +2,6 @@ package com.mamoji.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.WebhookUrlValidator;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -70,7 +69,7 @@ public class NotificationDeliveryService {
         if (!enabled) {
             return;
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             INSERT INTO notification_deliveries (
                 notification_id, user_id, channel, provider, status, attempts, next_attempt_at,
@@ -91,7 +90,7 @@ public class NotificationDeliveryService {
             "Mamoji 通知测试",
             "这是一条测试消息，用于确认外部通知 Webhook 可以正常接收。",
             "/settings",
-            InMemoryStore.now()
+            OffsetDateTime.now().toString()
         );
         postWebhook(target, payload);
     }
@@ -117,7 +116,7 @@ public class NotificationDeliveryService {
     private List<DeliveryTask> claimDueDeliveries() {
         return transactionTemplate.execute(status -> {
             recoverStaleDeliveries();
-            String now = InMemoryStore.now();
+            String now = OffsetDateTime.now().toString();
             List<DeliveryTask> tasks = jdbc.query("""
                 SELECT * FROM notification_deliveries
                 WHERE status IN ('pending', 'failed')
@@ -141,7 +140,7 @@ public class NotificationDeliveryService {
     }
 
     private void recoverStaleDeliveries() {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         String staleBefore = OffsetDateTime.now().minusMinutes(staleLockMinutes).toString();
         int recovered = jdbc.update("""
             UPDATE notification_deliveries
@@ -157,7 +156,7 @@ public class NotificationDeliveryService {
     }
 
     private void markDelivered(long id) {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             UPDATE notification_deliveries
             SET status = 'delivered', delivered_at = ?, next_attempt_at = NULL, locked_at = NULL,
@@ -167,7 +166,7 @@ public class NotificationDeliveryService {
     }
 
     private void markFailed(DeliveryTask task, RuntimeException ex) {
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         boolean exhausted = task.attempts() >= maxAttempts;
         String nextAttemptAt = exhausted ? null : OffsetDateTime.now().plusSeconds(backoffSeconds(task.attempts())).toString();
         String status = exhausted ? "dead" : "failed";

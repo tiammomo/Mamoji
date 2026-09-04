@@ -23,7 +23,6 @@ import com.mamoji.platform.identity.session.application.LocalSessionRepository;
 import com.mamoji.platform.identity.session.application.LocalSessionService;
 import com.mamoji.platform.identity.session.domain.LocalSession;
 import com.mamoji.platform.identity.session.domain.SessionTokenDigest;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.BackupService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -602,7 +601,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
                 marker + " entry " + entityId,
                 actorUserId,
                 "Integration administrator",
-                InMemoryStore.now()
+                OffsetDateTime.now().toString()
             ));
         }
         auditLogRepository.append(new AuditEvent(
@@ -613,7 +612,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             marker + " different company",
             actorUserId,
             "Integration administrator",
-            InMemoryStore.now()
+            OffsetDateTime.now().toString()
         ));
 
         ApiResponse pageResponse = request(

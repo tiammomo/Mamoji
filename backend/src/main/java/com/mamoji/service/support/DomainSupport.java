@@ -1,6 +1,6 @@
 package com.mamoji.service.support;
 
-import com.mamoji.repository.InMemoryStore;
+import java.time.OffsetDateTime;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -23,7 +23,7 @@ public final class DomainSupport {
 
     public static void touch(Object model) {
         try {
-            model.getClass().getField("updatedAt").set(model, InMemoryStore.now());
+            model.getClass().getField("updatedAt").set(model, OffsetDateTime.now().toString());
         } catch (ReflectiveOperationException ignored) {
             // Models without updatedAt do not need mutation timestamps.
         }
