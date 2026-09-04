@@ -263,6 +263,7 @@ scripts/deploy-prod.sh
 - `MAMOJI_PASSWORD_REQUIRE_COMPLEXITY=true`：首次管理员、注册、改密均执行强密码策略。
 - `MAMOJI_OBJECT_STORAGE_ENABLED=true`：附件写入 MinIO 私有 bucket。
 - `MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY`：限制单个企业的票据对象总量；达到 `MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT` 后记录容量预警，超过上限返回 507 且不写入对象。
+- `MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED=true`：每 6 小时由数据库租约选出一个实例，只读核对 PostgreSQL 票据引用与当前/历史 MinIO bucket；盘点只告警，不自动删除对象。
 - `MAMOJI_OUTBOX_ENABLED=true`：业务事件先进入 `outbox_events`，由本地消费者处理。
 - `MAMOJI_PROMETHEUS_PORT=127.0.0.1:39090`：Prometheus 默认只绑定本机。
 - `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`：生产使用明确版本，不使用 `latest`。

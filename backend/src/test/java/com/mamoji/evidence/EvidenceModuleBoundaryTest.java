@@ -17,7 +17,9 @@ import com.mamoji.evidence.application.ReceiptBatchUploadResult;
 import com.mamoji.evidence.application.ReceiptCreateCommand;
 import com.mamoji.evidence.application.ReceiptFileHashRepository;
 import com.mamoji.evidence.application.ReceiptListQuery;
+import com.mamoji.evidence.application.ReceiptStorageAuditService;
 import com.mamoji.evidence.application.ReceiptStorageGuard;
+import com.mamoji.evidence.application.ReceiptStorageReferenceRepository;
 import com.mamoji.evidence.application.ReceiptStorageUsageRepository;
 import com.mamoji.evidence.application.ReceiptUpdateCommand;
 import com.mamoji.evidence.application.ReceiptUploadCommand;
@@ -25,6 +27,7 @@ import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.JdbcReceiptFileHashRepository;
+import com.mamoji.evidence.infrastructure.JdbcReceiptStorageReferenceRepository;
 import com.mamoji.evidence.infrastructure.JdbcReceiptStorageUsageRepository;
 import com.mamoji.evidence.infrastructure.JdbcReceiptVoucherRepository;
 import com.mamoji.operations.application.TransactionLinkQuery;
@@ -73,8 +76,18 @@ class EvidenceModuleBoundaryTest {
         )));
         assertEquals("com.mamoji.evidence.application", ReceiptVoucherRepository.class.getPackageName());
         assertEquals("com.mamoji.evidence.application", ReceiptStorageUsageRepository.class.getPackageName());
+        assertEquals("com.mamoji.evidence.application", ReceiptStorageReferenceRepository.class.getPackageName());
         assertEquals("com.mamoji.evidence.infrastructure", JdbcReceiptVoucherRepository.class.getPackageName());
         assertEquals("com.mamoji.evidence.infrastructure", JdbcReceiptStorageUsageRepository.class.getPackageName());
+        assertEquals(
+            "com.mamoji.evidence.infrastructure",
+            JdbcReceiptStorageReferenceRepository.class.getPackageName()
+        );
+        Set<String> auditDependencies = Arrays.stream(ReceiptStorageAuditService.class.getDeclaredFields())
+            .map(field -> field.getType().getName())
+            .collect(Collectors.toSet());
+        assertTrue(auditDependencies.contains(ReceiptStorageReferenceRepository.class.getName()));
+        assertFalse(auditDependencies.contains("org.springframework.jdbc.core.JdbcTemplate"));
     }
 
     @Test

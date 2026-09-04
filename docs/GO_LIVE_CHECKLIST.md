@@ -35,6 +35,7 @@
 - `MAMOJI_OUTBOX_ENABLED=true`，`MAMOJI_OUTBOX_CONSUMER_ENABLED=true`，异步事件先走数据库 Outbox。
 - Caddy、MinIO、Prometheus 和备份 helper 镜像均固定明确版本，不使用 `latest`。
 - `MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY` 已按企业合同与磁盘预算设置为正整数，`MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT` 位于 1–99；已验证超额上传返回 507 且不新增票据或对象。
+- `MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED=true`，盘点租约大于一次完整扫描的 p99 耗时，最大对象数覆盖现有规模并留有增长空间；四类完整性告警已加载，确认任何孤立候选都只进入人工调查、不自动删除。
 - 公网只开放 `80/443`；PostgreSQL、后端、前端、MinIO API/Console 和 Prometheus 不直接暴露公网。
 - 已根据主机容量复核各服务 CPU、内存和 PID 限制，容器限制总和不会挤占宿主机与文件缓存所需余量。
 - 后端 Docker 停止宽限期大于 Spring 优雅停机窗口，Hikari 连接池上限与 PostgreSQL `max_connections` 留有运维连接余量。

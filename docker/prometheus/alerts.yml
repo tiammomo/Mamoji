@@ -60,3 +60,35 @@ groups:
         annotations:
           summary: An unreferenced receipt object could not be removed
           description: Inspect backend logs for the bucket and object key, then reconcile the unreferenced MinIO object manually.
+
+      - alert: MamojiReceiptStorageAuditFailed
+        expr: increase(mamoji_receipt_storage_audit_runs_total{job="mamoji-backend",outcome="failure"}[7h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: The receipt storage integrity audit failed
+          description: Inspect backend logs and verify PostgreSQL and MinIO connectivity before the next six-hour audit.
+
+      - alert: MamojiReceiptStorageOrphanCandidates
+        expr: increase(mamoji_receipt_storage_audit_findings_total{job="mamoji-backend",type="orphan"}[7h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Unreferenced receipt objects need investigation
+          description: The read-only audit found objects older than the grace period without durable receipt references; inspect log samples and do not delete automatically.
+
+      - alert: MamojiReceiptStorageMissingObjects
+        expr: increase(mamoji_receipt_storage_audit_findings_total{job="mamoji-backend",type="missing"}[7h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Durable receipt references point to missing objects
+          description: Investigate possible receipt data loss immediately using the bounded object-key samples in backend logs.
+
+      - alert: MamojiReceiptStorageInvalidReferences
+        expr: increase(mamoji_receipt_storage_audit_findings_total{job="mamoji-backend",type=~"invalid_reference|duplicate_reference"}[7h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Receipt storage references need database reconciliation
+          description: The integrity audit found malformed or duplicate durable MinIO references; inspect backend logs and database records.
