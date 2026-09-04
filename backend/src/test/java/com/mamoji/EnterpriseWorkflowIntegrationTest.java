@@ -583,6 +583,95 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void entityTransfersUseTypedAppendOnlyTenantPersistence() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        String sourceName = "Transfer Source " + System.nanoTime();
+        String targetName = "Transfer Target " + System.nanoTime();
+        long sourceId = createCompany(token, sourceName);
+        long targetId = createCompany(token, targetName);
+
+        ApiResponse createdResponse = request(
+            "POST",
+            "/api/v1/enterprise/entity-transfers",
+            Map.of(
+                "fromEntityId", sourceId,
+                "toEntityId", targetId,
+                "transferType", " SHAREHOLDER_ADVANCE ",
+                "amount", "125.5000",
+                "currency", " cny ",
+                "transferDate", "2026-09-04",
+                "note", " working capital ",
+                "status", " RECORDED "
+            ),
+            token
+        );
+
+        assertEquals(200, createdResponse.status(), createdResponse.body());
+        Map<String, Object> created = parseMap(createdResponse.body());
+        long transferId = id(created);
+        assertEquals(sourceId, ((Number) created.get("fromEntityId")).longValue());
+        assertEquals(targetId, ((Number) created.get("toEntityId")).longValue());
+        assertEquals(sourceName, created.get("fromEntityName"));
+        assertEquals(targetName, created.get("toEntityName"));
+        assertEquals("shareholder_advance", created.get("transferType"));
+        assertEquals("CNY", created.get("currency"));
+        assertEquals("working capital", created.get("note"));
+        assertEquals("recorded", created.get("status"));
+
+        List<Map<String, Object>> scoped = parseList(request(
+            "GET",
+            "/api/v1/enterprise/entity-transfers?entityId=" + sourceId,
+            null,
+            token
+        ).body());
+        assertEquals(1, scoped.size());
+        assertEquals(transferId, id(scoped.getFirst()));
+        assertEquals("numeric", jdbc.queryForObject(
+            "SELECT pg_typeof(amount)::TEXT FROM entity_transfers WHERE id = ?",
+            String.class,
+            transferId
+        ));
+        assertEquals("date", jdbc.queryForObject(
+            "SELECT pg_typeof(transfer_date)::TEXT FROM entity_transfers WHERE id = ?",
+            String.class,
+            transferId
+        ));
+        assertEquals("timestamp with time zone", jdbc.queryForObject(
+            "SELECT pg_typeof(created_at)::TEXT FROM entity_transfers WHERE id = ?",
+            String.class,
+            transferId
+        ));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'entity_transfer' AND entity_id = ? AND action = 'create'
+            """, Integer.class, sourceId, transferId));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND aggregate_type = 'entity_transfer' AND aggregate_id = ?
+              AND event_type = 'enterprise.entity_transfer.create'
+            """, Integer.class, sourceId, transferId));
+
+        ApiResponse invalid = request(
+            "POST",
+            "/api/v1/enterprise/entity-transfers",
+            Map.of(
+                "fromEntityId", sourceId,
+                "toEntityId", targetId,
+                "transferType", "cash_move",
+                "amount", "1.00001"
+            ),
+            token
+        );
+        assertEquals(400, invalid.status(), invalid.body());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM entity_transfers WHERE from_entity_id = ? AND to_entity_id = ?",
+            Integer.class,
+            sourceId,
+            targetId
+        ));
+    }
+
+    @Test
     void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Concurrent approval");

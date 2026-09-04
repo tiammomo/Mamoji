@@ -1,7 +1,6 @@
 package com.mamoji.service;
 
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.people.application.DepartmentRepository;
@@ -17,6 +16,8 @@ import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
+import com.mamoji.platform.tenant.EntityTransfer;
+import com.mamoji.platform.tenant.EntityTransferRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
@@ -61,6 +62,7 @@ public class EnterpriseManagementService {
     private final ProductModuleCatalog productModules;
     private final CompanyMembershipRepository memberships;
     private final CompanyRepository companies;
+    private final EntityTransferRepository entityTransfers;
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
@@ -75,7 +77,8 @@ public class EnterpriseManagementService {
         OutboxEventService outboxEventService,
         ProductModuleCatalog productModules,
         CompanyMembershipRepository memberships,
-        CompanyRepository companies
+        CompanyRepository companies,
+        EntityTransferRepository entityTransfers
     ) {
         this.enterpriseStore = enterpriseStore;
         this.financeRepository = financeRepository;
@@ -90,6 +93,7 @@ public class EnterpriseManagementService {
         this.productModules = productModules;
         this.memberships = memberships;
         this.companies = companies;
+        this.entityTransfers = entityTransfers;
     }
 
     public Map<String, Object> summary(String authorization, Long companyId) {
@@ -287,7 +291,7 @@ public class EnterpriseManagementService {
             scopedEntityId = accessControl.resolveCompany(user, entityId).id;
         }
         List<Long> accessibleEntityIds = accessControl.accessibleCompanies(user).stream().map(company -> company.id).toList();
-        return enterpriseStore.sortedEntityTransfers(accessibleEntityIds, scopedEntityId);
+        return entityTransfers.findAccessible(accessibleEntityIds, scopedEntityId);
     }
 
     @Transactional
@@ -308,19 +312,24 @@ public class EnterpriseManagementService {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amount must be positive");
         }
-        EntityTransfer transfer = enterpriseStore.entityTransfer(
-            fromEntity.id,
-            toEntity.id,
-            textOr(body.get("transferType"), "inter_entity_transfer"),
-            String.valueOf(amount),
-            textOr(body.get("currency"), fromEntity.currency == null ? "CNY" : fromEntity.currency),
-            textOr(body.get("transferDate"), LocalDate.now().toString()),
-            nullableText(body.get("note")),
-            textOr(body.get("status"), "recorded"),
-            user.id
-        );
-        audit(fromEntity.id, "entity_transfer", transfer.id, "create", "创建主体间资金划转: " + fromEntity.name + " -> " + toEntity.name, user);
-        return transfer;
+        EntityTransfer transfer = new EntityTransfer();
+        transfer.fromEntityId = fromEntity.id;
+        transfer.toEntityId = toEntity.id;
+        transfer.transferType = textOr(body.get("transferType"), "inter_entity_transfer");
+        transfer.amount = amount;
+        transfer.currency = textOr(body.get("currency"), fromEntity.currency == null ? "CNY" : fromEntity.currency);
+        transfer.transferDate = textOr(body.get("transferDate"), LocalDate.now().toString());
+        transfer.note = nullableText(body.get("note"));
+        transfer.status = textOr(body.get("status"), "recorded");
+        transfer.operatorUserId = user.id;
+        EntityTransfer persistedTransfer;
+        try {
+            persistedTransfer = entityTransfers.append(transfer);
+        } catch (IllegalArgumentException error) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, error.getMessage(), error);
+        }
+        audit(fromEntity.id, "entity_transfer", persistedTransfer.id, "create", "创建主体间资金划转: " + fromEntity.name + " -> " + toEntity.name, user);
+        return persistedTransfer;
     }
 
     private void audit(long companyId, String entityType, long entityId, String action, String summary, User user) {
