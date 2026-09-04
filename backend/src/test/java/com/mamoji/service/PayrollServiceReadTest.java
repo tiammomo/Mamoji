@@ -9,7 +9,7 @@ import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.domain.Models.PayrollRunItem;
 import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -34,7 +34,7 @@ class PayrollServiceReadTest {
         when(accessControl.resolveCompany(user, 9L)).thenReturn(company);
         PayrollService service = new PayrollService(
             jdbc,
-            mock(EnterpriseStore.class),
+            mock(AuditTrailService.class),
             mock(EmployeeRepository.class),
             accessControl,
             mock(OutboxEventService.class)

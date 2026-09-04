@@ -6,7 +6,7 @@ import com.mamoji.operations.api.CategoryUpdateRequest;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -23,18 +23,18 @@ import org.springframework.web.server.ResponseStatusException;
 public class CategoryApplicationService {
     private final CategoryRepository repository;
     private final AccessContextService accessContext;
-    private final EnterpriseStore auditStore;
+    private final AuditTrailService auditTrail;
     private final OutboxEventService outbox;
 
     public CategoryApplicationService(
         CategoryRepository repository,
         AccessContextService accessContext,
-        EnterpriseStore auditStore,
+        AuditTrailService auditTrail,
         OutboxEventService outbox
     ) {
         this.repository = repository;
         this.accessContext = accessContext;
-        this.auditStore = auditStore;
+        this.auditTrail = auditTrail;
         this.outbox = outbox;
     }
 
@@ -141,7 +141,7 @@ public class CategoryApplicationService {
         ActorContext actor,
         Map<String, Object> attributes
     ) {
-        auditStore.auditLog(
+        auditTrail.record(
             category.companyId,
             "category",
             category.id,

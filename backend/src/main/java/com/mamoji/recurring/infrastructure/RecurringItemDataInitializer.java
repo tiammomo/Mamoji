@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 
 /** Owns optional recurring-rule demo data after enterprise subjects exist. */
 @Component
-@DependsOn("enterpriseStore")
+@DependsOn("enterpriseDataInitializer")
 public class RecurringItemDataInitializer {
     private final RecurringItemRepository recurringItems;
     private final CompanyRepository companies;

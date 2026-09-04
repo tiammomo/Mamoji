@@ -3,7 +3,7 @@ package com.mamoji.tax.application;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.tax.api.TaxItemCreateRequest;
@@ -29,7 +29,7 @@ public class TaxItemApplicationService {
     private final TaxItemPolicy policy;
     private final AccessContextService accessContext;
     private final AccessControlService accessControl;
-    private final EnterpriseStore auditStore;
+    private final AuditTrailService auditTrail;
     private final OutboxEventService outbox;
 
     public TaxItemApplicationService(
@@ -37,14 +37,14 @@ public class TaxItemApplicationService {
         TaxItemPolicy policy,
         AccessContextService accessContext,
         AccessControlService accessControl,
-        EnterpriseStore auditStore,
+        AuditTrailService auditTrail,
         OutboxEventService outbox
     ) {
         this.repository = repository;
         this.policy = policy;
         this.accessContext = accessContext;
         this.accessControl = accessControl;
-        this.auditStore = auditStore;
+        this.auditTrail = auditTrail;
         this.outbox = outbox;
     }
 
@@ -132,7 +132,7 @@ public class TaxItemApplicationService {
     }
 
     private void audit(TaxItem item, String action, String summary, ActorContext actor) {
-        auditStore.auditLog(
+        auditTrail.record(
             item.companyId,
             "tax_item",
             item.id,

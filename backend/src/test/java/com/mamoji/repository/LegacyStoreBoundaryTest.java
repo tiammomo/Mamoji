@@ -1,5 +1,6 @@
 package com.mamoji.repository;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.people.application.EmploymentEventRepository;
@@ -95,49 +96,10 @@ class LegacyStoreBoundaryTest {
     }
 
     @Test
-    void enterpriseStoreDoesNotExposeUnusedMutationOrProjectionHelpers() {
-        assertNotPublic(EnterpriseStore.class, Set.of(
-            "attachDepartmentNames",
-            "company",
-            "department",
-            "deleteEmployee",
-            "deleteTaxItem",
-            "entityTransfer",
-            "event",
-            "findActiveEmployeeByUser",
-            "findCompany",
-            "findDepartment",
-            "findEmployee",
-            "findTaxItem",
-            "saveDepartment",
-            "saveCompany",
-            "saveEmployee",
-            "saveTaxItem",
-            "saveEntityTransfer",
-            "sortedDepartments",
-            "sortedEmployees",
-            "sortedEmploymentEvents",
-            "sortedEntityTransfers",
-            "sortedCompanies"
-        ));
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("departments")),
-            "Departments must not return to the process-local enterprise compatibility view");
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("employees")),
-            "Employees must not return to the process-local enterprise compatibility view");
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("employmentEvents")),
-            "Employment events must not return to the process-local enterprise compatibility view");
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("companies")),
-            "Companies must not return to the process-local enterprise compatibility view");
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("taxItems")),
-            "Tax items must not return to the process-local enterprise compatibility view");
-        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
-            .noneMatch(field -> field.getName().equals("entityTransfers")),
-            "Entity transfers must not return to the process-local enterprise compatibility view");
+    void enterpriseStoreCompatibilityClassCannotReturn() {
+        assertThrows(ClassNotFoundException.class, () ->
+            Class.forName("com.mamoji.repository.EnterpriseStore")
+        );
     }
 
     @Test

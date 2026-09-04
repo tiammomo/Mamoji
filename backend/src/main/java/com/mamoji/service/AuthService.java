@@ -15,7 +15,7 @@ import com.mamoji.platform.identity.invitation.application.RegistrationInvitatio
 import com.mamoji.platform.identity.invitation.domain.RegistrationInvitation;
 import com.mamoji.platform.identity.security.application.LoginSecurityService;
 import com.mamoji.platform.identity.session.application.LocalSessionService;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.PasswordHasher;
 import java.security.SecureRandom;
@@ -43,7 +43,7 @@ public class AuthService {
     private static final int SESSION_TOKEN_BYTES = 32;
 
     private final LocalUserAccountRepository userAccounts;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final PasswordHasher passwordHasher;
     private final LoginSecurityService loginSecurityService;
@@ -57,7 +57,7 @@ public class AuthService {
 
     public AuthService(
         LocalUserAccountRepository userAccounts,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         PasswordHasher passwordHasher,
         LoginSecurityService loginSecurityService,
@@ -69,7 +69,7 @@ public class AuthService {
         @Value("${mamoji.security.password.require-complexity:false}") boolean passwordRequireComplexity
     ) {
         this.userAccounts = userAccounts;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.passwordHasher = passwordHasher;
         this.loginSecurityService = loginSecurityService;
@@ -88,9 +88,9 @@ public class AuthService {
         Optional<User> matchedUser = userAccounts.findByEmail(email)
             .filter(candidate -> passwordHasher.matches(password, candidate.passwordHash));
         if (matchedUser.isEmpty()) {
-            enterpriseStore.auditLog(0, "auth_session", 0, "login_failed", "登录失败: " + maskEmail(email), 0, "anonymous");
+            auditTrail.record(0, "auth_session", 0, "login_failed", "登录失败: " + maskEmail(email), 0, "anonymous");
             loginSecurityService.recordFailure(email, clientIp)
-                .ifPresent(lockedUntil -> enterpriseStore.auditLog(0, "auth_session", 0, "login_locked",
+                .ifPresent(lockedUntil -> auditTrail.record(0, "auth_session", 0, "login_locked",
                     "登录失败次数过多，账号或来源临时锁定至: " + lockedUntil, 0, "anonymous"));
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
         }
@@ -132,7 +132,7 @@ public class AuthService {
         if (invite != null) {
             invite = invitations.accept(invite, user.id, OffsetDateTime.now());
         }
-        enterpriseStore.auditLog(0, "user", user.id, "register", "注册用户: " + user.email, user.id, user.nickname);
+        auditTrail.record(0, "user", user.id, "register", "注册用户: " + user.email, user.id, user.nickname);
         outboxEventService.publish("auth.user.registered", 0, "user", user.id, user.id, Map.of(
             "email", user.email,
             "nickname", user.nickname,
@@ -140,7 +140,7 @@ public class AuthService {
             "registrationMode", registrationMode
         ));
         if (invite != null) {
-            enterpriseStore.auditLog(0, "registration_invite", invite.id(), "accept", "接受注册邀请: " + user.email, user.id, user.nickname);
+            auditTrail.record(0, "registration_invite", invite.id(), "accept", "接受注册邀请: " + user.email, user.id, user.nickname);
             Map<String, Object> invitationEvent = new LinkedHashMap<>();
             invitationEvent.put("email", user.email);
             invitationEvent.put("acceptedUserId", user.id);
@@ -187,7 +187,7 @@ public class AuthService {
             now
         );
         RegistrationInvitation invite = issued.invitation();
-        enterpriseStore.auditLog(0, "registration_invite", invite.id(), "create", "创建注册邀请: " + email, actor.id, actor.nickname);
+        auditTrail.record(0, "registration_invite", invite.id(), "create", "创建注册邀请: " + email, actor.id, actor.nickname);
         outboxEventService.publish("auth.registration_invite.created", 0, "registration_invite", invite.id(), actor.id, Map.of(
             "email", invite.email(),
             "role", invite.role(),
@@ -215,7 +215,7 @@ public class AuthService {
         }
         touch(user);
         userAccounts.update(user);
-        enterpriseStore.auditLog(0, "user", user.id, "update_profile", "更新个人资料", user.id, user.nickname);
+        auditTrail.record(0, "user", user.id, "update_profile", "更新个人资料", user.id, user.nickname);
         return user;
     }
 
@@ -232,13 +232,13 @@ public class AuthService {
         user.passwordHash = passwordHasher.hash(newPassword);
         touch(user);
         userAccounts.update(user);
-        enterpriseStore.auditLog(0, "user", user.id, "change_password", "修改登录密码", user.id, user.nickname);
+        auditTrail.record(0, "user", user.id, "change_password", "修改登录密码", user.id, user.nickname);
         return Map.of("success", true);
     }
 
     public Map<String, Object> logout(String authorization) {
         sessions.authenticate(authorization)
-            .ifPresent(user -> enterpriseStore.auditLog(0, "auth_session", user.id, "logout", "用户退出登录", user.id, user.nickname));
+            .ifPresent(user -> auditTrail.record(0, "auth_session", user.id, "logout", "用户退出登录", user.id, user.nickname));
         sessions.revoke(authorization);
         return Map.of("success", true);
     }
@@ -248,7 +248,7 @@ public class AuthService {
         OffsetDateTime createdAt = OffsetDateTime.now();
         OffsetDateTime expiresAt = createdAt.plusHours(SESSION_HOURS);
         sessions.create(token, user.id, createdAt, expiresAt);
-        enterpriseStore.auditLog(0, "auth_session", user.id, "login", "用户登录: " + user.email, user.id, user.nickname);
+        auditTrail.record(0, "auth_session", user.id, "login", "用户登录: " + user.email, user.id, user.nickname);
         return Map.of("token", token, "tokenExpiresAt", expiresAt.toString(), "user", user);
     }
 

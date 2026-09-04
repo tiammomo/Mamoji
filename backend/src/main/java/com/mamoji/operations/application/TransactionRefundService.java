@@ -10,7 +10,7 @@ import com.mamoji.operations.domain.TransactionRiskAssessment;
 import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -37,7 +37,7 @@ public class TransactionRefundService {
     private final TransactionWriteRepository transactions;
     private final TransactionQueryRepository transactionQueries;
     private final TransactionAccountingGateway accounting;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
@@ -46,7 +46,7 @@ public class TransactionRefundService {
         TransactionWriteRepository transactions,
         TransactionQueryRepository transactionQueries,
         TransactionAccountingGateway accounting,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
@@ -54,7 +54,7 @@ public class TransactionRefundService {
         this.transactions = transactions;
         this.transactionQueries = transactionQueries;
         this.accounting = accounting;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
@@ -223,7 +223,7 @@ public class TransactionRefundService {
 
     private void audit(long companyId, long refundId, long originalId, User user) {
         String summary = "退款交易 #" + originalId;
-        enterpriseStore.auditLog(
+        auditTrail.record(
             companyId,
             "transaction",
             refundId,

@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 /** Ensures every initialized company has one durable accounting workspace. */
 @Component
-@DependsOn("enterpriseStore")
+@DependsOn("enterpriseDataInitializer")
 public class LedgerDataInitializer {
     private final FinanceRepository finances;
     private final CompanyRepository companies;

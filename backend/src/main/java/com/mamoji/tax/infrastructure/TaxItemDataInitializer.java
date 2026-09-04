@@ -20,7 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Seeds tax demo data once, after company policy data is durable. */
 @Component
-@DependsOn("enterpriseStore")
+@DependsOn("enterpriseDataInitializer")
 public class TaxItemDataInitializer {
     private static final List<TaxSeed> DEMO_ITEMS = List.of(
         new TaxSeed(

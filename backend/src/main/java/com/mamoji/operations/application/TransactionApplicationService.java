@@ -15,7 +15,7 @@ import com.mamoji.operations.domain.TransactionRiskAssessment;
 import com.mamoji.operations.domain.TransactionRiskPolicy;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -42,7 +42,7 @@ public class TransactionApplicationService {
     private final TransactionWriteRepository transactions;
     private final TransactionQueryRepository transactionQueries;
     private final TransactionAccountingGateway accounting;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
@@ -51,7 +51,7 @@ public class TransactionApplicationService {
         TransactionWriteRepository transactions,
         TransactionQueryRepository transactionQueries,
         TransactionAccountingGateway accounting,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
         BudgetApplicationService budgetService
@@ -59,7 +59,7 @@ public class TransactionApplicationService {
         this.transactions = transactions;
         this.transactionQueries = transactionQueries;
         this.accounting = accounting;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
@@ -333,7 +333,7 @@ public class TransactionApplicationService {
 
     private void audit(long companyId, TransactionRecord transaction, User user) {
         String summary = "创建交易: " + transaction.note;
-        enterpriseStore.auditLog(
+        auditTrail.record(
             companyId,
             "transaction",
             transaction.id,

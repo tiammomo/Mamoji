@@ -5,7 +5,7 @@ import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
@@ -31,18 +31,18 @@ public class AccountApplicationService {
         "cash", "bank", "credit", "digital", "investment", "debt"
     );
     private final FinanceRepository repository;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
 
     public AccountApplicationService(
         FinanceRepository repository,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService
     ) {
         this.repository = repository;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
     }
@@ -415,7 +415,7 @@ public class AccountApplicationService {
     }
 
     private void audit(long companyId, long accountId, String action, String summary, User user) {
-        enterpriseStore.auditLog(companyId, "account", accountId, action, summary, user.id, user.nickname);
+        auditTrail.record(companyId, "account", accountId, action, summary, user.id, user.nickname);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("summary", summary);
         payload.put("actorName", user.nickname);

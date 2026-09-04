@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.invitation.domain.InvitationTokenDigest;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -101,19 +101,19 @@ public class BackupService {
         "outbox_events"
     );
 
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final AccessControlService accessControl;
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate snapshotTransaction;
 
     public BackupService(
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         AccessControlService accessControl,
         JdbcTemplate jdbc,
         PlatformTransactionManager transactionManager
     ) {
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.accessControl = accessControl;
         this.jdbc = jdbc;
         this.snapshotTransaction = new TransactionTemplate(transactionManager);
@@ -166,7 +166,7 @@ public class BackupService {
         headers.setContentDisposition(ContentDisposition.attachment()
             .filename("mamoji-structured-backup-" + java.time.LocalDate.now() + ".json")
             .build());
-        enterpriseStore.auditLog(0, "backup", 0, "export", "导出全量结构化经营数据", user.id, user.nickname);
+        auditTrail.record(0, "backup", 0, "export", "导出全量结构化经营数据", user.id, user.nickname);
         return ResponseEntity.ok().headers(headers).body(payload);
     }
 
@@ -220,7 +220,7 @@ public class BackupService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    enterpriseStore.auditLog(
+                    auditTrail.record(
                         0,
                         "backup",
                         0,

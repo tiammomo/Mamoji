@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 
 /** Keeps demo/bootstrap records aligned with the authoritative membership table. */
 @Component
-@DependsOn("enterpriseStore")
+@DependsOn("enterpriseDataInitializer")
 public class MembershipBootstrapSynchronizer {
     private final CompanyRepository companies;
     private final EmployeeRepository employees;
