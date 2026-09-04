@@ -1,9 +1,7 @@
-package com.mamoji.repository;
+package com.mamoji.bootstrap;
 
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.platform.audit.application.AuditLogRepository;
-import com.mamoji.platform.audit.domain.AuditEvent;
-import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.people.application.EmployeeRepository;
@@ -16,6 +14,7 @@ import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransfer;
 import com.mamoji.platform.tenant.EntityTransferRepository;
+import com.mamoji.repository.InMemoryStore;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -28,8 +27,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+/** Owns configured first-run and local demo data initialization without exposing runtime business APIs. */
 @Component
-public class EnterpriseStore {
+public class EnterpriseDataInitializer {
     private static final String DEMO_COMPANY_CREDIT_CODE = "DEMO-COMPANY-CREDIT-CODE";
     private static final int[] COMPENSATION_BENCHMARK_SALARIES = {
         3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
@@ -44,7 +44,7 @@ public class EnterpriseStore {
 
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
-    private final AuditLogRepository auditLogRepository;
+    private final AuditTrailService auditTrail;
     private final DepartmentRepository departmentRepository;
     private final EmployeeRepository employeeRepository;
     private final EmploymentEventRepository employmentEventRepository;
@@ -57,10 +57,10 @@ public class EnterpriseStore {
     private final String bootstrapCompanyTaxpayerType;
     private final String bootstrapCompanyCurrency;
 
-    public EnterpriseStore(
+    public EnterpriseDataInitializer(
         JdbcTemplate jdbc,
         UserDirectory userDirectory,
-        AuditLogRepository auditLogRepository,
+        AuditTrailService auditTrail,
         DepartmentRepository departmentRepository,
         EmployeeRepository employeeRepository,
         EmploymentEventRepository employmentEventRepository,
@@ -75,7 +75,7 @@ public class EnterpriseStore {
     ) {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
-        this.auditLogRepository = auditLogRepository;
+        this.auditTrail = auditTrail;
         this.departmentRepository = departmentRepository;
         this.employeeRepository = employeeRepository;
         this.employmentEventRepository = employmentEventRepository;
@@ -167,7 +167,7 @@ public class EnterpriseStore {
             "生产环境初始化管理员员工档案",
             owner.id()
         );
-        auditLog(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id(), owner.nickname());
+        auditTrail.record(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id(), owner.nickname());
     }
 
     private void ensureSeedData() {
@@ -434,20 +434,11 @@ public class EnterpriseStore {
 
     private void ensureEmployeePayrollDefaults() {
         employeeRepository.findAll().forEach(employee -> {
-            boolean updated = EmployeeCompensationPolicy.hydrate(employee);
-            if (updated) {
+            if (EmployeeCompensationPolicy.hydrate(employee)) {
                 employee.updatedAt = InMemoryStore.now();
+                employeeRepository.update(employee);
             }
-            employeeRepository.update(employee);
         });
-    }
-
-    public List<AuditLog> sortedAuditLogs(long companyId, String entityType, long entityId) {
-        return auditLogRepository.findByEntity(companyId, entityType, entityId);
-    }
-
-    public boolean hasAuditLogEntityType(String entityType) {
-        return auditLogRepository.existsByEntityType(entityType);
     }
 
     private Company newCompany(
@@ -570,27 +561,6 @@ public class EnterpriseStore {
         transfer.status = status == null || status.isBlank() ? "recorded" : status;
         transfer.operatorUserId = operatorUserId;
         return entityTransferRepository.append(transfer);
-    }
-
-    public AuditLog auditLog(
-        long companyId,
-        String entityType,
-        long entityId,
-        String action,
-        String summary,
-        long actorUserId,
-        String actorName
-    ) {
-        return auditLogRepository.append(new AuditEvent(
-            companyId,
-            entityType,
-            entityId,
-            action,
-            summary,
-            actorUserId,
-            actorName,
-            InMemoryStore.now()
-        ));
     }
 
     private boolean isBlank(String value) {

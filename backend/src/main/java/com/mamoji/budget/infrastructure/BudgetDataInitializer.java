@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 
 /** Owns optional budget demo data after enterprise subjects and accounting scopes exist. */
 @Component
-@DependsOn("enterpriseStore")
+@DependsOn("enterpriseDataInitializer")
 public class BudgetDataInitializer {
     private final BudgetRepository budgets;
     private final BudgetPolicy policy;

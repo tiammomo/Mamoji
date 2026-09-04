@@ -57,6 +57,7 @@ flowchart TB
 | `platform.identity` | 本地账户、凭证、资料、会话与注册邀请生命周期 | 当前 Actor、账户、邀请摘要 | `users/auth_tokens/registration_invites`/外部身份声明 | `ActorContext`、`@CurrentActor` |
 | `platform.tenant` | 公司主体资料、主体间资金划转、成员关系 | 公司、划转历史、角色、部门、范围 | `companies/entity_transfers/company_memberships` | `CompanyRepository`、`EntityTransferRepository`、`CompanyMembershipRepository` |
 | `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
+| `platform.audit` | 追加审计事件 | 管理员分页检索、业务对象历史 | `audit_logs` | `AuditTrailService`、`GET /audit-logs` |
 | `access-management` | 公司成员和角色维护 | 成员、角色、数据范围 | `users/company_memberships` | `/admin/users` |
 | `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
 | `workspace` | 无业务写入 | 跨模块健康度、待办、指标 | SQL 投影 | `GET /workspace` |
@@ -72,6 +73,8 @@ flowchart TB
 | `notifications` | 偏好与发送状态 | 站内通知 | `notifications/deliveries` | `/notifications` |
 
 `access-management` 是默认核心能力。`people-core`、`workforce-cost`、`talent-suite`（福利、绩效）、税务、政策和备份 UI 是可选能力包。任何可选能力都不允许成为核心模块的反向依赖。
+
+`bootstrap` 不是业务模块，也不向运行期用例暴露查询或写入 API；它只负责按配置编排首次企业数据和本地演示夹具。其他初始化器如需依赖基础公司数据，必须显式依赖 `EnterpriseDataInitializer`，不能依赖历史 Store 的副作用。
 
 ## 4. 统一访问上下文
 
@@ -221,12 +224,12 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以公司外键、公司税种期间唯一约束和申报/缴款检查约束保护税务流程；税务事项由专属仓储直接读写，旧税务 Map、启动重载和重复补种已删除。V22 将部门预算和生命周期时间改为 `NUMERIC(20,2)` 与 `TIMESTAMPTZ`，以公司内复合外键、规范化名称唯一索引和不可变触发器保护部门、负责人、员工及成员的租户关系；部门专属仓储已取代旧部门 Map 和 Map 型写命令。V23 将员工薪酬、日期和生命周期字段改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以公司内直属经理复合外键、用户/核验人外键、规范化邮箱/工号唯一索引及公司归属不可变触发器保护人员数据；员工专属仓储已取代旧员工 Map、SQL 映射和双写。V24 将任职事件生效日期和创建时间改为 `DATE` 与 `TIMESTAMPTZ`，通过公司内员工复合外键、操作者外键、类型/备注约束和不可更新触发器保护追加式人员历史；任职事件专属仓储已取代旧事件 Map、SQL 映射和写入口。V25 将公司生命周期时间改为 `TIMESTAMPTZ`，增加乐观锁版本、所有者外键、规范化信用代码唯一索引、主体类型/币种/地区/财年约束和所有者不可变触发器；公司专属仓储已取代旧公司 Map、SQL 映射和写入口，访问控制与各模块初始化器直接读取租户契约。V26 将主体划转金额、日期和生命周期时间改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以双边主体/操作者外键、正金额、合法类型、不同主体和禁止更新或删除的触发器保护追加式划转历史；查询在 SQL 层按可访问主体过滤，旧划转 Map、全表读取、SQL 映射和写入口已删除。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，税务演示初始化仅在空数据且无历史审计时执行；生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`InMemoryStore` 与 `EnterpriseStore` 均已不再持有业务集合，旧 `EnterpriseStore` 只剩启动数据编排与审计门面等待拆分。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以公司外键、公司税种期间唯一约束和申报/缴款检查约束保护税务流程；税务事项由专属仓储直接读写，旧税务 Map、启动重载和重复补种已删除。V22 将部门预算和生命周期时间改为 `NUMERIC(20,2)` 与 `TIMESTAMPTZ`，以公司内复合外键、规范化名称唯一索引和不可变触发器保护部门、负责人、员工及成员的租户关系；部门专属仓储已取代旧部门 Map 和 Map 型写命令。V23 将员工薪酬、日期和生命周期字段改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以公司内直属经理复合外键、用户/核验人外键、规范化邮箱/工号唯一索引及公司归属不可变触发器保护人员数据；员工专属仓储已取代旧员工 Map、SQL 映射和双写。V24 将任职事件生效日期和创建时间改为 `DATE` 与 `TIMESTAMPTZ`，通过公司内员工复合外键、操作者外键、类型/备注约束和不可更新触发器保护追加式人员历史；任职事件专属仓储已取代旧事件 Map、SQL 映射和写入口。V25 将公司生命周期时间改为 `TIMESTAMPTZ`，增加乐观锁版本、所有者外键、规范化信用代码唯一索引、主体类型/币种/地区/财年约束和所有者不可变触发器；公司专属仓储已取代旧公司 Map、SQL 映射和写入口，访问控制与各模块初始化器直接读取租户契约。V26 将主体划转金额、日期和生命周期时间改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以双边主体/操作者外键、正金额、合法类型、不同主体和禁止更新或删除的触发器保护追加式划转历史；查询在 SQL 层按可访问主体过滤，旧划转 Map、全表读取、SQL 映射和写入口已删除。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，税务演示初始化仅在空数据且无历史审计时执行；生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`EnterpriseStore` 已删除：跨模块审计统一经 `AuditTrailService` 追加，demo/bootstrap 数据由无业务查询入口的 `EnterpriseDataInitializer` 显式编排；`InMemoryStore` 仍只保留首次用户引导和通用工具，等待后续退场。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
 1. 把 `@PostConstruct` 中的演示/兼容修复迁移成一次性 migration 或独立 bootstrap job；
-2. 删除 Store 中剩余兼容 Map 与 reload 钩子；
+2. 将应用启动期的兼容修复迁移成可独立执行、可观测且具备并发保护的任务；
 3. 在真实 PostgreSQL 上通过双实例并发写、重复命令和故障重试测试；
 4. 确认定时任务使用抢占锁或 `SKIP LOCKED`，不会被每个实例重复执行。
 
@@ -242,7 +245,7 @@ V8 迁移建立了：
 ### P1：清除兼容状态
 
 - 把演示数据改成显式 profile 或开发脚本，不在生产启动路径执行。
-- 将 `EnterpriseStore` 剩余的启动数据编排与审计门面拆入职责明确的组件并删除旧类；两个旧 Store 均已无业务集合。
+- `EnterpriseStore` 已完成退场；保持审计只能通过 `AuditTrailService` 追加，启动数据只能由 `EnterpriseDataInitializer` 编排。
 - 继续收紧公司、主体划转、人员、税务事项、分类、预算、周期事项、流水、资金账户、账本及成员之间的应用层契约，保持强类型持久化边界。
 
 ### P2：集成宿主平台

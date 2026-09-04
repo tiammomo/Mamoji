@@ -16,7 +16,7 @@ import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.tenant.CompanyRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,12 +27,12 @@ class ReceiptVoucherDataInitializerTest {
     void bootstrapModeOnlyRepairsExistingEvidenceData() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
         CompanyRepository companies = mock(CompanyRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        AuditTrailService auditTrail = mock(AuditTrailService.class);
         UserDirectory userDirectory = mock(UserDirectory.class);
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
             companies,
-            enterpriseStore,
+            auditTrail,
             userDirectory,
             "bootstrap"
         );
@@ -41,14 +41,14 @@ class ReceiptVoucherDataInitializerTest {
 
         verify(receiptVouchers).repairLegacyDefaults();
         verify(receiptVouchers, never()).insert(any());
-        verifyNoInteractions(companies, enterpriseStore, userDirectory);
+        verifyNoInteractions(companies, auditTrail, userDirectory);
     }
 
     @Test
     void demoModeCreatesEvidenceAndAuditFixturesOnce() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
         CompanyRepository companies = mock(CompanyRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        AuditTrailService auditTrail = mock(AuditTrailService.class);
         UserDirectory userDirectory = mock(UserDirectory.class);
         Company company = new Company();
         company.id = 9;
@@ -59,7 +59,7 @@ class ReceiptVoucherDataInitializerTest {
         List<ReceiptVoucher> inserted = new ArrayList<>();
         AtomicLong ids = new AtomicLong(100);
         when(companies.findAll()).thenReturn(List.of(company));
-        when(enterpriseStore.hasAuditLogEntityType("receipt_voucher")).thenReturn(false);
+        when(auditTrail.existsByEntityType("receipt_voucher")).thenReturn(false);
         when(userDirectory.findAll()).thenReturn(List.of(owner));
         when(receiptVouchers.findByCompany(company.id)).thenReturn(List.of());
         when(receiptVouchers.insert(any())).thenAnswer(invocation -> {
@@ -76,7 +76,7 @@ class ReceiptVoucherDataInitializerTest {
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
             companies,
-            enterpriseStore,
+            auditTrail,
             userDirectory,
             "demo"
         );
@@ -86,7 +86,7 @@ class ReceiptVoucherDataInitializerTest {
         assertEquals(8, inserted.size());
         verify(receiptVouchers).repairLegacyDefaults();
         verify(receiptVouchers, times(8)).save(any());
-        verify(enterpriseStore, times(8)).auditLog(
+        verify(auditTrail, times(8)).record(
             anyLong(),
             anyString(),
             anyLong(),

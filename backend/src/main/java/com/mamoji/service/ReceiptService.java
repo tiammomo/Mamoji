@@ -10,7 +10,7 @@ import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.ObjectStorageService.StoredObject;
 import com.mamoji.service.support.ObjectStorageService;
@@ -56,7 +56,7 @@ public class ReceiptService {
     private static final BigDecimal CRITICAL_AMOUNT = new BigDecimal("50000");
 
     private final AccessControlService accessControl;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final ReceiptVoucherRepository receiptVouchers;
     private final TransactionQueryRepository transactions;
     private final ObjectStorageService objectStorageService;
@@ -65,7 +65,7 @@ public class ReceiptService {
 
     public ReceiptService(
         AccessControlService accessControl,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         ReceiptVoucherRepository receiptVouchers,
         TransactionQueryRepository transactions,
         ObjectStorageService objectStorageService,
@@ -73,7 +73,7 @@ public class ReceiptService {
         JdbcTemplate jdbc
     ) {
         this.accessControl = accessControl;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.receiptVouchers = receiptVouchers;
         this.transactions = transactions;
         this.objectStorageService = objectStorageService;
@@ -379,7 +379,7 @@ public class ReceiptService {
         if (!accessControl.canAccessCompany(user, voucher.companyId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
-        return enterpriseStore.sortedAuditLogs(voucher.companyId, "receipt_voucher", voucher.id);
+        return auditTrail.findByEntity(voucher.companyId, "receipt_voucher", voucher.id);
     }
 
     public Map<String, Object> fileLink(String authorization, long id) {
@@ -761,7 +761,7 @@ public class ReceiptService {
     }
 
     private void logVoucher(User user, ReceiptVoucher voucher, String action, String summary) {
-        enterpriseStore.auditLog(voucher.companyId, "receipt_voucher", voucher.id, action, summary, user.id, user.nickname);
+        auditTrail.record(voucher.companyId, "receipt_voucher", voucher.id, action, summary, user.id, user.nickname);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("summary", summary);
         payload.put("voucherNo", voucher.voucherNo);

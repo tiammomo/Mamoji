@@ -5,7 +5,7 @@ import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.tenant.CompanyRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.util.Comparator;
@@ -20,20 +20,20 @@ import org.springframework.stereotype.Component;
 public class ReceiptVoucherDataInitializer {
     private final ReceiptVoucherRepository receiptVouchers;
     private final CompanyRepository companies;
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
     private final UserDirectory userDirectory;
     private final String bootstrapMode;
 
     public ReceiptVoucherDataInitializer(
         ReceiptVoucherRepository receiptVouchers,
         CompanyRepository companies,
-        EnterpriseStore enterpriseStore,
+        AuditTrailService auditTrail,
         UserDirectory userDirectory,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.receiptVouchers = receiptVouchers;
         this.companies = companies;
-        this.enterpriseStore = enterpriseStore;
+        this.auditTrail = auditTrail;
         this.userDirectory = userDirectory;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
@@ -184,12 +184,12 @@ public class ReceiptVoucherDataInitializer {
     }
 
     private void seedReceiptAuditLogs(UserDirectory.Entry owner) {
-        if (enterpriseStore.hasAuditLogEntityType("receipt_voucher")) {
+        if (auditTrail.existsByEntityType("receipt_voucher")) {
             return;
         }
         receiptVouchers.findAll().stream()
             .sorted(Comparator.comparing(voucher -> voucher.id))
-            .forEach(voucher -> enterpriseStore.auditLog(
+            .forEach(voucher -> auditTrail.record(
                 voucher.companyId,
                 "receipt_voucher",
                 voucher.id,

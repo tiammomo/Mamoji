@@ -2,20 +2,20 @@ package com.mamoji.accessmanagement.infrastructure;
 
 import com.mamoji.accessmanagement.application.AccessManagementAuditLog;
 import com.mamoji.accessmanagement.application.AdministratorActor;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.audit.application.AuditTrailService;
 import org.springframework.stereotype.Component;
 
 @Component
 public class EnterpriseAccessManagementAuditLog implements AccessManagementAuditLog {
-    private final EnterpriseStore enterpriseStore;
+    private final AuditTrailService auditTrail;
 
-    public EnterpriseAccessManagementAuditLog(EnterpriseStore enterpriseStore) {
-        this.enterpriseStore = enterpriseStore;
+    public EnterpriseAccessManagementAuditLog(AuditTrailService auditTrail) {
+        this.auditTrail = auditTrail;
     }
 
     @Override
     public void record(long targetUserId, String action, String description, AdministratorActor actor) {
-        enterpriseStore.auditLog(
+        auditTrail.record(
             0, "user", targetUserId, action, description, actor.userId(), actor.nickname()
         );
     }
