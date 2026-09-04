@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${MAMOJI_REPLICA_SMOKE_FAKE_PUBLIC_FAILURE:-no}" == "yes" ]]; then
+  exit 22
+fi
+
+if [[ " $* " == *" --write-out "* ]]; then
+  config="$(</dev/stdin)"
+  [[ "$config" == 'header = "Authorization: Bearer fake-token-that-is-long-enough-for-replica-smoke-1234567890"' ]]
+  printf '200'
+else
+  echo '{"status":"UP"}'
+fi
