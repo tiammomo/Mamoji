@@ -1,9 +1,10 @@
-package com.mamoji.controller;
+package com.mamoji.evidence.api;
 
 import com.mamoji.common.PagedResponse;
 import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.service.ReceiptService;
+import com.mamoji.evidence.application.ReceiptApplicationService;
+import com.mamoji.evidence.application.ReceiptFileDownload;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +28,9 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/receipts")
 public class ReceiptController {
-    private final ReceiptService service;
+    private final ReceiptApplicationService service;
 
-    public ReceiptController(ReceiptService service) {
+    public ReceiptController(ReceiptApplicationService service) {
         this.service = service;
     }
 
@@ -70,7 +71,7 @@ public class ReceiptController {
         @RequestHeader(value = "Authorization", required = false) String authorization,
         @PathVariable long id
     ) {
-        ReceiptService.FileDownload file = service.fileDownload(authorization, id);
+        ReceiptFileDownload file = service.fileDownload(authorization, id);
         return ResponseEntity.ok()
             .contentType(mediaType(file.contentType()))
             .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()

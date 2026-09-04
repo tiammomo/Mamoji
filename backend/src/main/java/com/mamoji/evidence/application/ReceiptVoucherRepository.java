@@ -1,0 +1,23 @@
+package com.mamoji.evidence.application;
+
+import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucherDraft;
+import java.util.List;
+import java.util.Optional;
+
+/** Persistence boundary for receipt vouchers owned by the Evidence module. */
+public interface ReceiptVoucherRepository {
+    List<ReceiptVoucher> findByCompany(long companyId);
+
+    List<ReceiptVoucher> findAll();
+
+    Optional<ReceiptVoucher> findById(long id);
+
+    Optional<ReceiptVoucher> findByIdForUpdate(long id);
+
+    long count();
+
+    ReceiptVoucher insert(ReceiptVoucherDraft draft);
+
+    void save(ReceiptVoucher voucher);
+}
