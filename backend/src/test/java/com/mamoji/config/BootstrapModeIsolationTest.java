@@ -14,7 +14,7 @@ import com.mamoji.budget.application.BudgetRepository;
 import com.mamoji.budget.domain.BudgetPolicy;
 import com.mamoji.budget.infrastructure.BudgetDataInitializer;
 import com.mamoji.evidence.infrastructure.DemoReceiptVoucherDataInitializer;
-import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
+import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.infrastructure.AccountDataInitializer;
 import com.mamoji.finance.infrastructure.DemoLedgerDataInitializer;

@@ -12,12 +12,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-class ReceiptVoucherRepositoryTest {
+class JdbcReceiptVoucherRepositoryTest {
     @Test
     void returnsDatabaseCount() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class)).thenReturn(7L);
-        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
+        JdbcReceiptVoucherRepository repository = new JdbcReceiptVoucherRepository(jdbc);
 
         assertEquals(7, repository.count());
     }
@@ -26,7 +26,7 @@ class ReceiptVoucherRepositoryTest {
     void rejectsAStaleVoucherUpdate() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(0);
-        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
+        JdbcReceiptVoucherRepository repository = new JdbcReceiptVoucherRepository(jdbc);
         ReceiptVoucher voucher = new ReceiptVoucher();
         voucher.id = 42;
         voucher.version = 3;
@@ -44,7 +44,7 @@ class ReceiptVoucherRepositoryTest {
     void advancesVersionAfterAStoredUpdate() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
-        ReceiptVoucherRepository repository = new ReceiptVoucherRepository(jdbc);
+        JdbcReceiptVoucherRepository repository = new JdbcReceiptVoucherRepository(jdbc);
         ReceiptVoucher voucher = new ReceiptVoucher();
         voucher.id = 42;
         voucher.version = 3;

@@ -1,6 +1,7 @@
 package com.mamoji.evidence.infrastructure;
 
 import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.evidence.domain.ReceiptVoucherPolicy;
 import java.math.BigDecimal;
@@ -19,13 +20,14 @@ import org.springframework.stereotype.Repository;
 
 /** Evidence-owned JDBC persistence for receipt vouchers. */
 @Repository
-public class ReceiptVoucherRepository {
+public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
     private final JdbcTemplate jdbc;
 
-    public ReceiptVoucherRepository(JdbcTemplate jdbc) {
+    public JdbcReceiptVoucherRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
     }
 
+    @Override
     public List<ReceiptVoucher> findByCompany(long companyId) {
         return jdbc.query(
             "SELECT * FROM receipt_vouchers WHERE company_id = ? ORDER BY issue_date DESC, id",
@@ -34,6 +36,7 @@ public class ReceiptVoucherRepository {
         );
     }
 
+    @Override
     public List<ReceiptVoucher> findAll() {
         return jdbc.query(
             "SELECT * FROM receipt_vouchers ORDER BY company_id, issue_date DESC, id",
@@ -41,6 +44,7 @@ public class ReceiptVoucherRepository {
         );
     }
 
+    @Override
     public Optional<ReceiptVoucher> findById(long id) {
         return jdbc.query(
             "SELECT * FROM receipt_vouchers WHERE id = ?",
@@ -49,6 +53,7 @@ public class ReceiptVoucherRepository {
         ).stream().findFirst();
     }
 
+    @Override
     public Optional<ReceiptVoucher> findByIdForUpdate(long id) {
         return jdbc.query(
             "SELECT * FROM receipt_vouchers WHERE id = ? FOR UPDATE",
@@ -57,11 +62,13 @@ public class ReceiptVoucherRepository {
         ).stream().findFirst();
     }
 
+    @Override
     public long count() {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM receipt_vouchers", Long.class);
         return count == null ? 0 : count;
     }
 
+    @Override
     public ReceiptVoucher insert(ReceiptVoucherDraft draft) {
         LocalDate today = LocalDate.now();
         ReceiptVoucher voucher = ReceiptVoucherPolicy.initialize(draft, today, OffsetDateTime.now().toString());
@@ -74,6 +81,7 @@ public class ReceiptVoucherRepository {
         return voucher;
     }
 
+    @Override
     public void save(ReceiptVoucher voucher) {
         int updated = jdbc.update("""
             UPDATE receipt_vouchers SET company_id = ?, transaction_id = ?, voucher_no = ?, title = ?, voucher_type = ?,

@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mamoji.approval.application.ApprovalApplicationService;
 import com.mamoji.approval.application.ApprovalEntityGateway;
 import com.mamoji.approval.application.ApprovalRepository;
+import com.mamoji.approval.infrastructure.JdbcApprovalEntityGateway;
 import com.mamoji.approval.infrastructure.JdbcApprovalRepository;
+import com.mamoji.evidence.application.ReceiptApprovalStatusService;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -33,5 +35,16 @@ class ApprovalModuleBoundaryTest {
         assertFalse(dependencyTypes.contains("com.mamoji.evidence.infrastructure.ReceiptVoucherRepository"));
         assertEquals("com.mamoji.approval.application", ApprovalRepository.class.getPackageName());
         assertEquals("com.mamoji.approval.infrastructure", JdbcApprovalRepository.class.getPackageName());
+    }
+
+    @Test
+    void approvalAdapterUsesTheNarrowReceiptStatusContract() {
+        Set<String> dependencyTypes = Arrays.stream(JdbcApprovalEntityGateway.class.getDeclaredFields())
+            .map(field -> field.getType().getName())
+            .collect(Collectors.toSet());
+
+        assertTrue(dependencyTypes.contains(ReceiptApprovalStatusService.class.getName()));
+        assertFalse(dependencyTypes.contains("com.mamoji.evidence.application.ReceiptApplicationService"));
+        assertFalse(dependencyTypes.contains("com.mamoji.service.ReceiptService"));
     }
 }
