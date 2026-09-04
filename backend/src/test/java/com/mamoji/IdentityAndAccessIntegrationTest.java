@@ -369,6 +369,25 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
                 created_at, updated_at
             ) VALUES (?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """, scheduledJobName);
+        Map<String, Object> receipt = jdbc.queryForMap("""
+            SELECT id, company_id FROM receipt_vouchers ORDER BY id LIMIT 1
+            """);
+        String attachmentDigest = sha256(
+            ("backup-receipt-" + UUID.randomUUID()).getBytes(StandardCharsets.UTF_8)
+        );
+        OffsetDateTime attachmentCreatedAt = OffsetDateTime.parse("2026-09-05T08:30:00Z");
+        jdbc.update("""
+            INSERT INTO receipt_file_hashes (
+                company_id, voucher_id, sha256, file_name, file_size, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ((Number) receipt.get("company_id")).longValue(),
+            ((Number) receipt.get("id")).longValue(),
+            attachmentDigest,
+            "backup-receipt.pdf",
+            512L,
+            attachmentCreatedAt
+        );
 
         ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
         Map<String, Object> payload = exported.getBody();
@@ -412,6 +431,17 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "SELECT COUNT(*) FROM scheduled_job_leases WHERE job_name = ?",
             Integer.class,
             scheduledJobName
+        ));
+        Map<String, Object> restoredAttachment = jdbc.queryForMap("""
+            SELECT file_name, file_size
+            FROM receipt_file_hashes WHERE sha256 = ?
+            """, attachmentDigest);
+        assertEquals("backup-receipt.pdf", restoredAttachment.get("file_name"));
+        assertEquals(512L, ((Number) restoredAttachment.get("file_size")).longValue());
+        assertEquals(attachmentCreatedAt, jdbc.queryForObject(
+            "SELECT created_at FROM receipt_file_hashes WHERE sha256 = ?",
+            OffsetDateTime.class,
+            attachmentDigest
         ));
     }
 
@@ -815,7 +845,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("31", jdbc.queryForObject("""
+        assertEquals("32", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(Set.of("created_at", "updated_at"), Set.copyOf(jdbc.queryForList("""

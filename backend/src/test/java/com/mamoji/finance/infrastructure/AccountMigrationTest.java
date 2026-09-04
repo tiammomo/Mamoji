@@ -80,7 +80,7 @@ class AccountMigrationTest {
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("31", version.getString("version"));
+                assertEquals("32", version.getString("version"));
             }
             try (ResultSet constraints = statement.executeQuery("""
                 SELECT conname

@@ -10,6 +10,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Component
 public class ReceiptFileValidator {
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
+    private static final int MAX_FILE_NAME_CHARACTERS = 255;
     private static final int HEADER_SIZE = 16;
 
     public ValidatedReceiptFile validate(MultipartFile file) {
@@ -19,7 +20,13 @@ public class ReceiptFileValidator {
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new InvalidReceiptFileException("Receipt file must not exceed 10 MB");
         }
-        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().strip();
+        String filename = baseName(file.getOriginalFilename());
+        if (filename.codePointCount(0, filename.length()) > MAX_FILE_NAME_CHARACTERS) {
+            throw new InvalidReceiptFileException("Receipt file name must not exceed 255 characters");
+        }
+        if (filename.codePoints().anyMatch(Character::isISOControl)) {
+            throw new InvalidReceiptFileException("Receipt file name must not contain control characters");
+        }
         String extension = extensionOf(filename);
         if (extension.isBlank()) {
             throw new InvalidReceiptFileException("Receipt file must have an allowed extension");
@@ -100,6 +107,12 @@ public class ReceiptFileValidator {
             return "";
         }
         return filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private String baseName(String originalFilename) {
+        String value = originalFilename == null ? "" : originalFilename.strip();
+        int separator = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+        return value.substring(separator + 1).strip();
     }
 
     private String normalizeContentType(String value) {
