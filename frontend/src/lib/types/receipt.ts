@@ -84,12 +84,12 @@ export interface ReceiptSummary {
 export interface ReceiptQuery {
   companyId?: number;
   keyword?: string;
-  voucherType?: string;
-  direction?: string;
-  status?: string;
-  invoiceCheckStatus?: string;
-  deductionStatus?: string;
-  reimbursementStatus?: string;
+  voucherType?: ReceiptVoucherType | "";
+  direction?: ReceiptDirection | "";
+  status?: ReceiptStatus | "";
+  invoiceCheckStatus?: InvoiceCheckStatus | "";
+  deductionStatus?: DeductionStatus | "";
+  reimbursementStatus?: ReimbursementStatus | "";
   taxPeriod?: string;
   linkState?: "linked" | "missing" | "";
   startDate?: string;

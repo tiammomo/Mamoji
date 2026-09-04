@@ -28,3 +28,5 @@
 - 既有并发测试继续验证相同文件只有一个请求成功，另一个稳定返回冲突。
 - 模块边界测试禁止上传/批量上传应用入口退回 Map，并固定 DTO→命令及 typed result 类型。
 - 本次不修改数据库结构；回退代码提交即可，无需迁移数据或调整客户端。
+
+后续列表查询校验、数据库分页和 typed 汇总见 [ADR 0015](0015-type-receipt-queries-and-database-aggregation.md)。

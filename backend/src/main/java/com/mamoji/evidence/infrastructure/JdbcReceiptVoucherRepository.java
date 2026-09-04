@@ -1,6 +1,10 @@
 package com.mamoji.evidence.infrastructure;
 
+import com.mamoji.common.PageRequest;
+import com.mamoji.common.PagedResponse;
+import com.mamoji.evidence.application.ReceiptListQuery;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
+import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.evidence.domain.ReceiptVoucherPolicy;
 import com.mamoji.evidence.domain.ReceiptVoucher;
@@ -10,7 +14,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,6 +31,105 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
 
     public JdbcReceiptVoucherRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    @Override
+    public PagedResponse<ReceiptVoucher> findPage(
+        long companyId,
+        ReceiptListQuery filters
+    ) {
+        PageRequest pageRequest = filters.pageRequest();
+        SqlReceiptQuery query = receiptQuery(companyId, filters);
+        Long total = jdbc.queryForObject(
+            "SELECT COUNT(*) " + query.fromAndWhere(),
+            Long.class,
+            query.arguments().toArray()
+        );
+        List<Object> pageArguments = new ArrayList<>(query.arguments());
+        pageArguments.add(pageRequest.size());
+        pageArguments.add((long) pageRequest.page() * pageRequest.size());
+        List<ReceiptVoucher> content = jdbc.query(
+            "SELECT * " + query.fromAndWhere() + " ORDER BY issue_date DESC, id LIMIT ? OFFSET ?",
+            (rs, rowNum) -> mapReceiptVoucher(rs),
+            pageArguments.toArray()
+        );
+        long totalElements = total == null ? 0 : total;
+        int totalPages = (int) Math.ceil((double) totalElements / pageRequest.size());
+        return new PagedResponse<>(content, totalElements, totalPages, pageRequest.size(), pageRequest.page());
+    }
+
+    @Override
+    public ReceiptSummary summarize(long companyId) {
+        return jdbc.queryForObject("""
+            WITH normalized AS (
+                SELECT voucher_type, status, transaction_id, file_name, risk_level,
+                       invoice_check_status, deduction_status, reimbursement_status,
+                       approval_status, accounting_status, tax_period,
+                       COALESCE(NULLIF(BTRIM(amount), ''), '0')::NUMERIC AS amount_value,
+                       COALESCE(NULLIF(BTRIM(tax_amount), ''), '0')::NUMERIC AS tax_amount_value
+                FROM receipt_vouchers
+                WHERE company_id = ?
+            )
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM(amount_value), 0) AS total_amount,
+                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
+                    AS sales_invoice_amount,
+                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
+                    AS purchase_invoice_amount,
+                COALESCE(SUM(tax_amount_value) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
+                    AS output_tax_amount,
+                COALESCE(SUM(tax_amount_value) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
+                    AS deductible_tax_amount,
+                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'reimbursement'), 0)
+                    AS reimbursement_amount,
+                COALESCE(SUM(amount_value) FILTER (
+                    WHERE voucher_type = 'reimbursement'
+                      AND reimbursement_status NOT IN ('paid', 'archived')
+                ), 0) AS reimbursement_pending_amount,
+                COALESCE(SUM(amount_value) FILTER (WHERE status = 'pending_review'), 0) AS pending_amount,
+                COUNT(*) FILTER (WHERE status = 'pending_review') AS pending_review_count,
+                COUNT(*) FILTER (WHERE file_name IS NULL OR BTRIM(file_name) = '') AS missing_attachment_count,
+                COUNT(*) FILTER (WHERE transaction_id IS NULL) AS missing_transaction_count,
+                COUNT(*) FILTER (WHERE risk_level IN ('high', 'critical')) AS high_risk_count,
+                COUNT(*) FILTER (WHERE invoice_check_status NOT IN ('not_required', 'verified'))
+                    AS unchecked_invoice_count,
+                COUNT(*) FILTER (WHERE deduction_status IN ('pending', 'deductible')) AS pending_deduction_count,
+                COUNT(*) FILTER (
+                    WHERE voucher_type = 'reimbursement'
+                      AND reimbursement_status NOT IN ('paid', 'archived')
+                ) AS pending_reimbursement_count,
+                COUNT(*) FILTER (
+                    WHERE (tax_period IS NULL OR BTRIM(tax_period) = '')
+                      AND voucher_type IN ('sales_invoice', 'purchase_invoice', 'tax_receipt')
+                ) AS missing_tax_period_count,
+                COUNT(*) FILTER (WHERE approval_status = 'pending') AS pending_approval_count,
+                COUNT(*) FILTER (WHERE accounting_status IN ('not_started', 'draft'))
+                    AS pending_accounting_count,
+                COUNT(*) FILTER (WHERE accounting_status = 'posted') AS posted_accounting_count
+            FROM normalized
+            """, (rs, rowNum) -> new ReceiptSummary(
+            rs.getLong("total_count"),
+            rs.getBigDecimal("total_amount"),
+            rs.getBigDecimal("sales_invoice_amount"),
+            rs.getBigDecimal("purchase_invoice_amount"),
+            rs.getBigDecimal("output_tax_amount"),
+            rs.getBigDecimal("deductible_tax_amount"),
+            rs.getBigDecimal("reimbursement_amount"),
+            rs.getBigDecimal("reimbursement_pending_amount"),
+            rs.getBigDecimal("pending_amount"),
+            rs.getLong("pending_review_count"),
+            rs.getLong("missing_attachment_count"),
+            rs.getLong("missing_transaction_count"),
+            rs.getLong("high_risk_count"),
+            rs.getLong("unchecked_invoice_count"),
+            rs.getLong("pending_deduction_count"),
+            rs.getLong("pending_reimbursement_count"),
+            rs.getLong("missing_tax_period_count"),
+            rs.getLong("pending_approval_count"),
+            rs.getLong("pending_accounting_count"),
+            rs.getLong("posted_accounting_count")
+        ), companyId);
     }
 
     @Override
@@ -182,6 +287,65 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         return voucher;
     }
 
+    private SqlReceiptQuery receiptQuery(long companyId, ReceiptListQuery filters) {
+        StringBuilder fromAndWhere = new StringBuilder("FROM receipt_vouchers WHERE company_id = ?");
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(companyId);
+        addCondition(fromAndWhere, arguments, "voucher_type = ?", filters.voucherType());
+        addCondition(fromAndWhere, arguments, "direction = ?", filters.direction());
+        addCondition(fromAndWhere, arguments, "status = ?", filters.status());
+        addCondition(fromAndWhere, arguments, "invoice_check_status = ?", filters.invoiceCheckStatus());
+        addCondition(fromAndWhere, arguments, "deduction_status = ?", filters.deductionStatus());
+        addCondition(fromAndWhere, arguments, "reimbursement_status = ?", filters.reimbursementStatus());
+        addCondition(fromAndWhere, arguments, "tax_period = ?", filters.taxPeriod());
+        addCondition(
+            fromAndWhere,
+            arguments,
+            "issue_date >= ?",
+            filters.startDate() == null ? null : filters.startDate().toString()
+        );
+        addCondition(
+            fromAndWhere,
+            arguments,
+            "issue_date <= ?",
+            filters.endDate() == null ? null : filters.endDate().toString()
+        );
+        addCondition(fromAndWhere, arguments, "BTRIM(amount)::NUMERIC >= ?", filters.minAmount());
+        addCondition(fromAndWhere, arguments, "BTRIM(amount)::NUMERIC <= ?", filters.maxAmount());
+        if ("missing".equals(filters.linkState())) {
+            fromAndWhere.append(" AND transaction_id IS NULL");
+        } else if ("linked".equals(filters.linkState())) {
+            fromAndWhere.append(" AND transaction_id IS NOT NULL");
+        }
+        if (!filters.keyword().isBlank()) {
+            fromAndWhere.append(" AND (LOWER(COALESCE(title, '')) LIKE ? ESCAPE '!'"
+                + " OR LOWER(COALESCE(voucher_no, '')) LIKE ? ESCAPE '!'"
+                + " OR LOWER(COALESCE(counterparty, '')) LIKE ? ESCAPE '!'"
+                + " OR LOWER(COALESCE(note, '')) LIKE ? ESCAPE '!')");
+            String pattern = "%" + escapeLike(filters.keyword().toLowerCase(Locale.ROOT)) + "%";
+            arguments.add(pattern);
+            arguments.add(pattern);
+            arguments.add(pattern);
+            arguments.add(pattern);
+        }
+        return new SqlReceiptQuery(fromAndWhere.toString(), List.copyOf(arguments));
+    }
+
+    private static void addCondition(
+        StringBuilder sql,
+        List<Object> arguments,
+        String condition,
+        Object value
+    ) {
+        if (value == null) return;
+        sql.append(" AND ").append(condition);
+        arguments.add(value);
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
+
     private static void bindReceiptVoucher(PreparedStatement ps, ReceiptVoucher voucher) throws SQLException {
         ps.setLong(1, voucher.companyId);
         setLongOrNull(ps, 2, voucher.transactionId);
@@ -246,5 +410,8 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private record SqlReceiptQuery(String fromAndWhere, List<Object> arguments) {
     }
 }
