@@ -121,7 +121,7 @@ Actor（登录人员） + Company（当前公司） + Role（角色）
 - 工作台已改为后端聚合读模型，前端不再并发拼装大量接口。
 - 人力成本已拆为独立后端聚合读模型，优先使用薪酬月结快照，无批次时明确标记为员工档案估算。
 - 审批用例已从旧横向 Service 迁入 `approval.application`，请求、动作、分页汇总与事务锁统一经 `ApprovalRepository` 持久化；多态业务对象通过 `ApprovalEntityGateway` 校验公司归属，不存在或跨公司的引用会在创建审批前被拒绝。
-- 票据入口与用例已迁入 `evidence.api/application`，票据及文件哈希分别由应用层仓储端口和 JDBC 适配器承接；同公司相同文件的并发上传通过 PostgreSQL 事务锁串行去重，审批模块只调用窄化的票据状态同步契约。
+- 票据入口与用例已迁入 `evidence.api/application`，票据及文件哈希分别由应用层仓储端口和 JDBC 适配器承接；同公司相同文件的并发上传通过 PostgreSQL 事务锁串行去重，审批模块只调用窄化的票据状态同步契约，流水关联只读取不可变的流水/公司/所有者身份投影。
 - 公司主体、主体划转、资金账户、账本及成员、流水、分类、预算、周期事项、税务事项、部门、员工与任职事件已移除旧 Store 中的 Map 和双写，以 PostgreSQL 专属仓储为唯一事实源；流水由 V17、账户由 V18、账本及成员由 V19、分类由 V20、税务事项由 V21、部门由 V22、员工由 V23、任职事件由 V24、公司主体由 V25、主体划转由 V26 的类型、租户和流程约束保护。`EnterpriseStore` 与 `InMemoryStore` 均已删除；审计归 `AuditTrailService`，demo 身份归 `InitialAdminDataInitializer`，生产首次管理员与企业数据统一归 `ProductionBootstrapCommand`。
 - 生产启动期全表兼容修复已经删除，票据派生默认值由 V27 一次性回填，历史公司工作区由 V28 一次性补齐；新公司在业务事务内创建成员、账本和分类，账本/分类扫描仅保留在 demo 条件 Bean。V29 已为外部 Webhook 投递增加唯一租约 fencing 与稳定幂等键，V30 已用 PostgreSQL 持久化租约协调通知提醒，V31 已硬化票据 typed schema、租户关系和生命周期约束，V32 已类型化并固化附件摘要、规范文件名、大小和创建时间。生产 bootstrap 已改为事务锁保护的原子命令并删除生命周期级单实例 guard，部署可通过 `MAMOJI_BACKEND_REPLICAS` 启用多个后端副本，默认仍为 1。
 

@@ -7,8 +7,8 @@ import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.operations.application.TransactionQueryRepository;
-import com.mamoji.operations.domain.TransactionRecord;
+import com.mamoji.operations.application.TransactionLinkQuery;
+import com.mamoji.operations.application.TransactionLinkTarget;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.service.OutboxEventService;
@@ -26,7 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
@@ -51,7 +50,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     private final AuditTrailService auditTrail;
     private final ReceiptVoucherRepository receiptVouchers;
     private final ReceiptFileHashRepository receiptFileHashes;
-    private final TransactionQueryRepository transactions;
+    private final TransactionLinkQuery transactionLinks;
     private final ObjectStorageService objectStorageService;
     private final OutboxEventService outboxEventService;
 
@@ -60,7 +59,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         AuditTrailService auditTrail,
         ReceiptVoucherRepository receiptVouchers,
         ReceiptFileHashRepository receiptFileHashes,
-        TransactionQueryRepository transactions,
+        TransactionLinkQuery transactionLinks,
         ObjectStorageService objectStorageService,
         OutboxEventService outboxEventService
     ) {
@@ -68,7 +67,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         this.auditTrail = auditTrail;
         this.receiptVouchers = receiptVouchers;
         this.receiptFileHashes = receiptFileHashes;
-        this.transactions = transactions;
+        this.transactionLinks = transactionLinks;
         this.objectStorageService = objectStorageService;
         this.outboxEventService = outboxEventService;
     }
@@ -100,7 +99,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         validateVoucherBoundaries(amount, taxAmount, issueDate, request.dueDate());
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
-            validateTransaction(user, request.transactionId(), company.id).map(tx -> tx.id).orElse(null),
+            validateTransactionLink(user, request.transactionId(), company.id),
             valueOr(request.voucherNo(), nextVoucherNo()),
             valueOr(request.title(), "新票据凭证"),
             voucherType,
@@ -199,7 +198,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         }
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
-            validateTransaction(user, request.transactionId(), company.id).map(tx -> tx.id).orElse(null),
+            validateTransactionLink(user, request.transactionId(), company.id),
             valueOr(request.voucherNo(), nextVoucherNo()),
             valueOr(request.title(), filename),
             voucherType,
@@ -402,11 +401,11 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
 
     private void applyUpdateFields(User user, ReceiptVoucher voucher, ReceiptUpdateCommand request) {
         if (request.transactionIdPresent()) {
-            voucher.transactionId = validateTransaction(
+            voucher.transactionId = validateTransactionLink(
                 user,
                 request.transactionId(),
                 voucher.companyId
-            ).map(tx -> tx.id).orElse(null);
+            );
         }
         if (request.voucherNo() != null) {
             voucher.voucherNo = request.voucherNo();
@@ -521,15 +520,18 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         voucher.accountingStatus = nextAccountingStatus;
     }
 
-    private Optional<TransactionRecord> validateTransaction(User user, Long transactionId, long companyId) {
+    private Long validateTransactionLink(User user, Long transactionId, long companyId) {
         if (transactionId == null || transactionId == 0) {
-            return Optional.empty();
+            return null;
         }
-        TransactionRecord transaction = require(transactions.findById(transactionId).orElse(null), "Transaction not found");
-        if (transaction.userId != user.id || !Objects.equals(transaction.companyId, companyId)) {
+        TransactionLinkTarget transaction = require(
+            transactionLinks.findById(transactionId).orElse(null),
+            "Transaction not found"
+        );
+        if (transaction.ownerUserId() != user.id || transaction.companyId() != companyId) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden transaction");
         }
-        return Optional.of(transaction);
+        return transaction.transactionId();
     }
 
     private String riskFor(ReceiptVoucher voucher) {
