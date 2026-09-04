@@ -62,7 +62,7 @@ class TaxItemMigrationTest {
                 assertEquals("timestamp with time zone", result.getString("created_type"));
                 assertFalse(result.next());
             }
-            assertEquals("30", latestVersion(statement));
+            assertEquals("31", latestVersion(statement));
             assertEquals(Set.of(
                 "uq_tax_items_company_type_period",
                 "fk_tax_items_company",

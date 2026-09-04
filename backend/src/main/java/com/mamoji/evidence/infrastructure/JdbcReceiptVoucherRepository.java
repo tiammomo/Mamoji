@@ -8,10 +8,10 @@ import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.evidence.domain.ReceiptVoucherPolicy;
 import com.mamoji.evidence.domain.ReceiptVoucher;
-import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -61,33 +61,24 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
     @Override
     public ReceiptSummary summarize(long companyId) {
         return jdbc.queryForObject("""
-            WITH normalized AS (
-                SELECT voucher_type, status, transaction_id, file_name, risk_level,
-                       invoice_check_status, deduction_status, reimbursement_status,
-                       approval_status, accounting_status, tax_period,
-                       COALESCE(NULLIF(BTRIM(amount), ''), '0')::NUMERIC AS amount_value,
-                       COALESCE(NULLIF(BTRIM(tax_amount), ''), '0')::NUMERIC AS tax_amount_value
-                FROM receipt_vouchers
-                WHERE company_id = ?
-            )
             SELECT
                 COUNT(*) AS total_count,
-                COALESCE(SUM(amount_value), 0) AS total_amount,
-                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
+                COALESCE(SUM(amount), 0) AS total_amount,
+                COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
                     AS sales_invoice_amount,
-                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
+                COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
                     AS purchase_invoice_amount,
-                COALESCE(SUM(tax_amount_value) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
+                COALESCE(SUM(tax_amount) FILTER (WHERE voucher_type = 'sales_invoice'), 0)
                     AS output_tax_amount,
-                COALESCE(SUM(tax_amount_value) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
+                COALESCE(SUM(tax_amount) FILTER (WHERE voucher_type = 'purchase_invoice'), 0)
                     AS deductible_tax_amount,
-                COALESCE(SUM(amount_value) FILTER (WHERE voucher_type = 'reimbursement'), 0)
+                COALESCE(SUM(amount) FILTER (WHERE voucher_type = 'reimbursement'), 0)
                     AS reimbursement_amount,
-                COALESCE(SUM(amount_value) FILTER (
+                COALESCE(SUM(amount) FILTER (
                     WHERE voucher_type = 'reimbursement'
                       AND reimbursement_status NOT IN ('paid', 'archived')
                 ), 0) AS reimbursement_pending_amount,
-                COALESCE(SUM(amount_value) FILTER (WHERE status = 'pending_review'), 0) AS pending_amount,
+                COALESCE(SUM(amount) FILTER (WHERE status = 'pending_review'), 0) AS pending_amount,
                 COUNT(*) FILTER (WHERE status = 'pending_review') AS pending_review_count,
                 COUNT(*) FILTER (WHERE file_name IS NULL OR BTRIM(file_name) = '') AS missing_attachment_count,
                 COUNT(*) FILTER (WHERE transaction_id IS NULL) AS missing_transaction_count,
@@ -107,7 +98,8 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
                 COUNT(*) FILTER (WHERE accounting_status IN ('not_started', 'draft'))
                     AS pending_accounting_count,
                 COUNT(*) FILTER (WHERE accounting_status = 'posted') AS posted_accounting_count
-            FROM normalized
+            FROM receipt_vouchers
+            WHERE company_id = ?
             """, (rs, rowNum) -> new ReceiptSummary(
             rs.getLong("total_count"),
             rs.getBigDecimal("total_amount"),
@@ -199,14 +191,15 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
                 version = version + 1
             WHERE id = ? AND version = ?
             """, voucher.companyId, voucher.transactionId, voucher.voucherNo, voucher.title, voucher.voucherType,
-            voucher.direction, voucher.counterparty, moneyText(voucher.amount), moneyText(voucher.taxAmount),
-            moneyText(voucher.taxRate), voucher.taxPeriod, voucher.invoiceCheckStatus, voucher.deductionStatus,
+            voucher.direction, voucher.counterparty, voucher.amount, voucher.taxAmount,
+            voucher.taxRate, voucher.taxPeriod, voucher.invoiceCheckStatus, voucher.deductionStatus,
             voucher.reimbursementStatus, voucher.approvalStatus, voucher.accountingStatus, voucher.accountingVoucherNo,
-            voucher.accountingEntry, voucher.approvedByUserId, voucher.approvedAt, voucher.accountedAt,
-            voucher.businessPurpose, voucher.expenseOwner, voucher.issueDate, voucher.dueDate, voucher.status,
+            voucher.accountingEntry, voucher.approvedByUserId, timestamp(voucher.approvedAt),
+            timestamp(voucher.accountedAt), voucher.businessPurpose, voucher.expenseOwner, date(voucher.issueDate),
+            date(voucher.dueDate), voucher.status,
             voucher.fileName, voucher.fileSize, voucher.fileType, voucher.fileStorageProvider, voucher.fileBucket,
             voucher.fileObjectKey, voucher.fileUrl, voucher.riskLevel, voucher.note, voucher.operatorUserId,
-            voucher.updatedAt, voucher.id, voucher.version);
+            timestamp(voucher.updatedAt), voucher.id, voucher.version);
         if (updated != 1) {
             throw new OptimisticLockingFailureException("Receipt voucher was changed by another request: " + voucher.id);
         }
@@ -253,9 +246,9 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         voucher.voucherType = rs.getString("voucher_type");
         voucher.direction = rs.getString("direction");
         voucher.counterparty = rs.getString("counterparty");
-        voucher.amount = money(rs.getString("amount"));
-        voucher.taxAmount = money(rs.getString("tax_amount"));
-        voucher.taxRate = money(rs.getString("tax_rate"));
+        voucher.amount = rs.getBigDecimal("amount");
+        voucher.taxAmount = rs.getBigDecimal("tax_amount");
+        voucher.taxRate = rs.getBigDecimal("tax_rate");
         voucher.taxPeriod = rs.getString("tax_period");
         voucher.invoiceCheckStatus = rs.getString("invoice_check_status");
         voucher.deductionStatus = rs.getString("deduction_status");
@@ -265,12 +258,12 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         voucher.accountingVoucherNo = rs.getString("accounting_voucher_no");
         voucher.accountingEntry = rs.getString("accounting_entry");
         voucher.approvedByUserId = nullableLong(rs, "approved_by_user_id");
-        voucher.approvedAt = rs.getString("approved_at");
-        voucher.accountedAt = rs.getString("accounted_at");
+        voucher.approvedAt = timestampText(rs, "approved_at");
+        voucher.accountedAt = timestampText(rs, "accounted_at");
         voucher.businessPurpose = rs.getString("business_purpose");
         voucher.expenseOwner = rs.getString("expense_owner");
-        voucher.issueDate = rs.getString("issue_date");
-        voucher.dueDate = rs.getString("due_date");
+        voucher.issueDate = dateText(rs, "issue_date");
+        voucher.dueDate = dateText(rs, "due_date");
         voucher.status = rs.getString("status");
         voucher.fileName = rs.getString("file_name");
         voucher.fileSize = rs.getLong("file_size");
@@ -282,8 +275,8 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         voucher.riskLevel = rs.getString("risk_level");
         voucher.note = rs.getString("note");
         voucher.operatorUserId = rs.getLong("operator_user_id");
-        voucher.createdAt = rs.getString("created_at");
-        voucher.updatedAt = rs.getString("updated_at");
+        voucher.createdAt = timestampText(rs, "created_at");
+        voucher.updatedAt = timestampText(rs, "updated_at");
         return voucher;
     }
 
@@ -302,16 +295,16 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
             fromAndWhere,
             arguments,
             "issue_date >= ?",
-            filters.startDate() == null ? null : filters.startDate().toString()
+            filters.startDate()
         );
         addCondition(
             fromAndWhere,
             arguments,
             "issue_date <= ?",
-            filters.endDate() == null ? null : filters.endDate().toString()
+            filters.endDate()
         );
-        addCondition(fromAndWhere, arguments, "BTRIM(amount)::NUMERIC >= ?", filters.minAmount());
-        addCondition(fromAndWhere, arguments, "BTRIM(amount)::NUMERIC <= ?", filters.maxAmount());
+        addCondition(fromAndWhere, arguments, "amount >= ?", filters.minAmount());
+        addCondition(fromAndWhere, arguments, "amount <= ?", filters.maxAmount());
         if ("missing".equals(filters.linkState())) {
             fromAndWhere.append(" AND transaction_id IS NULL");
         } else if ("linked".equals(filters.linkState())) {
@@ -354,9 +347,9 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         ps.setString(5, voucher.voucherType);
         ps.setString(6, voucher.direction);
         ps.setString(7, voucher.counterparty);
-        ps.setString(8, moneyText(voucher.amount));
-        ps.setString(9, moneyText(voucher.taxAmount));
-        ps.setString(10, moneyText(voucher.taxRate));
+        ps.setBigDecimal(8, voucher.amount);
+        ps.setBigDecimal(9, voucher.taxAmount);
+        ps.setBigDecimal(10, voucher.taxRate);
         ps.setString(11, voucher.taxPeriod);
         ps.setString(12, voucher.invoiceCheckStatus);
         ps.setString(13, voucher.deductionStatus);
@@ -366,12 +359,12 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         ps.setString(17, voucher.accountingVoucherNo);
         ps.setString(18, voucher.accountingEntry);
         setLongOrNull(ps, 19, voucher.approvedByUserId);
-        ps.setString(20, voucher.approvedAt);
-        ps.setString(21, voucher.accountedAt);
+        setTimestampOrNull(ps, 20, voucher.approvedAt);
+        setTimestampOrNull(ps, 21, voucher.accountedAt);
         ps.setString(22, voucher.businessPurpose);
         ps.setString(23, voucher.expenseOwner);
-        ps.setString(24, voucher.issueDate);
-        ps.setString(25, voucher.dueDate);
+        setDateOrNull(ps, 24, voucher.issueDate);
+        setDateOrNull(ps, 25, voucher.dueDate);
         ps.setString(26, voucher.status);
         ps.setString(27, voucher.fileName);
         ps.setLong(28, voucher.fileSize);
@@ -383,8 +376,8 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
         ps.setString(34, voucher.riskLevel);
         ps.setString(35, voucher.note);
         ps.setLong(36, voucher.operatorUserId);
-        ps.setString(37, voucher.createdAt);
-        ps.setString(38, voucher.updatedAt);
+        setTimestampOrNull(ps, 37, voucher.createdAt);
+        setTimestampOrNull(ps, 38, voucher.updatedAt);
     }
 
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
@@ -394,18 +387,46 @@ public class JdbcReceiptVoucherRepository implements ReceiptVoucherRepository {
 
     private static void setLongOrNull(PreparedStatement ps, int index, Long value) throws SQLException {
         if (value == null) {
-            ps.setObject(index, null);
+            ps.setNull(index, Types.BIGINT);
         } else {
             ps.setLong(index, value);
         }
     }
 
-    private static BigDecimal money(String value) {
-        return isBlank(value) ? BigDecimal.ZERO : new BigDecimal(value);
+    private static void setDateOrNull(PreparedStatement ps, int index, String value) throws SQLException {
+        LocalDate date = date(value);
+        if (date == null) {
+            ps.setNull(index, Types.DATE);
+        } else {
+            ps.setObject(index, date);
+        }
     }
 
-    private static String moneyText(BigDecimal value) {
-        return (value == null ? BigDecimal.ZERO : value).stripTrailingZeros().toPlainString();
+    private static void setTimestampOrNull(PreparedStatement ps, int index, String value) throws SQLException {
+        OffsetDateTime timestamp = timestamp(value);
+        if (timestamp == null) {
+            ps.setNull(index, Types.TIMESTAMP_WITH_TIMEZONE);
+        } else {
+            ps.setObject(index, timestamp);
+        }
+    }
+
+    private static LocalDate date(String value) {
+        return isBlank(value) ? null : LocalDate.parse(value);
+    }
+
+    private static OffsetDateTime timestamp(String value) {
+        return isBlank(value) ? null : OffsetDateTime.parse(value);
+    }
+
+    private static String dateText(ResultSet rs, String column) throws SQLException {
+        LocalDate value = rs.getObject(column, LocalDate.class);
+        return value == null ? null : value.toString();
+    }
+
+    private static String timestampText(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toString();
     }
 
     private static boolean isBlank(String value) {

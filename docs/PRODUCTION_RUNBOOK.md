@@ -50,6 +50,8 @@ V29 为 `notification_deliveries` 增加 Webhook 消费租约令牌。每次认�
 
 V30 创建 `scheduled_job_leases`。通知提醒先使用 PostgreSQL 时钟原子认领 `notification-reminders`，完成后才推进下一运行时间；实例崩溃后由租约超时允许其他实例接管，陈旧 token 不能写完成或失败状态。该表属于运行协调状态，不进入应用结构化备份，并在结构化恢复时清空。
 
+V31 会先预检票据及文件哈希的租户引用、金额/税率、日期、枚举、长度和生命周期组合，再把票据金额与税率改为 `NUMERIC`、业务日期改为 `DATE`、生命周期时间改为 `TIMESTAMPTZ`，并增加公司复合外键、检查约束、不可变触发器和公司前缀查询索引。存在非法历史行时整个迁移回滚并保持 V30；应按异常信息修复源数据后在备份副本重新演练。该迁移会锁定并重写票据表，且旧应用的字符串 JDBC 写法不兼容新 schema，因此必须安排维护窗口并使用默认一致性备份，不得设置 `SKIP_BACKUP=true`。
+
 生产 bootstrap 不新增 schema。`ProductionBootstrapCommand` 在一个数据库事务内取得固定 transaction advisory lock，并在持锁后重新检查公司是否存在；首次管理员和完整公司工作区要么一起提交，要么一起回滚。原生命周期级单实例连接锁和 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED` 已删除。
 
 ```bash
@@ -116,7 +118,7 @@ MAMOJI_REPLICA_SMOKE_ALLOW_RESTART=yes scripts/replica-smoke.sh
 1. 拉取代码并确认变更清单。
 2. 执行 `mvn --settings docker/maven-settings.xml -f backend/pom.xml test`。
 3. 执行 `cd frontend && npm audit --omit=dev --registry=https://registry.npmjs.org && npm run lint && npm run build`。
-4. 执行 `scripts/deploy-prod.sh`。脚本会先备份，再重建服务，最后自动冒烟。
+4. 执行 `scripts/deploy-prod.sh`。脚本会先完成镜像构建，再进入一致性备份窗口；成功备份后旧入口、前端和后端保持停止，直到新服务启动，最后自动冒烟。
 5. 多副本部署确认 `scripts/replica-smoke.sh` 自动验收通过；首次扩容在预生产显式执行一次允许重启的故障切换演练。
 6. 人工抽查登录、员工列表、薪酬页、薪酬月结生成/锁定、税务合规、票据上传/下载和审计日志查询。
 
@@ -248,9 +250,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec postgr
 
 1. 保留上一个可用镜像 tag 或代码 tag。
 2. 先备份当前现场。
-3. 切回上一版本代码或镜像。
-4. 执行 `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`。
-5. 如果涉及破坏性 schema 变更，使用最近一次备份恢复。
+3. 如果 schema 仍与上一版本兼容，切回上一版本代码或镜像并执行 `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`。
+4. 如果涉及 V31 等破坏性 schema 变更，保持应用停止，先使用发布前一致性备份恢复 PostgreSQL 与 MinIO，再启动上一版本；不要让旧镜像直接访问新 schema。
 
 ## 审计
 

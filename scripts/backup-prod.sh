@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.prod.yml}"
 BACKUP_ROOT="${BACKUP_ROOT:-$ROOT_DIR/backups}"
+KEEP_APPLICATION_STOPPED="${MAMOJI_BACKUP_KEEP_APPLICATION_STOPPED:-false}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$BACKUP_ROOT/$STAMP"
 
@@ -21,6 +22,10 @@ set +a
 WAIT_TIMEOUT_SECONDS="${MAMOJI_SERVICE_WAIT_TIMEOUT_SECONDS:-180}"
 if ! [[ "$WAIT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MAMOJI_SERVICE_WAIT_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 1
+fi
+if [[ "$KEEP_APPLICATION_STOPPED" != "true" && "$KEEP_APPLICATION_STOPPED" != "false" ]]; then
+  echo "MAMOJI_BACKUP_KEEP_APPLICATION_STOPPED must be true or false" >&2
   exit 1
 fi
 
@@ -49,14 +54,22 @@ for service in minio backend frontend caddy; do
 done
 
 MAINTENANCE_ACTIVE=false
+BACKUP_SUCCEEDED=false
 finish_maintenance() {
   if [[ "$MAINTENANCE_ACTIVE" != "true" ]]; then
     return 0
   fi
   local status=0
-  if (( ${#RESTART_SERVICES[@]} > 0 )); then
+  local services_to_restart=()
+  for service in "${RESTART_SERVICES[@]}"; do
+    if [[ "$BACKUP_SUCCEEDED" == "true" && "$KEEP_APPLICATION_STOPPED" == "true" && "$service" != "minio" ]]; then
+      continue
+    fi
+    services_to_restart+=("$service")
+  done
+  if (( ${#services_to_restart[@]} > 0 )); then
     echo "Restoring services after backup maintenance window"
-    if ! compose start --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" "${RESTART_SERVICES[@]}" >/dev/null; then
+    if ! compose start --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" "${services_to_restart[@]}" >/dev/null; then
       echo "Backup finished, but one or more previously running services failed to restart" >&2
       status=1
     fi
@@ -136,6 +149,7 @@ EOF
 RETENTION_DAYS="${MAMOJI_BACKUP_RETENTION_DAYS:-14}"
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +"$RETENTION_DAYS" -print -exec rm -rf {} +
 
+BACKUP_SUCCEEDED=true
 finish_maintenance
 trap - EXIT
 echo "Backup completed: $BACKUP_DIR"
