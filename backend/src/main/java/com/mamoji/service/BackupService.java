@@ -220,7 +220,6 @@ public class BackupService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    enterpriseStore.reloadFromDatabase();
                     enterpriseStore.auditLog(
                         0,
                         "backup",

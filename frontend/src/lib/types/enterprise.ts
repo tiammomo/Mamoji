@@ -303,18 +303,25 @@ export interface TaxComplianceReport {
   assumptions: string[];
 }
 
+export type EntityTransferType =
+  | "inter_entity_transfer"
+  | "shareholder_advance"
+  | "advance_repayment"
+  | "expense_reimbursement"
+  | "reimbursement_payment";
+
 export interface EntityTransfer {
   id: number;
   fromEntityId: number;
   toEntityId: number;
   fromEntityName?: string | null;
   toEntityName?: string | null;
-  transferType: string;
+  transferType: EntityTransferType;
   amount: number;
   currency: string;
   transferDate: string;
   note?: string | null;
-  status: string;
+  status: "recorded";
   operatorUserId: number;
   createdAt: string;
   updatedAt: string;

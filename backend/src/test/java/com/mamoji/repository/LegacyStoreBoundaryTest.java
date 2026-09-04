@@ -3,6 +3,7 @@ package com.mamoji.repository;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.people.application.EmploymentEventRepository;
+import com.mamoji.platform.tenant.EntityTransferRepository;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.platform.identity.account.application.UserDirectory;
@@ -101,6 +102,7 @@ class LegacyStoreBoundaryTest {
             "department",
             "deleteEmployee",
             "deleteTaxItem",
+            "entityTransfer",
             "event",
             "findActiveEmployeeByUser",
             "findCompany",
@@ -115,6 +117,7 @@ class LegacyStoreBoundaryTest {
             "sortedDepartments",
             "sortedEmployees",
             "sortedEmploymentEvents",
+            "sortedEntityTransfers",
             "sortedCompanies"
         ));
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
@@ -132,6 +135,9 @@ class LegacyStoreBoundaryTest {
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("taxItems")),
             "Tax items must not return to the process-local enterprise compatibility view");
+        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("entityTransfers")),
+            "Entity transfers must not return to the process-local enterprise compatibility view");
     }
 
     @Test
@@ -157,6 +163,19 @@ class LegacyStoreBoundaryTest {
 
         assertTrue(exposedMethods.isEmpty(), () ->
             "Employment events must remain append-only outside the explicit demo-reset deletion: " + exposedMethods
+        );
+    }
+
+    @Test
+    void entityTransferPersistenceBoundaryExposesNoMutationOrDeletionOperations() {
+        Set<String> forbiddenPrefixes = Set.of("delete", "remove", "update", "replace", "save");
+        Set<String> exposedMethods = Arrays.stream(EntityTransferRepository.class.getDeclaredMethods())
+            .map(method -> method.getName().toLowerCase())
+            .filter(name -> forbiddenPrefixes.stream().anyMatch(name::startsWith))
+            .collect(Collectors.toSet());
+
+        assertTrue(exposedMethods.isEmpty(), () ->
+            "Entity transfers must remain append-only at the persistence boundary: " + exposedMethods
         );
     }
 

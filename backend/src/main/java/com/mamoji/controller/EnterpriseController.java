@@ -1,9 +1,9 @@
 package com.mamoji.controller;
 
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmploymentEvent;
+import com.mamoji.platform.tenant.EntityTransfer;
 import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.service.EnterpriseManagementService;
 import com.mamoji.service.TaxComplianceService;
