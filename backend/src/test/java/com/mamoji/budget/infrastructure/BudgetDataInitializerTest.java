@@ -13,8 +13,8 @@ import static org.mockito.Mockito.when;
 import com.mamoji.budget.application.BudgetRepository;
 import com.mamoji.budget.domain.Budget;
 import com.mamoji.budget.domain.BudgetPolicy;
-import com.mamoji.domain.Models.Company;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.Company;
+import com.mamoji.platform.tenant.CompanyRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -26,29 +26,29 @@ class BudgetDataInitializerTest {
     void bootstrapModeDoesNotCreateDemoBudget() {
         BudgetRepository budgets = mock(BudgetRepository.class);
         BudgetPolicy policy = mock(BudgetPolicy.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         BudgetDataInitializer initializer = new BudgetDataInitializer(
             budgets,
             policy,
-            enterpriseStore,
+            companies,
             "bootstrap"
         );
 
         initializer.initialize();
 
-        verifyNoInteractions(budgets, policy, enterpriseStore);
+        verifyNoInteractions(budgets, policy, companies);
     }
 
     @Test
     void demoModeCreatesAndProjectsCompanyBudgetOnlyOnce() {
         BudgetRepository budgets = mock(BudgetRepository.class);
         BudgetPolicy policy = new BudgetPolicy();
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
         Budget projected = new Budget();
         projected.id = 42;
         projected.version = 0;
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(budgets.findByCompany(company.id))
             .thenReturn(List.of())
             .thenReturn(List.of(projected));
@@ -56,7 +56,7 @@ class BudgetDataInitializerTest {
         BudgetDataInitializer initializer = new BudgetDataInitializer(
             budgets,
             policy,
-            enterpriseStore,
+            companies,
             "demo"
         );
 
@@ -80,14 +80,14 @@ class BudgetDataInitializerTest {
     @Test
     void demoModeLeavesExistingBudgetsUntouched() {
         BudgetRepository budgets = mock(BudgetRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(budgets.findByCompany(company.id)).thenReturn(List.of(new Budget()));
         BudgetDataInitializer initializer = new BudgetDataInitializer(
             budgets,
             new BudgetPolicy(),
-            enterpriseStore,
+            companies,
             "demo"
         );
 

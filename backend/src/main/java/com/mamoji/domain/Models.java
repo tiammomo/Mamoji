@@ -7,28 +7,6 @@ public final class Models {
     private Models() {
     }
 
-    public static class Company {
-        public long id;
-        public String name;
-        public String entityType;
-        public String creditCode;
-        public String industry;
-        public String taxpayerType;
-        public String currency;
-        public String country;
-        public String province;
-        public String city;
-        public String district;
-        public String registeredAddress;
-        public String operatingRegion;
-        public String taxAuthority;
-        public String policyProfileKey;
-        public int fiscalYearStartMonth;
-        public long ownerId;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class EntityTransfer {
         public long id;
         public long fromEntityId;

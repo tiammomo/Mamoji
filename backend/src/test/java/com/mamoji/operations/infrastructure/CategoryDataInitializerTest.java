@@ -7,10 +7,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.domain.Category;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -19,12 +19,12 @@ class CategoryDataInitializerTest {
     @Test
     void demoModeSeedsDetailedCategoriesBeforeEnsuringEveryCompanyDefault() {
         CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = org.mockito.Mockito.mock(EnterpriseStore.class);
+        CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company first = company(11, 101, "company");
         Company household = company(12, 101, "household");
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(first, household));
+        when(companies.findAll()).thenReturn(List.of(first, household));
         when(categories.findAll(101, 11, null)).thenReturn(List.of());
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, enterpriseStore, "demo");
+        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "demo");
 
         initializer.initialize();
 
@@ -41,14 +41,14 @@ class CategoryDataInitializerTest {
     @Test
     void demoModeDoesNotRestoreCategoriesAUserAlreadyCustomized() {
         CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = org.mockito.Mockito.mock(EnterpriseStore.class);
+        CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company company = company(21, 201, "company");
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(categories.findAll(201, 21, null)).thenReturn(List.of(
             category("主营业务收入", "income"),
             category("团队餐饮", "expense")
         ));
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, enterpriseStore, "demo");
+        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "demo");
 
         initializer.initialize();
 
@@ -59,10 +59,10 @@ class CategoryDataInitializerTest {
     @Test
     void bootstrapModeOnlyEnsuresGenericDefaults() {
         CategoryRepository categories = org.mockito.Mockito.mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = org.mockito.Mockito.mock(EnterpriseStore.class);
+        CompanyRepository companies = org.mockito.Mockito.mock(CompanyRepository.class);
         Company company = company(31, 301, "company");
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
-        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, enterpriseStore, "bootstrap");
+        when(companies.findAll()).thenReturn(List.of(company));
+        CategoryDataInitializer initializer = new CategoryDataInitializer(categories, companies, "bootstrap");
 
         initializer.initialize();
 

@@ -1,7 +1,7 @@
 package com.mamoji.operations.application;
 
 import com.mamoji.budget.application.BudgetApplicationService;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.RefundTransactionCommand;

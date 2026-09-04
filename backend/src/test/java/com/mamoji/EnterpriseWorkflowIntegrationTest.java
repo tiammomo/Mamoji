@@ -508,6 +508,81 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void companyProfileUsesNormalizedTypedOptimisticPersistence() throws Exception {
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        String creditCode = "tenant-" + System.nanoTime();
+        ApiResponse createdResponse = request(
+            "POST",
+            "/api/v1/enterprise/companies",
+            Map.of(
+                "name", "  Durable Tenant  ",
+                "entityType", " COMPANY ",
+                "creditCode", creditCode,
+                "currency", " cny ",
+                "industry", " Software ",
+                "taxpayerType", " General "
+            ),
+            adminToken
+        );
+        assertEquals(200, createdResponse.status(), createdResponse.body());
+        Map<String, Object> created = parseMap(createdResponse.body());
+        long companyId = id(created);
+        assertEquals(0, ((Number) created.get("version")).intValue());
+        assertEquals("Durable Tenant", created.get("name"));
+        assertEquals("company", created.get("entityType"));
+        assertEquals(creditCode.toUpperCase(), created.get("creditCode"));
+        assertEquals("CNY", created.get("currency"));
+
+        ApiResponse updatedResponse = request(
+            "PUT",
+            "/api/v1/enterprise/company?companyId=" + companyId,
+            Map.of(
+                "name", "  Durable Tenant Updated  ",
+                "currency", " usd ",
+                "country", " China ",
+                "province", " Guangdong ",
+                "city", " Shenzhen ",
+                "district", " Nanshan ",
+                "fiscalYearStartMonth", 4
+            ),
+            adminToken
+        );
+        assertEquals(200, updatedResponse.status(), updatedResponse.body());
+        Map<String, Object> updated = parseMap(updatedResponse.body());
+        assertEquals(1, ((Number) updated.get("version")).intValue());
+        assertEquals("Durable Tenant Updated", updated.get("name"));
+        assertEquals("USD", updated.get("currency"));
+        assertEquals("China/Guangdong/Shenzhen/Nanshan", updated.get("operatingRegion"));
+
+        ApiResponse profileResponse = request(
+            "GET",
+            "/api/v1/enterprise/company?companyId=" + companyId,
+            null,
+            adminToken
+        );
+        assertEquals(200, profileResponse.status(), profileResponse.body());
+        Map<String, Object> profile = parseMap(profileResponse.body());
+        assertEquals(updated.get("version"), profile.get("version"));
+        assertEquals(updated.get("name"), profile.get("name"));
+        assertEquals("timestamp with time zone", jdbc.queryForObject("""
+            SELECT pg_typeof(created_at)::TEXT FROM companies WHERE id = ?
+            """, String.class, companyId));
+
+        ApiResponse invalid = request(
+            "PUT",
+            "/api/v1/enterprise/company?companyId=" + companyId,
+            Map.of("fiscalYearStartMonth", 13),
+            adminToken
+        );
+        assertEquals(400, invalid.status(), invalid.body());
+        assertEquals(4, jdbc.queryForObject(
+            "SELECT fiscal_year_start_month FROM companies WHERE id = ?",
+            Integer.class,
+            companyId
+        ));
+    }
+
+    @Test
     void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Concurrent approval");
