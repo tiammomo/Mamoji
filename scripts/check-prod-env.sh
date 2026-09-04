@@ -136,9 +136,18 @@ http_max_threads="${MAMOJI_HTTP_MAX_THREADS:-100}"
 http_min_spare_threads="${MAMOJI_HTTP_MIN_SPARE_THREADS:-10}"
 http_max_connections="${MAMOJI_HTTP_MAX_CONNECTIONS:-4096}"
 backend_replicas="${MAMOJI_BACKEND_REPLICAS:-1}"
+receipt_storage_max_bytes="${MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY:-10737418240}"
+receipt_storage_warning_percent="${MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT:-80}"
 
 if ! [[ "$backend_replicas" =~ ^[1-9][0-9]*$ ]]; then
   fail "MAMOJI_BACKEND_REPLICAS must be a positive integer"
+fi
+
+if ! [[ "$receipt_storage_max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY must be a positive integer"
+fi
+if ! [[ "$receipt_storage_warning_percent" =~ ^([1-9]|[1-9][0-9])$ ]]; then
+  fail "MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT must be between 1 and 99"
 fi
 
 if ! [[ "$db_pool_max" =~ ^[1-9][0-9]*$ ]]; then

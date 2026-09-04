@@ -3,6 +3,7 @@ package com.mamoji.evidence.application;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.evidence.domain.ReceiptFileDigest;
 import com.mamoji.evidence.domain.ReceiptSummary;
+import com.mamoji.evidence.domain.ReceiptStorageQuota;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.audit.domain.AuditLog;
@@ -52,6 +53,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     private final ReceiptFileHashRepository receiptFileHashes;
     private final TransactionLinkQuery transactionLinks;
     private final ObjectStorageService objectStorageService;
+    private final ReceiptStorageGuard receiptStorageGuard;
     private final OutboxEventService outboxEventService;
 
     public ReceiptApplicationService(
@@ -61,6 +63,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         ReceiptFileHashRepository receiptFileHashes,
         TransactionLinkQuery transactionLinks,
         ObjectStorageService objectStorageService,
+        ReceiptStorageGuard receiptStorageGuard,
         OutboxEventService outboxEventService
     ) {
         this.accessControl = accessControl;
@@ -69,6 +72,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         this.receiptFileHashes = receiptFileHashes;
         this.transactionLinks = transactionLinks;
         this.objectStorageService = objectStorageService;
+        this.receiptStorageGuard = receiptStorageGuard;
         this.outboxEventService = outboxEventService;
     }
 
@@ -190,15 +194,19 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate receipt file; existing voucher #" + duplicateVoucherId.getAsLong());
         }
         String filename = validatedFile.originalFilename();
-        StoredObject storedObject;
+        Long transactionId = validateTransactionLink(user, request.transactionId(), company.id);
+        ReceiptStorageWrite storageWrite;
         try {
-            storedObject = objectStorageService.storeReceiptFile(company.id, file, validatedFile);
+            storageWrite = receiptStorageGuard.store(company.id, file, validatedFile);
+        } catch (ReceiptStorageQuota.CapacityExceededException ex) {
+            throw new ResponseStatusException(HttpStatus.INSUFFICIENT_STORAGE, ex.getMessage());
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage upload failed");
         }
+        StoredObject storedObject = storageWrite.storedObject();
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
-            validateTransactionLink(user, request.transactionId(), company.id),
+            transactionId,
             valueOr(request.voucherNo(), nextVoucherNo()),
             valueOr(request.title(), filename),
             voucherType,
@@ -240,6 +248,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             OffsetDateTime.now()
         ));
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
+        storageWrite.markReferenced();
         return voucher;
     }
 

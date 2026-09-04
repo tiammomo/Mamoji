@@ -17,12 +17,15 @@ import com.mamoji.evidence.application.ReceiptBatchUploadResult;
 import com.mamoji.evidence.application.ReceiptCreateCommand;
 import com.mamoji.evidence.application.ReceiptFileHashRepository;
 import com.mamoji.evidence.application.ReceiptListQuery;
+import com.mamoji.evidence.application.ReceiptStorageGuard;
+import com.mamoji.evidence.application.ReceiptStorageUsageRepository;
 import com.mamoji.evidence.application.ReceiptUpdateCommand;
 import com.mamoji.evidence.application.ReceiptUploadCommand;
 import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.evidence.domain.ReceiptSummary;
 import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.JdbcReceiptFileHashRepository;
+import com.mamoji.evidence.infrastructure.JdbcReceiptStorageUsageRepository;
 import com.mamoji.evidence.infrastructure.JdbcReceiptVoucherRepository;
 import com.mamoji.operations.application.TransactionLinkQuery;
 import java.nio.file.Files;
@@ -47,10 +50,12 @@ class EvidenceModuleBoundaryTest {
             .collect(Collectors.toSet());
         assertTrue(dependencyTypes.contains(ReceiptVoucherRepository.class.getName()));
         assertTrue(dependencyTypes.contains(ReceiptFileHashRepository.class.getName()));
+        assertTrue(dependencyTypes.contains(ReceiptStorageGuard.class.getName()));
         assertTrue(dependencyTypes.contains(TransactionLinkQuery.class.getName()));
         assertFalse(dependencyTypes.contains("org.springframework.jdbc.core.JdbcTemplate"));
         assertFalse(dependencyTypes.contains(JdbcReceiptVoucherRepository.class.getName()));
         assertFalse(dependencyTypes.contains(JdbcReceiptFileHashRepository.class.getName()));
+        assertFalse(dependencyTypes.contains(JdbcReceiptStorageUsageRepository.class.getName()));
         assertFalse(dependencyTypes.contains("com.mamoji.operations.application.TransactionQueryRepository"));
         String source = Files.readString(Path.of(
             "src/main/java/com/mamoji/evidence/application/ReceiptApplicationService.java"
@@ -67,7 +72,9 @@ class EvidenceModuleBoundaryTest {
             "src/main/java/com/mamoji/evidence/infrastructure/ReceiptVoucherRepository.java"
         )));
         assertEquals("com.mamoji.evidence.application", ReceiptVoucherRepository.class.getPackageName());
+        assertEquals("com.mamoji.evidence.application", ReceiptStorageUsageRepository.class.getPackageName());
         assertEquals("com.mamoji.evidence.infrastructure", JdbcReceiptVoucherRepository.class.getPackageName());
+        assertEquals("com.mamoji.evidence.infrastructure", JdbcReceiptStorageUsageRepository.class.getPackageName());
     }
 
     @Test

@@ -9,7 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.evidence.application.ReceiptApplicationService;
+import com.mamoji.evidence.application.ReceiptStorageUsageRepository;
 import com.mamoji.evidence.application.ReceiptUploadCommand;
+import com.mamoji.evidence.domain.ReceiptStorageUsage;
 import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import com.mamoji.platform.scheduling.infrastructure.ScheduledJobLeaseRepository;
@@ -52,6 +54,9 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
 
     @Autowired
     ReceiptApplicationService receipts;
+
+    @Autowired
+    ReceiptStorageUsageRepository receiptStorageUsage;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -593,6 +598,15 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         List<Map<String, Object>> failures = (List<Map<String, Object>>) batch.get("failures");
         assertEquals("batch-duplicate.png", failures.getFirst().get("fileName"));
         assertEquals(409, failures.getFirst().get("status"));
+
+        long uploadedVoucherId = ((Number) voucher.get("id")).longValue();
+        jdbc.update(
+            "UPDATE receipt_vouchers SET file_storage_provider = 'minio', file_size = 1 WHERE id = ?",
+            uploadedVoucherId
+        );
+        ReceiptStorageUsage storageUsage = receiptStorageUsage.findByCompany(companyId);
+        assertEquals(1L, storageUsage.objectCount());
+        assertEquals(9L, storageUsage.usedBytes(), "immutable attachment size must override mutable voucher metadata");
     }
 
     @Test

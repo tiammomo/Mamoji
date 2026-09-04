@@ -36,3 +36,27 @@ groups:
         annotations:
           summary: Mamoji database pool has pending connections
           description: HikariCP has had pending database connections for more than 5 minutes.
+
+      - alert: MamojiReceiptStorageCapacityWarning
+        expr: increase(mamoji_receipt_storage_capacity_warnings_total{job="mamoji-backend"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A company receipt storage allocation reached its warning level
+          description: At least one receipt upload crossed the configured company storage warning level in the last 15 minutes.
+
+      - alert: MamojiReceiptStorageQuotaRejected
+        expr: increase(mamoji_receipt_storage_capacity_rejections_total{job="mamoji-backend"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A receipt upload was rejected by company storage quota
+          description: At least one receipt upload exceeded the configured company storage maximum in the last 15 minutes.
+
+      - alert: MamojiReceiptStorageCompensationFailed
+        expr: increase(mamoji_receipt_storage_compensation_total{job="mamoji-backend",outcome="failure"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: An unreferenced receipt object could not be removed
+          description: Inspect backend logs for the bucket and object key, then reconcile the unreferenced MinIO object manually.

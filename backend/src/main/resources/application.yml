@@ -142,6 +142,8 @@ mamoji:
     region: ${MAMOJI_MINIO_REGION:us-east-1}
     external-url: ${MAMOJI_MINIO_EXTERNAL_URL:}
     presigned-url-expiry-seconds: ${MAMOJI_MINIO_PRESIGNED_URL_EXPIRY_SECONDS:600}
+    max-bytes-per-company: ${MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY:10737418240}
+    warning-percent: ${MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT:80}
 
 logging:
   level:
