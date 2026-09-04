@@ -7,6 +7,9 @@ import java.util.Optional;
 public interface UserDirectory {
     Optional<Entry> findById(long id);
 
+    /** Returns the preferred owner for recovering an incomplete first-company bootstrap. */
+    Optional<Entry> findBootstrapOwner();
+
     List<Entry> findAll();
 
     record Entry(

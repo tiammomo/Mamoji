@@ -5,12 +5,12 @@
 - 复制 `.env.production.example` 为 `.env.production`，替换所有默认密码、密钥、域名和邮箱。
 - 如同一台服务器存在多套环境，确保 `MAMOJI_COMPOSE_PROJECT_NAME` 不同，避免复用同名 volume。
 - 设置 `MAMOJI_RUNTIME_ENVIRONMENT=production`，启用生产启动 guard。guard 会拒绝 demo/open/localhost/default secret 等高风险配置。
-- 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。在线仓储已经数据库化，通知提醒也已使用持久化租约；当前剩余限制是首次管理员和首个公司仍由两个启动回调编排。第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`，直至 bootstrap 被收口为一个带 fencing 的数据库命令并完成双实例验证。
-- 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。它只在首次空库初始化时创建管理员、公司主体和管理员员工档案；系统已有用户后，改密码请走应用内操作。
+- `MAMOJI_BACKEND_REPLICAS` 默认为 1，可按容量改为多个后端副本；部署脚本会显式传给 Compose。扩容前必须按副本总数核算数据库连接、CPU、内存和外部 Webhook 吞吐。
+- 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。首次管理员、公司主体、工作区、管理部门和管理员员工档案由同一个事务命令创建；多个副本同时启动时通过 PostgreSQL transaction advisory lock 串行化，失败事务完整回滚，等待实例随后可重试。系统已有公司后，改密码请走应用内操作。
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会注册 demo 初始化器，也不会生成测试账号、演示账户、演示流水、演示员工、演示预算、演示周期事项、演示税费、演示票据或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
 - 应用运行时不具备兼容建表通道；所有 schema 变更必须先以 Flyway migration 发布。
-- 已有公司数据经过 `EnterpriseDataInitializer` 时不会扫描或改写公司、员工和成员全表；成员授权以 `company_memberships` 为准，不从职位名称反向推断。若审计发现缺失关系，应依据真实授权记录显式修复。
+- 已有公司数据经过 `EnterpriseDataInitializer` 时只执行存在性检查，不扫描或改写公司、员工和成员全表；成员授权以 `company_memberships` 为准，不从职位名称反向推断。若审计发现缺失关系，应依据真实授权记录显式修复。
 - 保持 `MAMOJI_REGISTRATION_MODE=invite`，生产环境不开放公开注册。首次管理员登录后，通过 `POST /api/v1/auth/invitations` 创建新用户邀请。
 - 注册邀请原始 token 只在创建响应中返回一次，随后列表只展示元数据，PostgreSQL 仅保存 SHA-256 摘要。管理员应立即通过受控渠道发送邀请链接；若丢失原始 token，请创建新邀请，不要尝试从数据库或列表找回。
 - 设置 `MAMOJI_ALLOWED_ORIGINS` 为生产前端域名，多个域名用英文逗号分隔；不要在生产保留本地开发来源。
@@ -49,6 +49,8 @@ V29 为 `notification_deliveries` 增加 Webhook 消费租约令牌。每次认�
 
 V30 创建 `scheduled_job_leases`。通知提醒先使用 PostgreSQL 时钟原子认领 `notification-reminders`，完成后才推进下一运行时间；实例崩溃后由租约超时允许其他实例接管，陈旧 token 不能写完成或失败状态。该表属于运行协调状态，不进入应用结构化备份，并在结构化恢复时清空。
 
+生产 bootstrap 不新增 schema。`ProductionBootstrapCommand` 在一个数据库事务内取得固定 transaction advisory lock，并在持锁后重新检查公司是否存在；首次管理员和完整公司工作区要么一起提交，要么一起回滚。原生命周期级单实例连接锁和 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED` 已删除。
+
 ```bash
 cp .env.production.example .env.production
 vi .env.production
@@ -69,7 +71,7 @@ Docker 使用 `/actuator/health/readiness`，其中包含应用 readiness 与数
 
 ## 运行容量与超时
 
-默认值面向单实例、中小规模生产部署，并避免数据库故障时请求线程无限堆积：
+默认值面向单副本、中小规模生产部署，并避免数据库故障时请求线程无限堆积；多副本使用相同的每实例默认值：
 
 - HTTP：Tomcat 最大 100 个工作线程、10 个预热线程、100 个等待连接、4096 个连接上限；连接建立/请求头等待为 5 秒，Keep-Alive 空闲为 20 秒。
 - 数据库：Hikari 最大 20、最小空闲 4；获取连接 5 秒、校验 2 秒、空闲 10 分钟、连接寿命 30 分钟、Keep-Alive 2 分钟；PostgreSQL 建连 5 秒、socket 读写 30 秒。
@@ -77,7 +79,7 @@ Docker 使用 `/actuator/health/readiness`，其中包含应用 readiness 与数
 - JVM：生产容器默认把容器内存的 70% 作为最大堆上限并在 OOM 时退出，由 `restart: unless-stopped` 恢复；修改 `MAMOJI_JAVA_TOOL_OPTIONS` 前应先压测。
 - 日志：所有生产容器的 `json-file` 日志默认每文件 20 MiB、保留 5 个，使用 `MAMOJI_LOG_MAX_SIZE`、`MAMOJI_LOG_MAX_FILES` 调整。
 
-常用调优变量包括 `MAMOJI_HTTP_MAX_THREADS`、`MAMOJI_HTTP_ACCEPT_COUNT`、`MAMOJI_DB_POOL_MAX_SIZE`、`MAMOJI_DB_POOL_MIN_IDLE`、`MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS`、`MAMOJI_DB_SOCKET_TIMEOUT_SECONDS` 和 `MAMOJI_SHUTDOWN_TIMEOUT`。增加 HTTP 线程前先确认数据库池等待、PostgreSQL `max_connections`、CPU 和 p95 延迟；不要仅靠扩大线程池掩盖慢查询。
+常用调优变量包括 `MAMOJI_BACKEND_REPLICAS`、`MAMOJI_HTTP_MAX_THREADS`、`MAMOJI_HTTP_ACCEPT_COUNT`、`MAMOJI_DB_POOL_MAX_SIZE`、`MAMOJI_DB_POOL_MIN_IDLE`、`MAMOJI_DB_POOL_CONNECTION_TIMEOUT_MS`、`MAMOJI_DB_SOCKET_TIMEOUT_SECONDS` 和 `MAMOJI_SHUTDOWN_TIMEOUT`。增加副本或 HTTP 线程前先确认数据库池等待、PostgreSQL `max_connections`、CPU 和 p95 延迟；数据库连接预算至少按 `MAMOJI_BACKEND_REPLICAS × MAMOJI_DB_POOL_MAX_SIZE` 计算，不要仅靠扩大并发掩盖慢查询。
 
 附件访问：
 

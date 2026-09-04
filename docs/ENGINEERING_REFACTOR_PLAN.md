@@ -12,7 +12,7 @@
 | P0 | `/admin/users` 依赖 `people-core` | 权限管理归属 `access-management` | 已落地 |
 | P0 | 文档残留 SQLite | 统一为 PostgreSQL、MinIO 和 Docker Compose | 已落地 |
 | P1 | `EnterpriseStore` 同时承担建表、种子、HR、税务、票据和查询 | 按数据所有权拆成模块仓储，正式 schema 只归 Flyway | 已落地：各业务对象由所属模块仓储维护，审计统一经 `AuditTrailService` 追加，启动数据由 `EnterpriseDataInitializer` 显式编排，旧类已删除 |
-| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance、budget、recurring 仓储 | 已落地：各业务对象由所属模块仓储维护，首次管理员由 `InitialAdminDataInitializer` 创建，启动夹具工具已收回初始化器内部，旧类已删除 |
+| P1 | `InMemoryStore` 名称与 JDBC 事实不符且责任过多 | 拆为 identity、operations、finance、budget、recurring 仓储 | 已落地：各业务对象由所属模块仓储维护，demo 管理员由 `InitialAdminDataInitializer` 创建，生产首次管理员由原子 `ProductionBootstrapCommand` 创建，启动夹具工具已收回初始化器内部，旧类已删除 |
 | P1 | `AccountingService` 同时编排账户、流水、预算和报表 | 拆为独立应用用例，跨模块通过契约协作 | 已落地：流水和分类归属 `operations`，账户、账本、成员和对账归属 `finance`，旧服务已删除 |
 | P1 | 预算仅按已入账流水事后汇总，并发写入可同时超额 | 引入占用、确认、释放账本，以预算行锁串行化容量检查 | 已落地 |
 | P1 | 审批状态转换依赖应用服务内的字符串条件 | 使用纯领域状态机声明允许的转换、关联状态和意见要求 | 已落地 |
@@ -63,8 +63,8 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 将首次管理员与首个公司创建收口为跨实例安全的 bootstrap 命令，并审计单实例 guard 的退场条件；
-2. 为通知 Outbox 实现可选外部消息总线适配层，并保留站内通知降级路径；
+1. 为通知 Outbox 实现可选外部消息总线适配层，并保留站内通知降级路径；
+2. 增加两个真实后端容器的端到端容量基线，覆盖负载均衡、优雅停机和连接池总预算；
 3. 统一需要可重复测试的业务时钟边界，避免业务规则直接依赖系统时间；
 4. 继续把审批、票据和账户写用例迁入纵向应用层边界。
 
@@ -77,6 +77,7 @@ demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生
 公司工作区默认数据的事务写入与历史补齐见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
 外部 Webhook 投递的租约 fencing 与幂等边界见 [ADR 0007：为外部通知投递增加租约 fencing](adr/0007-fence-notification-delivery-leases.md)。
 通知提醒的数据库时钟租约与恢复语义见 [ADR 0008：以持久化租约协调定时提醒](adr/0008-coordinate-reminders-with-database-leases.md)。
+生产 bootstrap 的事务串行化与生命周期单实例 guard 退场见 [ADR 0009：以原子 bootstrap 解除单实例启动保护](adr/0009-retire-single-instance-bootstrap-guard.md)。
 票据派生默认值的一次性回填与生产启动修复 Bean 退场见 [ADR 0005：以 Flyway 接管票据兼容回填](adr/0005-migrate-receipt-compatibility-repair.md)。
 公司开通事务、历史工作区一次性补齐和生产账本/分类扫描退场见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
 
