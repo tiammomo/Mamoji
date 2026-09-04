@@ -4,17 +4,25 @@ import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.Http.Method;
+import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.Result;
+import io.minio.messages.Item;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Value;
@@ -161,8 +169,72 @@ public class ObjectStorageService {
         }
     }
 
+    /** Returns a bounded, read-only inventory for reconciliation with database references. */
+    public List<StoredObjectMetadata> listObjects(
+        Set<String> storedBuckets,
+        String prefix,
+        int maximumObjects
+    ) {
+        if (maximumObjects <= 0 || maximumObjects > 1_000_000) {
+            throw new IllegalArgumentException("Maximum object inventory must be between 1 and 1000000");
+        }
+        if (!enabled) {
+            return List.of();
+        }
+        Set<String> targetBuckets = new TreeSet<>();
+        if (storedBuckets != null) {
+            storedBuckets.stream()
+                .filter(Objects::nonNull)
+                .map(String::strip)
+                .filter(value -> !value.isEmpty())
+                .forEach(targetBuckets::add);
+        }
+        if (targetBuckets.isEmpty()) {
+            targetBuckets.add(bucket);
+        }
+        String targetPrefix = prefix == null ? "" : prefix.strip();
+        List<StoredObjectMetadata> inventory = new ArrayList<>();
+        try {
+            for (String targetBucket : targetBuckets) {
+                Iterable<Result<Item>> results = client().listObjects(ListObjectsArgs.builder()
+                    .bucket(targetBucket)
+                    .prefix(targetPrefix)
+                    .recursive(true)
+                    .build());
+                for (Result<Item> result : results) {
+                    Item item = result.get();
+                    if (item.isDir() || item.isDeleteMarker()) {
+                        continue;
+                    }
+                    if (inventory.size() >= maximumObjects) {
+                        throw new ObjectInventoryLimitExceededException(maximumObjects);
+                    }
+                    String objectName = item.objectName();
+                    if (isBlank(objectName) || item.size() < 0 || item.lastModified() == null) {
+                        throw new IllegalStateException("MinIO inventory returned invalid object metadata");
+                    }
+                    inventory.add(new StoredObjectMetadata(
+                        targetBucket,
+                        objectName,
+                        item.size(),
+                        item.lastModified().toInstant()
+                    ));
+                }
+            }
+            return List.copyOf(inventory);
+        } catch (ObjectInventoryLimitExceededException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("MinIO inventory failed", ex);
+        }
+    }
+
     public boolean isEnabled() {
         return enabled;
+    }
+
+    public String bucketName() {
+        return bucket;
     }
 
     public int presignedUrlExpirySeconds() {
@@ -238,5 +310,14 @@ public class ObjectStorageService {
     }
 
     public record StoredObject(String provider, String bucket, String objectKey, String url, String contentType) {
+    }
+
+    public record StoredObjectMetadata(String bucket, String objectKey, long size, Instant lastModified) {
+    }
+
+    public static final class ObjectInventoryLimitExceededException extends IllegalStateException {
+        public ObjectInventoryLimitExceededException(int maximumObjects) {
+            super("MinIO object inventory exceeded configured maximum of " + maximumObjects);
+        }
     }
 }
