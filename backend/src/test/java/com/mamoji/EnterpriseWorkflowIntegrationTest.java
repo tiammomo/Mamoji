@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.evidence.application.ReceiptApplicationService;
 import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import com.mamoji.platform.scheduling.infrastructure.ScheduledJobLeaseRepository;
@@ -26,6 +27,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -46,11 +49,56 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     @Autowired
     ScheduledJobLeaseRepository scheduledJobLeases;
 
+    @Autowired
+    ReceiptApplicationService receipts;
+
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @Test
+    void concurrentReceiptUploadCreatesOneVoucherAndReturnsOneConflict() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Receipt duplicate lock " + System.nanoTime());
+        byte[] png = new byte[] {
+            (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
+        };
+        Map<String, String> params = Map.of(
+            "companyId", Long.toString(companyId),
+            "voucherType", "purchase_invoice",
+            "amount", "99.00"
+        );
+
+        java.util.function.Supplier<HttpStatus> upload = () -> {
+            try {
+                receipts.upload(
+                    "Bearer " + token,
+                    new MockMultipartFile("file", "same.png", "image/png", png),
+                    params
+                );
+                return HttpStatus.OK;
+            } catch (org.springframework.web.server.ResponseStatusException ex) {
+                return HttpStatus.valueOf(ex.getStatusCode().value());
+            }
+        };
+        CompletableFuture<HttpStatus> first = CompletableFuture.supplyAsync(upload);
+        CompletableFuture<HttpStatus> second = CompletableFuture.supplyAsync(upload);
+        List<HttpStatus> statuses = List.of(
+            first.get(10, TimeUnit.SECONDS),
+            second.get(10, TimeUnit.SECONDS)
+        );
+
+        assertEquals(1, statuses.stream().filter(HttpStatus.OK::equals).count());
+        assertEquals(1, statuses.stream().filter(HttpStatus.CONFLICT::equals).count());
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_file_hashes WHERE company_id = ?", Integer.class, companyId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        ));
     }
 
     @Test

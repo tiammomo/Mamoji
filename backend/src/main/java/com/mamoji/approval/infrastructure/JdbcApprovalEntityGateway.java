@@ -2,9 +2,9 @@ package com.mamoji.approval.infrastructure;
 
 import com.mamoji.approval.application.ApprovalEntityGateway;
 import com.mamoji.domain.Models.ReceiptVoucher;
-import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
+import com.mamoji.evidence.application.ReceiptApprovalStatusService;
+import com.mamoji.evidence.application.ReceiptVoucherRepository;
 import com.mamoji.platform.identity.User;
-import com.mamoji.service.ReceiptService;
 import com.mamoji.service.support.AccessControlService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,18 +16,18 @@ import org.springframework.web.server.ResponseStatusException;
 public class JdbcApprovalEntityGateway implements ApprovalEntityGateway {
     private final JdbcTemplate jdbc;
     private final ReceiptVoucherRepository receiptVouchers;
-    private final ReceiptService receiptService;
+    private final ReceiptApprovalStatusService receiptApprovalStatuses;
     private final AccessControlService accessControl;
 
     public JdbcApprovalEntityGateway(
         JdbcTemplate jdbc,
         ReceiptVoucherRepository receiptVouchers,
-        ReceiptService receiptService,
+        ReceiptApprovalStatusService receiptApprovalStatuses,
         AccessControlService accessControl
     ) {
         this.jdbc = jdbc;
         this.receiptVouchers = receiptVouchers;
-        this.receiptService = receiptService;
+        this.receiptApprovalStatuses = receiptApprovalStatuses;
         this.accessControl = accessControl;
     }
 
@@ -63,7 +63,7 @@ public class JdbcApprovalEntityGateway implements ApprovalEntityGateway {
     @Override
     public void synchronizeStatus(String authorization, String entityType, Long entityId, String status) {
         if ("receipt_voucher".equals(entityType) && entityId != null) {
-            receiptService.updateApprovalStatus(authorization, entityId, status);
+            receiptApprovalStatuses.updateApprovalStatus(authorization, entityId, status);
         }
     }
 
