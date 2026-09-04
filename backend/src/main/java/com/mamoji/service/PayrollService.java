@@ -2,7 +2,7 @@ package com.mamoji.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.PayrollRun;
 import com.mamoji.domain.Models.PayrollRunItem;
 import com.mamoji.people.application.EmployeeRepository;

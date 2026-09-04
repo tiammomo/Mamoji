@@ -1,6 +1,6 @@
 package com.mamoji.operations.application;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.api.CategoryCreateRequest;
 import com.mamoji.operations.api.CategoryUpdateRequest;
 import com.mamoji.operations.domain.Category;

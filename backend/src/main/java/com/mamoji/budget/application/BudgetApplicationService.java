@@ -9,7 +9,7 @@ import com.mamoji.budget.domain.BudgetReservationCommand;
 import com.mamoji.budget.infrastructure.BudgetReservationRepository;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.identity.ActorContext;

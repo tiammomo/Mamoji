@@ -8,7 +8,7 @@ import com.mamoji.approval.domain.ApprovalWorkflow;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.platform.identity.User;

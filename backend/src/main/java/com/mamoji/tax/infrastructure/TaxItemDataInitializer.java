@@ -1,7 +1,7 @@
 package com.mamoji.tax.infrastructure;
 
-import com.mamoji.domain.Models.Company;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.Company;
+import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.tax.application.TaxItemRepository;
 import com.mamoji.tax.domain.TaxItem;
 import com.mamoji.tax.domain.TaxItemPolicy;
@@ -43,20 +43,20 @@ public class TaxItemDataInitializer {
 
     private final TaxItemRepository taxItems;
     private final TaxItemPolicy policy;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final TransactionTemplate transaction;
     private final String bootstrapMode;
 
     public TaxItemDataInitializer(
         TaxItemRepository taxItems,
         TaxItemPolicy policy,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         PlatformTransactionManager transactionManager,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.taxItems = taxItems;
         this.policy = policy;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.transaction = new TransactionTemplate(transactionManager);
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
@@ -66,7 +66,7 @@ public class TaxItemDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        transaction.executeWithoutResult(ignored -> enterpriseStore.sortedCompanies().stream()
+        transaction.executeWithoutResult(ignored -> companies.findAll().stream()
             .filter(company -> "company".equals(company.entityType))
             .min(Comparator.comparingLong(company -> company.id))
             .ifPresent(this::seedDemoItems));

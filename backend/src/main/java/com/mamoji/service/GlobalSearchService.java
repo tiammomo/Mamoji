@@ -1,6 +1,6 @@
 package com.mamoji.service;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.access.AccessContextService;
 import com.mamoji.platform.access.AccessContextView;
 import com.mamoji.platform.identity.User;

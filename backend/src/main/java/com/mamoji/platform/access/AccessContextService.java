@@ -1,7 +1,7 @@
 package com.mamoji.platform.access;
 
 import com.mamoji.common.Roles;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.identity.ActorContext;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;

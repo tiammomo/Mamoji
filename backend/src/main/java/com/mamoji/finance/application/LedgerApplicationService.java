@@ -1,6 +1,6 @@
 package com.mamoji.finance.application;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.api.LedgerCreateRequest;
 import com.mamoji.finance.api.LedgerMemberCreateRequest;
 import com.mamoji.finance.application.FinanceRepository.MemberProfile;

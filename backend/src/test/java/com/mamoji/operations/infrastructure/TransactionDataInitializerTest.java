@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.application.CategoryRepository;
@@ -18,7 +18,7 @@ import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.application.TransactionWriteRepository;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.TransactionRecord;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -35,19 +35,19 @@ class TransactionDataInitializerTest {
         TransactionWriteRepository writes = mock(TransactionWriteRepository.class);
         FinanceRepository finances = mock(FinanceRepository.class);
         CategoryRepository categories = mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         TransactionDataInitializer initializer = new TransactionDataInitializer(
             transactions,
             writes,
             finances,
             categories,
-            enterpriseStore,
+            companies,
             "bootstrap"
         );
 
         initializer.initialize();
 
-        verifyNoInteractions(transactions, writes, finances, categories, enterpriseStore);
+        verifyNoInteractions(transactions, writes, finances, categories, companies);
     }
 
     @Test
@@ -56,7 +56,7 @@ class TransactionDataInitializerTest {
         TransactionWriteRepository writes = mock(TransactionWriteRepository.class);
         FinanceRepository finances = mock(FinanceRepository.class);
         CategoryRepository categories = mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
         Account cash = account(11, "公司现金备用金", 31L);
         Account bank = account(12, "公司基本户", 31L);
@@ -68,7 +68,7 @@ class TransactionDataInitializerTest {
             category(25, "客户退款", "expense"),
             category(26, "离职补偿", "expense")
         );
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(transactions.findAll(company.ownerId, company.id))
             .thenReturn(List.of())
             .thenReturn(List.of(new TransactionRecord()));
@@ -79,7 +79,7 @@ class TransactionDataInitializerTest {
             writes,
             finances,
             categories,
-            enterpriseStore,
+            companies,
             "demo"
         );
 
@@ -116,9 +116,9 @@ class TransactionDataInitializerTest {
         TransactionWriteRepository writes = mock(TransactionWriteRepository.class);
         FinanceRepository finances = mock(FinanceRepository.class);
         CategoryRepository categories = mock(CategoryRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(transactions.findAll(company.ownerId, company.id)).thenReturn(List.of());
         when(finances.findAccounts(company.ownerId, company.id)).thenReturn(List.of());
         when(categories.findAll(company.ownerId, company.id, null)).thenReturn(List.of());
@@ -127,7 +127,7 @@ class TransactionDataInitializerTest {
             writes,
             finances,
             categories,
-            enterpriseStore,
+            companies,
             "demo"
         );
 

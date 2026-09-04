@@ -1,5 +1,6 @@
 export interface Company {
   id: number;
+  version: number;
   name: string;
   entityType: "company" | "household" | string;
   creditCode: string | null;

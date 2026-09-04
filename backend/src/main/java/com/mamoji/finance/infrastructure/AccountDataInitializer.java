@@ -1,10 +1,10 @@
 package com.mamoji.finance.infrastructure;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -21,16 +21,16 @@ import org.springframework.stereotype.Component;
 @DependsOn("ledgerDataInitializer")
 public class AccountDataInitializer {
     private final FinanceRepository finances;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final String bootstrapMode;
 
     public AccountDataInitializer(
         FinanceRepository finances,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.finances = finances;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -39,7 +39,7 @@ public class AccountDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+        Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparingLong(candidate -> candidate.id));
         if (company.isEmpty()) {

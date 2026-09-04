@@ -1,6 +1,6 @@
 package com.mamoji.service;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
@@ -15,6 +15,8 @@ import com.mamoji.people.domain.EmploymentEvent;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
+import com.mamoji.platform.tenant.CompanyProfilePolicy;
+import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.repository.EnterpriseStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.EnterprisePermissionCatalog;
@@ -58,6 +60,7 @@ public class EnterpriseManagementService {
     private final OutboxEventService outboxEventService;
     private final ProductModuleCatalog productModules;
     private final CompanyMembershipRepository memberships;
+    private final CompanyRepository companies;
 
     public EnterpriseManagementService(
         EnterpriseStore enterpriseStore,
@@ -71,7 +74,8 @@ public class EnterpriseManagementService {
         EnterprisePermissionCatalog permissionCatalog,
         OutboxEventService outboxEventService,
         ProductModuleCatalog productModules,
-        CompanyMembershipRepository memberships
+        CompanyMembershipRepository memberships,
+        CompanyRepository companies
     ) {
         this.enterpriseStore = enterpriseStore;
         this.financeRepository = financeRepository;
@@ -85,6 +89,7 @@ public class EnterpriseManagementService {
         this.outboxEventService = outboxEventService;
         this.productModules = productModules;
         this.memberships = memberships;
+        this.companies = companies;
     }
 
     public Map<String, Object> summary(String authorization, Long companyId) {
@@ -141,18 +146,18 @@ public class EnterpriseManagementService {
         if ("household".equals(entityType) && !productModules.householdEnabled()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Household subjects are disabled by product configuration");
         }
-        Company company = enterpriseStore.company(
-            user.id,
-            textOr(body.get("name"), "新公司主体"),
-            entityType,
-            nullableText(body.get("creditCode")),
-            textOr(body.get("industry"), "未设置"),
-            textOr(body.get("taxpayerType"), "未设置"),
-            textOr(body.get("currency"), "CNY")
-        );
+        Company company = new Company();
+        company.ownerId = user.id;
+        company.name = textOr(body.get("name"), "新公司主体");
+        company.entityType = entityType;
+        company.creditCode = nullableText(body.get("creditCode"));
+        company.industry = textOr(body.get("industry"), "未设置");
+        company.taxpayerType = textOr(body.get("taxpayerType"), "未设置");
+        company.currency = textOr(body.get("currency"), "CNY");
+        CompanyProfilePolicy.initialize(company);
         applyCompanyFields(company, body);
-        touch(company);
-        enterpriseStore.saveCompany(company);
+        validateCompanyProfile(company);
+        companies.insert(company);
         memberships.ensureOwner(company);
         financeRepository.ensureAccountingLedger(user.id, company.id, company.currency, company.name);
         categoryRepository.ensureCompanyDefaults(user.id, company.id);
@@ -170,8 +175,8 @@ public class EnterpriseManagementService {
         Company company = accessControl.resolveCompany(user, companyId);
         accessControl.requirePeopleManager(user, company.id);
         applyCompanyFields(company, body);
-        touch(company);
-        enterpriseStore.saveCompany(company);
+        validateCompanyProfile(company);
+        companies.update(company);
         audit(company.id, "company", company.id, "update", "更新公司主体: " + company.name, user);
         return company;
     }
@@ -390,10 +395,7 @@ public class EnterpriseManagementService {
         if (body.containsKey("operatingRegion")) {
             company.operatingRegion = text(body.get("operatingRegion"));
         } else if (body.keySet().stream().anyMatch(key -> List.of("country", "province", "city", "district").contains(key))) {
-            company.operatingRegion = List.of(company.country, company.province, company.city, company.district).stream()
-                .filter(value -> value != null && !value.isBlank())
-                .reduce((left, right) -> left + "/" + right)
-                .orElse("中国");
+            company.operatingRegion = CompanyProfilePolicy.regionLabel(company);
         }
         if (body.containsKey("taxAuthority")) {
             company.taxAuthority = nullableText(body.get("taxAuthority"));
@@ -403,6 +405,17 @@ public class EnterpriseManagementService {
         }
         if (body.containsKey("fiscalYearStartMonth")) {
             company.fiscalYearStartMonth = intValue(body.get("fiscalYearStartMonth"), company.fiscalYearStartMonth);
+        }
+    }
+
+    private void validateCompanyProfile(Company company) {
+        try {
+            CompanyProfilePolicy.normalizeAndValidate(company);
+        } catch (IllegalArgumentException error) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, error.getMessage(), error);
+        }
+        if ("household".equals(company.entityType) && !productModules.householdEnabled()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Household subjects are disabled by product configuration");
         }
     }
 

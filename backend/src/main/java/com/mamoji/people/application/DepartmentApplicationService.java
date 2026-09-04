@@ -1,6 +1,6 @@
 package com.mamoji.people.application;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.people.api.DepartmentCreateRequest;
 import com.mamoji.people.api.DepartmentUpdateRequest;
 import com.mamoji.people.domain.Department;

@@ -3,8 +3,8 @@ package com.mamoji.budget.infrastructure;
 import com.mamoji.budget.application.BudgetRepository;
 import com.mamoji.budget.domain.Budget;
 import com.mamoji.budget.domain.BudgetPolicy;
-import com.mamoji.domain.Models.Company;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.Company;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -13,25 +13,27 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional budget demo data after enterprise subjects and accounting scopes exist. */
 @Component
+@DependsOn("enterpriseStore")
 public class BudgetDataInitializer {
     private final BudgetRepository budgets;
     private final BudgetPolicy policy;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final String bootstrapMode;
 
     public BudgetDataInitializer(
         BudgetRepository budgets,
         BudgetPolicy policy,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.budgets = budgets;
         this.policy = policy;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -40,7 +42,7 @@ public class BudgetDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+        Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
         if (company.isEmpty() || !budgets.findByCompany(company.get().id).isEmpty()) {

@@ -1,9 +1,10 @@
 package com.mamoji.evidence.infrastructure;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.identity.account.application.UserDirectory;
+import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.repository.EnterpriseStore;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
@@ -18,17 +19,20 @@ import org.springframework.stereotype.Component;
 @Component
 public class ReceiptVoucherDataInitializer {
     private final ReceiptVoucherRepository receiptVouchers;
+    private final CompanyRepository companies;
     private final EnterpriseStore enterpriseStore;
     private final UserDirectory userDirectory;
     private final String bootstrapMode;
 
     public ReceiptVoucherDataInitializer(
         ReceiptVoucherRepository receiptVouchers,
+        CompanyRepository companies,
         EnterpriseStore enterpriseStore,
         UserDirectory userDirectory,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.receiptVouchers = receiptVouchers;
+        this.companies = companies;
         this.enterpriseStore = enterpriseStore;
         this.userDirectory = userDirectory;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
@@ -40,7 +44,7 @@ public class ReceiptVoucherDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+        Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
         java.util.List<UserDirectory.Entry> users = userDirectory.findAll();

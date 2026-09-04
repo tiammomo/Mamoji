@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.common.Roles;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.notification.domain.OutboxEvent;
@@ -15,7 +15,7 @@ import com.mamoji.platform.identity.User;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.WebhookUrlValidator;
@@ -44,7 +44,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class NotificationService {
     private final JdbcTemplate jdbc;
     private final UserDirectory userDirectory;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final EmployeeRepository employees;
     private final TaxItemRepository taxItems;
     private final ReceiptVoucherRepository receiptVouchers;
@@ -63,7 +63,7 @@ public class NotificationService {
     public NotificationService(
         JdbcTemplate jdbc,
         UserDirectory userDirectory,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         EmployeeRepository employees,
         TaxItemRepository taxItems,
         ReceiptVoucherRepository receiptVouchers,
@@ -80,7 +80,7 @@ public class NotificationService {
     ) {
         this.jdbc = jdbc;
         this.userDirectory = userDirectory;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.employees = employees;
         this.taxItems = taxItems;
         this.receiptVouchers = receiptVouchers;
@@ -522,7 +522,7 @@ public class NotificationService {
             return recipients;
         }
         Set<String> roleSet = Set.of(roles);
-        Company company = enterpriseStore.findCompany(companyId).orElse(null);
+        Company company = companies.findById(companyId).orElse(null);
         if (company != null && roleSet.contains("founder")) {
             recipients.add(company.ownerId);
         }

@@ -2,7 +2,7 @@ package com.mamoji.finance.infrastructure;
 
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
@@ -12,22 +12,22 @@ import org.springframework.stereotype.Component;
 @DependsOn("enterpriseStore")
 public class LedgerDataInitializer {
     private final FinanceRepository finances;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final CompanyMembershipRepository companyMemberships;
 
     public LedgerDataInitializer(
         FinanceRepository finances,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         CompanyMembershipRepository companyMemberships
     ) {
         this.finances = finances;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.companyMemberships = companyMemberships;
     }
 
     @PostConstruct
     void initialize() {
-        enterpriseStore.sortedCompanies().forEach(company -> {
+        companies.findAll().forEach(company -> {
             companyMemberships.ensureOwner(company);
             finances.ensureAccountingLedger(
                 company.ownerId,

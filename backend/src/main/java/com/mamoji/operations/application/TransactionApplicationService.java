@@ -4,7 +4,7 @@ import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
 import com.mamoji.budget.domain.BudgetReservation;
 import com.mamoji.budget.domain.BudgetReservationCommand;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
 import com.mamoji.operations.api.TransactionCreateRequest;

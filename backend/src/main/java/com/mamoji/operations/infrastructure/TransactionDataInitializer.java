@@ -1,6 +1,6 @@
 package com.mamoji.operations.infrastructure;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.operations.application.CategoryRepository;
@@ -8,7 +8,7 @@ import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.application.TransactionWriteRepository;
 import com.mamoji.operations.domain.Category;
 import com.mamoji.operations.domain.TransactionRecord;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -32,7 +32,7 @@ public class TransactionDataInitializer {
     private final TransactionWriteRepository transactionWrites;
     private final FinanceRepository finances;
     private final CategoryRepository categories;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final String bootstrapMode;
 
     public TransactionDataInitializer(
@@ -40,14 +40,14 @@ public class TransactionDataInitializer {
         TransactionWriteRepository transactionWrites,
         FinanceRepository finances,
         CategoryRepository categories,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.transactions = transactions;
         this.transactionWrites = transactionWrites;
         this.finances = finances;
         this.categories = categories;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -56,7 +56,7 @@ public class TransactionDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+        Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
         if (company.isEmpty()) {

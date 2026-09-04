@@ -2,7 +2,7 @@ package com.mamoji.operations.application;
 
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.api.TransactionQueryRequest;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.operations.domain.TransactionSearchCriteria;

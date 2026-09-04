@@ -1,6 +1,6 @@
 package com.mamoji.repository;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
@@ -13,6 +13,8 @@ import com.mamoji.people.domain.Department;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmployeeCompensationPolicy;
 import com.mamoji.people.domain.EmploymentEvent;
+import com.mamoji.platform.tenant.CompanyProfilePolicy;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
@@ -35,11 +37,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class EnterpriseStore {
-    public final Map<Long, Company> companies = new ConcurrentHashMap<>();
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
-    private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
-    private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
-    private static final String SHENZHEN_STARTUP_POLICY_PROFILE = "CN-GD-SZ-STARTUP-LITE";
     private static final String DEMO_COMPANY_CREDIT_CODE = "DEMO-COMPANY-CREDIT-CODE";
     private static final int[] COMPENSATION_BENCHMARK_SALARIES = {
         3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
@@ -58,6 +56,7 @@ public class EnterpriseStore {
     private final DepartmentRepository departmentRepository;
     private final EmployeeRepository employeeRepository;
     private final EmploymentEventRepository employmentEventRepository;
+    private final CompanyRepository companyRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
     private final String bootstrapCompanyCreditCode;
@@ -72,6 +71,7 @@ public class EnterpriseStore {
         DepartmentRepository departmentRepository,
         EmployeeRepository employeeRepository,
         EmploymentEventRepository employmentEventRepository,
+        CompanyRepository companyRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
@@ -85,6 +85,7 @@ public class EnterpriseStore {
         this.departmentRepository = departmentRepository;
         this.employeeRepository = employeeRepository;
         this.employmentEventRepository = employmentEventRepository;
+        this.companyRepository = companyRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
         this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
@@ -108,10 +109,8 @@ public class EnterpriseStore {
     }
 
     private void loadAll() {
-        companies.clear();
         entityTransfers.clear();
 
-        forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
     }
 
@@ -121,7 +120,7 @@ public class EnterpriseStore {
     }
 
     private void ensureInitialEnterpriseData() {
-        if (!companies.isEmpty()) {
+        if (companyRepository.existsAny()) {
             return;
         }
         if (isBootstrapMode()) {
@@ -144,18 +143,16 @@ public class EnterpriseStore {
         if (owner == null) {
             return;
         }
-        Company company = company(
+        Company company = newCompany(
             owner.id(),
             bootstrapCompanyName,
+            "company",
             bootstrapCompanyCreditCode,
             bootstrapCompanyIndustry,
             bootstrapCompanyTaxpayerType,
             bootstrapCompanyCurrency
         );
-        company.country = "中国";
-        company.operatingRegion = regionLabel(company);
-        company.policyProfileKey = defaultPolicyProfileKey(company);
-        saveCompany(company);
+        companyRepository.insert(company);
 
         Department management = createSeedDepartment(company.id, "管理层", "MGMT", "0");
         Employee founder = createSeedEmployee(
@@ -191,7 +188,7 @@ public class EnterpriseStore {
     }
 
     private void ensureSeedData() {
-        if (!companies.isEmpty()) {
+        if (companyRepository.existsAny()) {
             return;
         }
         UserDirectory.Entry owner = initialOwner().orElse(null);
@@ -199,7 +196,16 @@ public class EnterpriseStore {
             return;
         }
 
-        Company company = company(owner.id(), "深圳市示例电商科技有限公司", DEMO_COMPANY_CREDIT_CODE, "软件与信息技术服务", "小规模纳税人", "CNY");
+        Company company = newCompany(
+            owner.id(),
+            "深圳市示例电商科技有限公司",
+            "company",
+            DEMO_COMPANY_CREDIT_CODE,
+            "软件与信息技术服务",
+            "小规模纳税人",
+            "CNY"
+        );
+        companyRepository.insert(company);
         Department management = createSeedDepartment(company.id, "管理层", "CEO", "30000");
         Department finance = createSeedDepartment(company.id, "财务行政", "FIN-ADMIN", "42000");
         Department product = createSeedDepartment(company.id, "产品研发", "RND", "120000");
@@ -255,7 +261,7 @@ public class EnterpriseStore {
     }
 
     private void ensureCompensationBenchmarkEmployees() {
-        companies.values().stream()
+        companyRepository.findAll().stream()
             .filter(this::isDemoCompany)
             .forEach(this::ensureCompensationBenchmarkEmployees);
     }
@@ -346,7 +352,8 @@ public class EnterpriseStore {
     }
 
     private void ensureHouseholdSubject() {
-        boolean hasHousehold = companies.values().stream().anyMatch(company -> "household".equals(company.entityType));
+        boolean hasHousehold = companyRepository.findAll().stream()
+            .anyMatch(company -> "household".equals(company.entityType));
         if (hasHousehold) {
             return;
         }
@@ -354,20 +361,28 @@ public class EnterpriseStore {
         if (owner == null) {
             return;
         }
-        Company household = company(owner.id(), "演示家庭资产主体", "household", null, "家庭资产管理", "非经营主体", "CNY");
+        Company household = newCompany(
+            owner.id(),
+            "演示家庭资产主体",
+            "household",
+            null,
+            "家庭资产管理",
+            "非经营主体",
+            "CNY"
+        );
         household.province = "广东省";
         household.city = "深圳市";
-        household.operatingRegion = regionLabel(household);
+        household.operatingRegion = CompanyProfilePolicy.regionLabel(household);
         household.policyProfileKey = "CN-HOUSEHOLD-ASSET-PROFILE";
-        household.updatedAt = InMemoryStore.now();
-        saveCompany(household);
+        companyRepository.insert(household);
     }
 
     private void ensureEntityTransferSeed() {
-        Optional<Company> company = companies.values().stream()
+        List<Company> companies = companyRepository.findAll();
+        Optional<Company> company = companies.stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
-        Optional<Company> household = companies.values().stream()
+        Optional<Company> household = companies.stream()
             .filter(candidate -> "household".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
         if (company.isEmpty() || household.isEmpty()) {
@@ -397,43 +412,9 @@ public class EnterpriseStore {
     }
 
     private void ensureCompanyPolicyDefaults() {
-        companies.values().forEach(company -> {
-            boolean updated = false;
-            if (isBlank(company.entityType)) {
-                company.entityType = "company";
-                updated = true;
-            }
-            if (isBlank(company.country)) {
-                company.country = "中国";
-                updated = true;
-            }
-            if (isBlank(company.province) && company.name != null && company.name.contains("深圳")) {
-                company.province = "广东省";
-                updated = true;
-            }
-            if (isBlank(company.city) && company.name != null && company.name.contains("深圳")) {
-                company.city = "深圳市";
-                updated = true;
-            }
-            if (isBlank(company.operatingRegion)) {
-                company.operatingRegion = regionLabel(company);
-                updated = true;
-            }
-            if (company.city != null && company.city.contains("深圳")
-                && (DEFAULT_POLICY_PROFILE.equals(company.policyProfileKey) || LEGACY_SHENZHEN_POLICY_PROFILE.equals(company.policyProfileKey))) {
-                company.policyProfileKey = SHENZHEN_STARTUP_POLICY_PROFILE;
-                updated = true;
-            } else if (isBlank(company.policyProfileKey)) {
-                company.policyProfileKey = defaultPolicyProfileKey(company);
-                updated = true;
-            }
-            if (company.fiscalYearStartMonth < 1 || company.fiscalYearStartMonth > 12) {
-                company.fiscalYearStartMonth = 1;
-                updated = true;
-            }
-            if (updated) {
-                company.updatedAt = InMemoryStore.now();
-                saveCompany(company);
+        companyRepository.findAll().forEach(company -> {
+            if (CompanyProfilePolicy.hydrateLegacyDefaults(company)) {
+                companyRepository.update(company);
             }
         });
     }
@@ -481,10 +462,6 @@ public class EnterpriseStore {
         });
     }
 
-    public List<Company> sortedCompanies() {
-        return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
-    }
-
     public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
         Set<Long> accessible = new HashSet<>(accessibleEntityIds);
         return jdbc.query("""
@@ -512,74 +489,26 @@ public class EnterpriseStore {
         return auditLogRepository.existsByEntityType(entityType);
     }
 
-    public Optional<Company> findCompany(long id) {
-        return jdbc.query("SELECT * FROM companies WHERE id = ?", (rs, rowNum) -> mapCompany(rs), id).stream().findFirst();
-    }
-
-    public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
-        return company(ownerId, name, "company", creditCode, industry, taxpayerType, currency);
-    }
-
-    public Company company(long ownerId, String name, String entityType, String creditCode, String industry, String taxpayerType, String currency) {
+    private Company newCompany(
+        long ownerId,
+        String name,
+        String entityType,
+        String creditCode,
+        String industry,
+        String taxpayerType,
+        String currency
+    ) {
         Company company = new Company();
         company.ownerId = ownerId;
         company.name = name;
-        company.entityType = entityType == null || entityType.isBlank() ? "company" : entityType;
+        company.entityType = entityType;
         company.creditCode = creditCode;
         company.industry = industry;
         company.taxpayerType = taxpayerType;
-        company.currency = currency == null ? "CNY" : currency;
-        company.country = "中国";
-        company.province = name != null && name.contains("深圳") ? "广东省" : "";
-        company.city = name != null && name.contains("深圳") ? "深圳市" : "";
-        company.district = "";
-        company.registeredAddress = null;
-        company.operatingRegion = regionLabel(company);
-        company.taxAuthority = null;
-        company.policyProfileKey = defaultPolicyProfileKey(company);
-        company.fiscalYearStartMonth = 1;
+        company.currency = currency;
+        CompanyProfilePolicy.initialize(company);
         stamp(company);
-        company.id = insert("""
-            INSERT INTO companies (
-                name, entity_type, credit_code, industry, taxpayer_type, currency, country, province, city, district,
-                registered_address, operating_region, tax_authority, policy_profile_key, fiscal_year_start_month,
-                owner_id, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> {
-            ps.setString(1, company.name);
-            ps.setString(2, company.entityType);
-            ps.setString(3, company.creditCode);
-            ps.setString(4, company.industry);
-            ps.setString(5, company.taxpayerType);
-            ps.setString(6, company.currency);
-            ps.setString(7, company.country);
-            ps.setString(8, company.province);
-            ps.setString(9, company.city);
-            ps.setString(10, company.district);
-            ps.setString(11, company.registeredAddress);
-            ps.setString(12, company.operatingRegion);
-            ps.setString(13, company.taxAuthority);
-            ps.setString(14, company.policyProfileKey);
-            ps.setInt(15, company.fiscalYearStartMonth);
-            ps.setLong(16, company.ownerId);
-            ps.setString(17, company.createdAt);
-            ps.setString(18, company.updatedAt);
-        });
-        companies.put(company.id, company);
         return company;
-    }
-
-    public void saveCompany(Company company) {
-        companies.put(company.id, company);
-        jdbc.update("""
-            UPDATE companies SET name = ?, entity_type = ?, credit_code = ?, industry = ?, taxpayer_type = ?, currency = ?,
-                country = ?, province = ?, city = ?, district = ?, registered_address = ?, operating_region = ?,
-                tax_authority = ?, policy_profile_key = ?, fiscal_year_start_month = ?, owner_id = ?, updated_at = ?
-            WHERE id = ?
-            """, company.name, company.entityType, company.creditCode, company.industry, company.taxpayerType, company.currency,
-            company.country, company.province, company.city, company.district, company.registeredAddress, company.operatingRegion,
-            company.taxAuthority, company.policyProfileKey, company.fiscalYearStartMonth, company.ownerId, company.updatedAt, company.id);
     }
 
     private Department createSeedDepartment(long companyId, String name, String costCenter, String budget) {
@@ -713,45 +642,12 @@ public class EnterpriseStore {
     }
 
     private void attachEntityTransferNames(EntityTransfer transfer) {
-        transfer.fromEntityName = findCompany(transfer.fromEntityId).map(company -> company.name).orElse(null);
-        transfer.toEntityName = findCompany(transfer.toEntityId).map(company -> company.name).orElse(null);
-    }
-
-    private Company mapCompany(ResultSet rs) throws SQLException {
-        Company company = new Company();
-        company.id = rs.getLong("id");
-        company.name = rs.getString("name");
-        company.entityType = rs.getString("entity_type");
-        company.creditCode = rs.getString("credit_code");
-        company.industry = rs.getString("industry");
-        company.taxpayerType = rs.getString("taxpayer_type");
-        company.currency = rs.getString("currency");
-        company.country = rs.getString("country");
-        company.province = rs.getString("province");
-        company.city = rs.getString("city");
-        company.district = rs.getString("district");
-        company.registeredAddress = rs.getString("registered_address");
-        company.operatingRegion = rs.getString("operating_region");
-        company.taxAuthority = rs.getString("tax_authority");
-        company.policyProfileKey = rs.getString("policy_profile_key");
-        company.fiscalYearStartMonth = rs.getInt("fiscal_year_start_month");
-        company.ownerId = rs.getLong("owner_id");
-        company.createdAt = rs.getString("created_at");
-        company.updatedAt = rs.getString("updated_at");
-        return company;
-    }
-
-    private String regionLabel(Company company) {
-        return List.of(company.country, company.province, company.city, company.district).stream()
-            .filter(value -> value != null && !value.isBlank())
-            .reduce((left, right) -> left + "/" + right)
-            .orElse("中国");
-    }
-
-    private String defaultPolicyProfileKey(Company company) {
-        return company != null && company.city != null && company.city.contains("深圳")
-            ? SHENZHEN_STARTUP_POLICY_PROFILE
-            : DEFAULT_POLICY_PROFILE;
+        transfer.fromEntityName = companyRepository.findById(transfer.fromEntityId)
+            .map(company -> company.name)
+            .orElse(null);
+        transfer.toEntityName = companyRepository.findById(transfer.toEntityId)
+            .map(company -> company.name)
+            .orElse(null);
     }
 
     private boolean isBlank(String value) {

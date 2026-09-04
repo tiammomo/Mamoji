@@ -76,7 +76,7 @@ class EmployeeMigrationTest {
                 assertEquals("numeric", result.getString("salary_type"));
                 assertEquals("timestamp with time zone", result.getString("created_type"));
             }
-            assertEquals("24", latestVersion(statement));
+            assertEquals("25", latestVersion(statement));
             assertTrue(employeeConstraints(statement).containsAll(Set.of(
                 "fk_employees_company",
                 "fk_employees_user",

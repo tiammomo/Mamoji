@@ -1,9 +1,9 @@
 package com.mamoji.operations.infrastructure;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.operations.domain.Category;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
@@ -29,28 +29,28 @@ public class CategoryDataInitializer {
     );
 
     private final CategoryRepository categories;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final String bootstrapMode;
 
     public CategoryDataInitializer(
         CategoryRepository categories,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.categories = categories;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
     @PostConstruct
     void initialize() {
         if (!"bootstrap".equals(bootstrapMode)) {
-            enterpriseStore.sortedCompanies().stream()
+            companies.findAll().stream()
                 .filter(company -> "company".equals(company.entityType))
                 .min(Comparator.comparingLong(company -> company.id))
                 .ifPresent(this::ensureDemoCategories);
         }
-        enterpriseStore.sortedCompanies().forEach(company ->
+        companies.findAll().forEach(company ->
             categories.ensureCompanyDefaults(company.ownerId, company.id));
     }
 
