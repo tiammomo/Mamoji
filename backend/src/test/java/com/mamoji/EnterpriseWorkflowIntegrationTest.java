@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -35,6 +36,9 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
 
     @Autowired
     OutboxEventStatusRepository outboxStatusRepository;
+
+    @Autowired
+    NotificationDeliveryStatusRepository notificationDeliveryStatusRepository;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -1161,6 +1165,72 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         ));
     }
 
+    @Test
+    void notificationTerminalTransitionsRequireTheCurrentDeliveryLease() {
+        String deliveredLease = "delivered-owner-" + UUID.randomUUID();
+        long deliveredId = processingNotificationDelivery(deliveredLease);
+        String completedAt = OffsetDateTime.now().toString();
+
+        assertFalse(notificationDeliveryStatusRepository.markDelivered(
+            deliveredId,
+            "stale-worker",
+            completedAt
+        ));
+        assertEquals("processing", notificationDeliveryStatus(deliveredId));
+        assertEquals(deliveredLease, notificationDeliveryLockToken(deliveredId));
+
+        assertTrue(notificationDeliveryStatusRepository.markDelivered(deliveredId, deliveredLease, completedAt));
+        assertEquals("delivered", notificationDeliveryStatus(deliveredId));
+        assertNull(notificationDeliveryLockToken(deliveredId));
+        assertNotNull(jdbc.queryForObject(
+            "SELECT delivered_at FROM notification_deliveries WHERE id = ?",
+            String.class,
+            deliveredId
+        ));
+
+        String failedLease = "failed-owner-" + UUID.randomUUID();
+        long failedId = processingNotificationDelivery(failedLease);
+        String nextAttemptAt = OffsetDateTime.now().plusMinutes(1).toString();
+
+        assertThrows(IllegalArgumentException.class, () -> notificationDeliveryStatusRepository.markFailed(
+            failedId,
+            failedLease,
+            "delivered",
+            nextAttemptAt,
+            "invalid transition",
+            completedAt
+        ));
+        assertEquals("processing", notificationDeliveryStatus(failedId));
+        assertEquals(failedLease, notificationDeliveryLockToken(failedId));
+
+        assertFalse(notificationDeliveryStatusRepository.markFailed(
+            failedId,
+            "stale-worker",
+            "failed",
+            nextAttemptAt,
+            "stale failure",
+            completedAt
+        ));
+        assertEquals("processing", notificationDeliveryStatus(failedId));
+        assertEquals(failedLease, notificationDeliveryLockToken(failedId));
+
+        assertTrue(notificationDeliveryStatusRepository.markFailed(
+            failedId,
+            failedLease,
+            "failed",
+            nextAttemptAt,
+            "webhook failed",
+            completedAt
+        ));
+        assertEquals("failed", notificationDeliveryStatus(failedId));
+        assertNull(notificationDeliveryLockToken(failedId));
+        assertEquals("webhook failed", jdbc.queryForObject(
+            "SELECT last_error FROM notification_deliveries WHERE id = ?",
+            String.class,
+            failedId
+        ));
+    }
+
     private long approvalId(ApiResponse response) throws Exception {
         @SuppressWarnings("unchecked")
         Map<String, Object> approval = (Map<String, Object>) parseMap(response.body()).get("request");
@@ -1227,5 +1297,39 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
 
     private String outboxLockToken(long id) {
         return jdbc.queryForObject("SELECT lock_token FROM outbox_events WHERE id = ?", String.class, id);
+    }
+
+    private long processingNotificationDelivery(String lockToken) {
+        String now = OffsetDateTime.now().toString();
+        long notificationId = jdbc.queryForObject(
+            "SELECT nextval(pg_get_serial_sequence('notifications', 'id'))",
+            Long.class
+        );
+        return jdbc.queryForObject("""
+            INSERT INTO notification_deliveries (
+                notification_id, user_id, channel, provider, status, attempts,
+                next_attempt_at, locked_at, lock_token, delivered_at, last_error,
+                response_status, created_at, updated_at
+            ) VALUES (
+                ?, 1, 'webhook', 'generic', 'processing', 1,
+                NULL, ?, ?, NULL, NULL, NULL, ?, ?
+            ) RETURNING id
+            """, Long.class, notificationId, now, lockToken, now, now);
+    }
+
+    private String notificationDeliveryStatus(long id) {
+        return jdbc.queryForObject(
+            "SELECT status FROM notification_deliveries WHERE id = ?",
+            String.class,
+            id
+        );
+    }
+
+    private String notificationDeliveryLockToken(long id) {
+        return jdbc.queryForObject(
+            "SELECT lock_token FROM notification_deliveries WHERE id = ?",
+            String.class,
+            id
+        );
     }
 }
