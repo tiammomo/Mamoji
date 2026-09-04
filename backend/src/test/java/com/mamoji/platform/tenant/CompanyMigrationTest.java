@@ -86,7 +86,7 @@ class CompanyMigrationTest {
                 assertEquals("CN-GD-SZ-STARTUP-LITE", result.getString("policy_profile_key"));
                 assertEquals(1, result.getInt("fiscal_year_start_month"));
             }
-            assertEquals("30", latestVersion(statement));
+            assertEquals("31", latestVersion(statement));
             assertTrue(companyConstraints(statement).containsAll(Set.of(
                 "fk_companies_owner",
                 "ck_companies_version",

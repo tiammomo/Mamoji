@@ -51,10 +51,12 @@ jobs:
         run: npm run build
 
       - name: Shell syntax
-        run: bash -n scripts/*.sh scripts/tests/*.sh scripts/tests/fixtures/replica-smoke-bin/*
+        run: bash -n scripts/*.sh scripts/tests/*.sh scripts/tests/fixtures/backup-bin/* scripts/tests/fixtures/replica-smoke-bin/*
 
       - name: Shell tests
-        run: scripts/tests/replica-smoke-test.sh
+        run: |
+          scripts/tests/backup-maintenance-test.sh
+          scripts/tests/replica-smoke-test.sh
 
       - name: Compose config
         run: docker compose -f docker-compose.prod.yml --env-file .env.production.example config >/tmp/mamoji-compose.yml
