@@ -1,6 +1,6 @@
 package com.mamoji.evidence.application;
 
-import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import java.util.List;
 import java.util.Optional;
