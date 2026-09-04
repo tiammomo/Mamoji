@@ -9,12 +9,12 @@ import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.audit.application.AuditTrailService;
-import com.mamoji.repository.InMemoryStore;
 import com.mamoji.service.support.AccessControlService;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -138,7 +138,7 @@ public class PayrollService {
         if ("closed".equals(run.status)) {
             return attachItems(run);
         }
-        String now = InMemoryStore.now();
+        String now = OffsetDateTime.now().toString();
         jdbc.update("""
             UPDATE payroll_runs
             SET status = 'closed', closed_by_user_id = ?, closed_at = ?, updated_at = ?
@@ -195,7 +195,7 @@ public class PayrollService {
         run.netPayTotal = sum(items, item -> item.netPay);
         run.companyCostTotal = sum(items, item -> item.companyCost);
         run.createdByUserId = createdByUserId;
-        run.createdAt = InMemoryStore.now();
+        run.createdAt = OffsetDateTime.now().toString();
         run.updatedAt = run.createdAt;
         return run;
     }
@@ -217,7 +217,7 @@ public class PayrollService {
         item.personalDeduction = money(employee.personalDeduction);
         item.netPay = money(employee.netPayEstimate);
         item.companyCost = money(employee.monthlyCost);
-        item.createdAt = InMemoryStore.now();
+        item.createdAt = OffsetDateTime.now().toString();
         item.snapshotJson = snapshotJson(employee, item);
         return item;
     }
