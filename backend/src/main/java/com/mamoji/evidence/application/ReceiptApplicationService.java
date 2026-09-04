@@ -21,7 +21,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -38,8 +37,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.decimalParam;
-import static com.mamoji.common.PayloadReader.longParam;
-import static com.mamoji.common.PayloadReader.nullableText;
 import static com.mamoji.common.PayloadReader.optionalLong;
 import static com.mamoji.common.PayloadReader.text;
 import static com.mamoji.service.support.DomainSupport.require;
@@ -254,13 +251,13 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     }
 
     @Transactional
-    public Map<String, Object> upload(String authorization, MultipartFile file, Map<String, String> params) {
+    public ReceiptVoucher upload(String authorization, MultipartFile file, ReceiptUploadCommand request) {
         User user = accessControl.requireUser(authorization);
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt image is required");
         }
-        Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        String voucherType = normalizeVoucherType(params.getOrDefault("voucherType", "purchase_invoice"));
+        Company company = accessControl.resolveCompany(user, request.companyId());
+        String voucherType = valueOr(request.voucherType(), "purchase_invoice");
         requireReceiptCreatePermission(user, company.id, voucherType);
         String fileHash = sha256(file);
         receiptFileHashes.lock(company.id, fileHash);
@@ -279,33 +276,33 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         }
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
-            validateTransaction(user, longParam(params, "transactionId", 0), company.id).map(tx -> tx.id).orElse(null),
-            params.getOrDefault("voucherNo", nextVoucherNo()),
-            params.getOrDefault("title", filename),
+            validateTransaction(user, request.transactionId(), company.id).map(tx -> tx.id).orElse(null),
+            valueOr(request.voucherNo(), nextVoucherNo()),
+            valueOr(request.title(), filename),
             voucherType,
-            normalizeDirection(params.getOrDefault("direction", "expense")),
-            params.getOrDefault("counterparty", "待补充"),
-            decimalParam(params, "amount", BigDecimal.ZERO),
-            decimalParam(params, "taxAmount", BigDecimal.ZERO),
-            validateDate("issueDate", params.getOrDefault("issueDate", LocalDate.now().toString())),
-            validateOptionalDate("dueDate", params.get("dueDate")),
-            normalizeStatus(params.getOrDefault("status", "pending_review")),
+            valueOr(request.direction(), "expense"),
+            valueOr(request.counterparty(), "待补充"),
+            valueOr(request.amount(), BigDecimal.ZERO),
+            valueOr(request.taxAmount(), BigDecimal.ZERO),
+            valueOr(request.issueDate(), LocalDate.now()).toString(),
+            stringValue(request.dueDate()),
+            valueOr(request.status(), "pending_review"),
             filename,
             file.getSize(),
             storedObject.contentType(),
             "low",
-            params.get("note"),
+            nullableTextValue(request.note()),
             user.id
         ));
-        voucher.taxRate = decimalParam(params, "taxRate", voucher.taxRate);
-        if (params.containsKey("taxPeriod")) {
-            voucher.taxPeriod = nullableText(params.get("taxPeriod"));
+        voucher.taxRate = valueOr(request.taxRate(), voucher.taxRate);
+        if (request.taxPeriod() != null) {
+            voucher.taxPeriod = request.taxPeriod();
         }
-        voucher.invoiceCheckStatus = normalizeInvoiceCheckStatus(params.getOrDefault("invoiceCheckStatus", voucher.invoiceCheckStatus));
-        voucher.deductionStatus = normalizeDeductionStatus(params.getOrDefault("deductionStatus", voucher.deductionStatus));
-        voucher.reimbursementStatus = normalizeReimbursementStatus(params.getOrDefault("reimbursementStatus", voucher.reimbursementStatus));
-        voucher.businessPurpose = params.containsKey("businessPurpose") ? nullableText(params.get("businessPurpose")) : voucher.businessPurpose;
-        voucher.expenseOwner = params.containsKey("expenseOwner") ? nullableText(params.get("expenseOwner")) : voucher.expenseOwner;
+        voucher.invoiceCheckStatus = valueOr(request.invoiceCheckStatus(), voucher.invoiceCheckStatus);
+        voucher.deductionStatus = valueOr(request.deductionStatus(), voucher.deductionStatus);
+        voucher.reimbursementStatus = valueOr(request.reimbursementStatus(), voucher.reimbursementStatus);
+        voucher.businessPurpose = nullableTextValue(request.businessPurpose());
+        voucher.expenseOwner = nullableTextValue(request.expenseOwner());
         voucher.fileStorageProvider = storedObject.provider();
         voucher.fileBucket = storedObject.bucket();
         voucher.fileObjectKey = storedObject.objectKey();
@@ -321,40 +318,35 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             OffsetDateTime.now().toString()
         );
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
-        return Map.of(
-            "success", true,
-            "voucher", voucher,
-            "message", "Receipt uploaded"
-        );
+        return voucher;
     }
 
     @Transactional
-    public Map<String, Object> batchUpload(String authorization, List<MultipartFile> files, Map<String, String> params) {
+    public ReceiptBatchUploadResult batchUpload(
+        String authorization,
+        List<MultipartFile> files,
+        ReceiptUploadCommand request
+    ) {
         if (files == null || files.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one receipt file is required");
         }
         if (files.size() > 8) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload at most 8 receipt files at a time");
         }
-        List<Object> uploaded = new ArrayList<>();
-        List<Map<String, Object>> failed = new ArrayList<>();
+        List<ReceiptVoucher> uploaded = new ArrayList<>();
+        List<ReceiptUploadFailure> failed = new ArrayList<>();
         for (MultipartFile file : files) {
             try {
-                uploaded.add(upload(authorization, file, params).get("voucher"));
+                uploaded.add(upload(authorization, file, request));
             } catch (ResponseStatusException ex) {
-                failed.add(Map.of(
-                    "fileName", Objects.toString(file.getOriginalFilename(), "receipt"),
-                    "reason", Objects.toString(ex.getReason(), "Upload failed"),
-                    "status", ex.getStatusCode().value()
+                failed.add(new ReceiptUploadFailure(
+                    Objects.toString(file.getOriginalFilename(), "receipt"),
+                    Objects.toString(ex.getReason(), "Upload failed"),
+                    ex.getStatusCode().value()
                 ));
             }
         }
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("successCount", uploaded.size());
-        result.put("failureCount", failed.size());
-        result.put("vouchers", uploaded);
-        result.put("failures", failed);
-        return result;
+        return new ReceiptBatchUploadResult(uploaded, failed);
     }
 
     private String sha256(MultipartFile file) {
@@ -702,47 +694,6 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt voucher not found"));
     }
 
-    private String validateDate(String field, String value) {
-        try {
-            LocalDate.parse(value);
-            return value;
-        } catch (DateTimeParseException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must use yyyy-MM-dd format");
-        }
-    }
-
-    private String validateOptionalDate(String field, String value) {
-        return value == null || value.isBlank() ? null : validateDate(field, value);
-    }
-
-    private String normalizeVoucherType(String value) {
-        return switch (value) {
-            case "sales_invoice", "purchase_invoice", "receipt", "bank_slip", "contract", "reimbursement", "tax_receipt" -> value;
-            default -> "purchase_invoice";
-        };
-    }
-
-    private String normalizeInvoiceCheckStatus(String value) {
-        return switch (value) {
-            case "not_required", "pending", "verified", "failed" -> value;
-            default -> "not_required";
-        };
-    }
-
-    private String normalizeDeductionStatus(String value) {
-        return switch (value) {
-            case "not_applicable", "pending", "deductible", "deducted", "transferred_out" -> value;
-            default -> "not_applicable";
-        };
-    }
-
-    private String normalizeReimbursementStatus(String value) {
-        return switch (value) {
-            case "not_applicable", "submitted", "approved", "paid", "archived", "rejected" -> value;
-            default -> "not_applicable";
-        };
-    }
-
     private String normalizeApprovalStatus(String value) {
         return switch (value) {
             case "not_required", "not_submitted", "pending", "approved", "rejected" -> value;
@@ -754,17 +705,6 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         return switch (value) {
             case "not_started", "draft", "posted", "reversed" -> value;
             default -> "not_started";
-        };
-    }
-
-    private String normalizeDirection(String value) {
-        return "income".equals(value) ? "income" : "expense";
-    }
-
-    private String normalizeStatus(String value) {
-        return switch (value) {
-            case "pending_review", "verified", "linked", "archived", "rejected" -> value;
-            default -> "pending_review";
         };
     }
 
