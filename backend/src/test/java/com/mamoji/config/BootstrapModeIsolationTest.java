@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.mamoji.bootstrap.DemoEnterpriseDataInitializer;
 import com.mamoji.bootstrap.EnterpriseDataInitializer;
+import com.mamoji.bootstrap.ProductionBootstrapCommand;
 import com.mamoji.budget.application.BudgetRepository;
 import com.mamoji.budget.domain.BudgetPolicy;
 import com.mamoji.budget.infrastructure.BudgetDataInitializer;
@@ -57,6 +58,8 @@ class BootstrapModeIsolationTest {
             DemoReceiptVoucherDataInitializer.class
         )
         .withBean("initialAdminDataInitializer", Object.class, Object::new)
+        .withBean("productionReadinessGuard", Object.class, Object::new)
+        .withBean(ProductionBootstrapCommand.class, () -> mock(ProductionBootstrapCommand.class))
         .withBean(CompanyProvisioningService.class, () -> mock(CompanyProvisioningService.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(UserDirectory.class, () -> mock(UserDirectory.class))

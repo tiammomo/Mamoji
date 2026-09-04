@@ -80,7 +80,6 @@ mamoji:
       backup-ui-enabled: ${MAMOJI_MODULE_BACKUP_UI_ENABLED:false}
   runtime:
     environment: ${MAMOJI_RUNTIME_ENVIRONMENT:local}
-    single-instance-guard-enabled: ${MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED:true}
   bootstrap:
     mode: ${MAMOJI_BOOTSTRAP_MODE:demo}
     admin-email: ${MAMOJI_BOOTSTRAP_ADMIN_EMAIL:test@mamoji.com}
