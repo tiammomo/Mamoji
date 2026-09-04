@@ -1,65 +1,123 @@
 package com.mamoji.bootstrap;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.people.application.EmploymentEventRepository;
+import com.mamoji.people.domain.Department;
 import com.mamoji.people.domain.Employee;
-import com.mamoji.people.domain.EmployeeCompensationPolicy;
 import com.mamoji.platform.audit.application.AuditTrailService;
 import com.mamoji.platform.identity.account.application.UserDirectory;
+import com.mamoji.platform.tenant.Company;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransferRepository;
-import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 class EnterpriseDataInitializerTest {
     @Test
-    void bootstrapStartupDoesNotRewriteAlreadyHydratedEmployees() {
-        EmployeeRepository employees = mock(EmployeeRepository.class);
+    void bootstrapStartupWithExistingCompanyDoesNotScanOrRewriteBusinessData() {
         CompanyRepository companies = mock(CompanyRepository.class);
-        Employee employee = hydratedEmployee();
+        EmployeeRepository employees = mock(EmployeeRepository.class);
+        CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
         when(companies.existsAny()).thenReturn(true);
-        when(companies.findAll()).thenReturn(List.of());
-        when(employees.findAll()).thenReturn(List.of(employee));
-        EnterpriseDataInitializer initializer = initializer(companies, employees);
 
-        initializer.initialize();
+        initializer(
+            companies,
+            employees,
+            memberships,
+            mock(UserDirectory.class),
+            mock(DepartmentRepository.class),
+            mock(EmploymentEventRepository.class)
+        ).initialize();
 
-        verify(employees, never()).update(employee);
+        verify(companies).existsAny();
+        verify(companies, never()).findAll();
+        verify(companies, never()).update(any());
+        verifyNoInteractions(employees, memberships);
     }
 
     @Test
-    void bootstrapStartupPersistsAnEmployeeOnlyWhenLegacyDefaultsChange() {
-        EmployeeRepository employees = mock(EmployeeRepository.class);
+    void bootstrapFirstRunCreatesMembershipsAtTheSameBoundaryAsSeedRecords() {
         CompanyRepository companies = mock(CompanyRepository.class);
-        Employee employee = hydratedEmployee();
-        employee.socialInsuranceRegion = null;
-        when(companies.existsAny()).thenReturn(true);
-        when(companies.findAll()).thenReturn(List.of());
-        when(employees.findAll()).thenReturn(List.of(employee));
-        EnterpriseDataInitializer initializer = initializer(companies, employees);
+        EmployeeRepository employees = mock(EmployeeRepository.class);
+        DepartmentRepository departments = mock(DepartmentRepository.class);
+        EmploymentEventRepository events = mock(EmploymentEventRepository.class);
+        CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
+        UserDirectory users = mock(UserDirectory.class);
+        when(companies.existsAny()).thenReturn(false);
+        when(users.findAll()).thenReturn(List.of(
+            new UserDirectory.Entry(7L, "owner@mamoji.test", "Owner", "", null, 1, 15)
+        ));
+        when(companies.insert(any())).thenAnswer(invocation -> {
+            Company company = invocation.getArgument(0);
+            company.id = 101L;
+            return company;
+        });
+        when(departments.insert(any())).thenAnswer(invocation -> {
+            Department department = invocation.getArgument(0);
+            department.id = 201L;
+            return department;
+        });
+        when(employees.insert(any())).thenAnswer(invocation -> {
+            Employee employee = invocation.getArgument(0);
+            employee.id = 301L;
+            return employee;
+        });
+        when(events.append(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        initializer.initialize();
+        initializer(companies, employees, memberships, users, departments, events).initialize();
 
-        verify(employees).update(employee);
+        ArgumentCaptor<Company> company = ArgumentCaptor.forClass(Company.class);
+        verify(memberships).ensureOwner(company.capture());
+        assertEquals(101L, company.getValue().id);
+        assertEquals(7L, company.getValue().ownerId);
+
+        ArgumentCaptor<Employee> employee = ArgumentCaptor.forClass(Employee.class);
+        verify(memberships).synchronize(employee.capture());
+        assertEquals(301L, employee.getValue().id);
+        assertEquals(7L, employee.getValue().userId);
+        assertEquals("founder", employee.getValue().accessRole);
+        assertEquals("company", employee.getValue().accessScope);
+        verify(employees, never()).findAll();
     }
 
-    private EnterpriseDataInitializer initializer(CompanyRepository companies, EmployeeRepository employees) {
+    @Test
+    void legacyFullTableMembershipSynchronizerStaysRemoved() {
+        assertThrows(
+            ClassNotFoundException.class,
+            () -> Class.forName("com.mamoji.platform.tenant.MembershipBootstrapSynchronizer")
+        );
+    }
+
+    private EnterpriseDataInitializer initializer(
+        CompanyRepository companies,
+        EmployeeRepository employees,
+        CompanyMembershipRepository memberships,
+        UserDirectory users,
+        DepartmentRepository departments,
+        EmploymentEventRepository events
+    ) {
         return new EnterpriseDataInitializer(
             mock(JdbcTemplate.class),
-            mock(UserDirectory.class),
+            users,
             mock(AuditTrailService.class),
-            mock(DepartmentRepository.class),
+            departments,
             employees,
-            mock(EmploymentEventRepository.class),
+            events,
             companies,
+            memberships,
             mock(EntityTransferRepository.class),
             "bootstrap",
             "Company",
@@ -68,18 +126,5 @@ class EnterpriseDataInitializerTest {
             "Taxpayer",
             "CNY"
         );
-    }
-
-    private Employee hydratedEmployee() {
-        Employee employee = new Employee();
-        employee.salary = new BigDecimal("10000");
-        employee.socialInsurance = BigDecimal.ZERO;
-        employee.housingFund = BigDecimal.ZERO;
-        employee.taxEstimate = BigDecimal.ZERO;
-        employee.accessRole = "employee";
-        employee.accessScope = "self";
-        employee.status = "active";
-        EmployeeCompensationPolicy.initialize(employee, BigDecimal.ZERO);
-        return employee;
     }
 }

@@ -7,7 +7,6 @@ import java.util.stream.Stream;
 /** Normalizes and validates the stable company profile used by tenant-aware modules. */
 public final class CompanyProfilePolicy {
     private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
-    private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
     private static final String SHENZHEN_STARTUP_POLICY_PROFILE = "CN-GD-SZ-STARTUP-LITE";
 
     private CompanyProfilePolicy() {
@@ -25,45 +24,6 @@ public final class CompanyProfilePolicy {
         company.operatingRegion = regionLabel(company);
         company.policyProfileKey = defaultPolicyProfileKey(company);
         company.fiscalYearStartMonth = 1;
-    }
-
-    /** Repairs defaults produced by historical application versions before normal validation. */
-    public static boolean hydrateLegacyDefaults(Company company) {
-        boolean updated = false;
-        if (isBlank(company.entityType)) {
-            company.entityType = "company";
-            updated = true;
-        }
-        if (isBlank(company.country)) {
-            company.country = "中国";
-            updated = true;
-        }
-        if (isBlank(company.province) && company.name != null && company.name.contains("深圳")) {
-            company.province = "广东省";
-            updated = true;
-        }
-        if (isBlank(company.city) && company.name != null && company.name.contains("深圳")) {
-            company.city = "深圳市";
-            updated = true;
-        }
-        if (isBlank(company.operatingRegion)) {
-            company.operatingRegion = regionLabel(company);
-            updated = true;
-        }
-        if (company.city != null && company.city.contains("深圳")
-            && (DEFAULT_POLICY_PROFILE.equals(company.policyProfileKey)
-                || LEGACY_SHENZHEN_POLICY_PROFILE.equals(company.policyProfileKey))) {
-            company.policyProfileKey = SHENZHEN_STARTUP_POLICY_PROFILE;
-            updated = true;
-        } else if (isBlank(company.policyProfileKey)) {
-            company.policyProfileKey = defaultPolicyProfileKey(company);
-            updated = true;
-        }
-        if (company.fiscalYearStartMonth < 1 || company.fiscalYearStartMonth > 12) {
-            company.fiscalYearStartMonth = 1;
-            updated = true;
-        }
-        return updated;
     }
 
     public static void normalizeAndValidate(Company company) {

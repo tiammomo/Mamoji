@@ -10,6 +10,7 @@ import com.mamoji.people.domain.Department;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmployeeCompensationPolicy;
 import com.mamoji.people.domain.EmploymentEvent;
+import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.platform.tenant.EntityTransfer;
@@ -21,7 +22,6 @@ import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.DependsOn;
@@ -51,6 +51,7 @@ public class EnterpriseDataInitializer {
     private final EmployeeRepository employeeRepository;
     private final EmploymentEventRepository employmentEventRepository;
     private final CompanyRepository companyRepository;
+    private final CompanyMembershipRepository companyMembershipRepository;
     private final EntityTransferRepository entityTransferRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
@@ -67,6 +68,7 @@ public class EnterpriseDataInitializer {
         EmployeeRepository employeeRepository,
         EmploymentEventRepository employmentEventRepository,
         CompanyRepository companyRepository,
+        CompanyMembershipRepository companyMembershipRepository,
         EntityTransferRepository entityTransferRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
@@ -82,6 +84,7 @@ public class EnterpriseDataInitializer {
         this.employeeRepository = employeeRepository;
         this.employmentEventRepository = employmentEventRepository;
         this.companyRepository = companyRepository;
+        this.companyMembershipRepository = companyMembershipRepository;
         this.entityTransferRepository = entityTransferRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
@@ -94,14 +97,11 @@ public class EnterpriseDataInitializer {
     @PostConstruct
     void initialize() {
         ensureInitialEnterpriseData();
-        ensureCompanyPolicyDefaults();
         if (!isBootstrapMode()) {
             ensureHouseholdSubject();
             ensureCompensationBenchmarkEmployees();
             ensureEntityTransferSeed();
         }
-        ensureEmployeePayrollDefaults();
-        ensureAccessDefaults();
     }
 
     private void ensureInitialEnterpriseData() {
@@ -137,7 +137,7 @@ public class EnterpriseDataInitializer {
             bootstrapCompanyTaxpayerType,
             bootstrapCompanyCurrency
         );
-        companyRepository.insert(company);
+        insertCompany(company);
 
         Department management = createSeedDepartment(company.id, "管理层", "MGMT", "0");
         Employee founder = createSeedEmployee(
@@ -190,7 +190,7 @@ public class EnterpriseDataInitializer {
             "小规模纳税人",
             "CNY"
         );
-        companyRepository.insert(company);
+        insertCompany(company);
         Department management = createSeedDepartment(company.id, "管理层", "CEO", "30000");
         Department finance = createSeedDepartment(company.id, "财务行政", "FIN-ADMIN", "42000");
         Department product = createSeedDepartment(company.id, "产品研发", "RND", "120000");
@@ -359,7 +359,7 @@ public class EnterpriseDataInitializer {
         household.city = "深圳市";
         household.operatingRegion = CompanyProfilePolicy.regionLabel(household);
         household.policyProfileKey = "CN-HOUSEHOLD-ASSET-PROFILE";
-        companyRepository.insert(household);
+        insertCompany(household);
     }
 
     private void ensureEntityTransferSeed() {
@@ -393,56 +393,6 @@ public class EnterpriseDataInitializer {
             "公司报销家庭代垫支出", "recorded", owner.id());
     }
 
-    private void ensureCompanyPolicyDefaults() {
-        companyRepository.findAll().forEach(company -> {
-            if (CompanyProfilePolicy.hydrateLegacyDefaults(company)) {
-                companyRepository.update(company);
-            }
-        });
-    }
-
-    private void ensureAccessDefaults() {
-        Map<Long, UserDirectory.Entry> usersById = userDirectory.findAll().stream()
-            .collect(java.util.stream.Collectors.toMap(UserDirectory.Entry::id, user -> user));
-        employeeRepository.findAll().forEach(employee -> {
-            String role = employee.accessRole == null || employee.accessRole.isBlank() ? "employee" : employee.accessRole;
-            String scope = employee.accessScope == null || employee.accessScope.isBlank() ? "self" : employee.accessScope;
-            Optional<UserDirectory.Entry> user = Optional.ofNullable(employee.userId).map(usersById::get);
-            if (user.map(candidate -> candidate.role() == 1).orElse(false)) {
-                role = "founder";
-                scope = "company";
-            } else if (employee.position != null && employee.position.contains("财务")) {
-                role = "finance_admin";
-                scope = "company";
-            } else if (employee.position != null && employee.position.contains("人事")) {
-                role = "hr_admin";
-                scope = "company";
-            } else if (employee.position != null && (employee.position.contains("负责人") || employee.position.contains("经理"))) {
-                role = "department_manager";
-                scope = "department";
-            }
-            if ("departed".equals(employee.status)) {
-                role = "viewer";
-                scope = "self";
-            }
-            if (!role.equals(employee.accessRole) || !scope.equals(employee.accessScope)) {
-                employee.accessRole = role;
-                employee.accessScope = scope;
-                employee.updatedAt = now();
-                employeeRepository.update(employee);
-            }
-        });
-    }
-
-    private void ensureEmployeePayrollDefaults() {
-        employeeRepository.findAll().forEach(employee -> {
-            if (EmployeeCompensationPolicy.hydrate(employee)) {
-                employee.updatedAt = now();
-                employeeRepository.update(employee);
-            }
-        });
-    }
-
     private Company newCompany(
         long ownerId,
         String name,
@@ -463,6 +413,11 @@ public class EnterpriseDataInitializer {
         CompanyProfilePolicy.initialize(company);
         stamp(company);
         return company;
+    }
+
+    private void insertCompany(Company company) {
+        companyRepository.insert(company);
+        companyMembershipRepository.ensureOwner(company);
     }
 
     private Department createSeedDepartment(long companyId, String name, String costCenter, String budget) {
@@ -520,7 +475,9 @@ public class EnterpriseDataInitializer {
         employee.emergencyContact = emergencyContact;
         stamp(employee);
         EmployeeCompensationPolicy.initialize(employee, money(monthlyCost));
-        return employeeRepository.insert(employee);
+        Employee inserted = employeeRepository.insert(employee);
+        companyMembershipRepository.synchronize(inserted);
+        return inserted;
     }
 
     private EmploymentEvent createSeedEmploymentEvent(
