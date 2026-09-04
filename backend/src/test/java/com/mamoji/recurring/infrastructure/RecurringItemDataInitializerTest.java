@@ -7,7 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.platform.tenant.Company;
@@ -20,21 +19,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class RecurringItemDataInitializerTest {
-    @Test
-    void bootstrapModeDoesNotCreateDemoRules() {
-        RecurringItemRepository recurringItems = mock(RecurringItemRepository.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        RecurringItemDataInitializer initializer = new RecurringItemDataInitializer(
-            recurringItems,
-            companies,
-            "bootstrap"
-        );
-
-        initializer.initialize();
-
-        verifyNoInteractions(recurringItems, companies);
-    }
-
     @Test
     void demoModeCreatesCompanyScopedRuleOnlyOnce() {
         RecurringItemRepository recurringItems = mock(RecurringItemRepository.class);
@@ -50,8 +34,7 @@ class RecurringItemDataInitializerTest {
             .thenReturn(List.of(existing));
         RecurringItemDataInitializer initializer = new RecurringItemDataInitializer(
             recurringItems,
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();
@@ -82,8 +65,7 @@ class RecurringItemDataInitializerTest {
         when(recurringItems.findByOwnerAndCompany(3, 9)).thenReturn(List.of(new RecurringItem()));
         RecurringItemDataInitializer initializer = new RecurringItemDataInitializer(
             recurringItems,
-            companies,
-            "demo"
+            companies
         );
 
         initializer.initialize();

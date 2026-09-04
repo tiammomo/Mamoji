@@ -9,36 +9,27 @@ import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional recurring-rule demo data after enterprise subjects exist. */
 @Component
+@ConditionalOnProperty(name = "mamoji.bootstrap.mode", havingValue = "demo", matchIfMissing = true)
 @DependsOn("enterpriseDataInitializer")
 public class RecurringItemDataInitializer {
     private final RecurringItemRepository recurringItems;
     private final CompanyRepository companies;
-    private final String bootstrapMode;
 
-    public RecurringItemDataInitializer(
-        RecurringItemRepository recurringItems,
-        CompanyRepository companies,
-        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
-    ) {
+    public RecurringItemDataInitializer(RecurringItemRepository recurringItems, CompanyRepository companies) {
         this.recurringItems = recurringItems;
         this.companies = companies;
-        this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
     @PostConstruct
     void initialize() {
-        if ("bootstrap".equals(bootstrapMode)) {
-            return;
-        }
         Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));

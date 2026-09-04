@@ -19,11 +19,9 @@ import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
-import com.mamoji.platform.tenant.EntityTransferRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 class EnterpriseDataInitializerTest {
     @Test
@@ -110,7 +108,6 @@ class EnterpriseDataInitializerTest {
         EmploymentEventRepository events
     ) {
         return new EnterpriseDataInitializer(
-            mock(JdbcTemplate.class),
             users,
             mock(AuditTrailService.class),
             departments,
@@ -118,8 +115,6 @@ class EnterpriseDataInitializerTest {
             events,
             companies,
             memberships,
-            mock(EntityTransferRepository.class),
-            "bootstrap",
             "Company",
             null,
             "Industry",

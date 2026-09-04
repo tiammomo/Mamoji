@@ -63,7 +63,7 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 把本地 demo 夹具迁到显式开发 profile 或独立 bootstrap job，为解除单实例保护继续收窄启动写路径；
+1. 把剩余票据兼容修复迁为一次性 migration，并继续清理通用默认账本/分类的启动扫描；
 2. 评估通知 Outbox 的外部消息适配层与失败重试边界；
 3. 统一需要可重复测试的业务时钟边界，避免业务规则直接依赖系统时间。
 
@@ -72,6 +72,7 @@ api -> application -> domain
 跨模块审计依赖与旧 Store 退场的决策、数据兼容性和回滚方式见 [ADR 0001：删除 EnterpriseStore 兼容层](adr/0001-retire-enterprise-store.md)。
 首次管理员启动顺序、通用工具收口与最后一个旧 Store 退场见 [ADR 0002：删除 InMemoryStore 兼容层](adr/0002-retire-in-memory-store.md)。
 生产启动期全表修复和成员授权反向覆盖的退场见 [ADR 0003：删除生产启动期全表兼容修复](adr/0003-retire-startup-compatibility-repairs.md)。
+demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生产 Spring 上下文隔离 demo 初始化器](adr/0004-isolate-demo-initializers.md)。
 
 ## PostgreSQL 集成测试套件
 

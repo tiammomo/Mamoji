@@ -255,7 +255,7 @@ scripts/deploy-prod.sh
 
 生产部署要点：
 
-- `MAMOJI_BOOTSTRAP_MODE=bootstrap`：只初始化管理员、公司主体和管理员员工档案，不生成演示数据。
+- `MAMOJI_BOOTSTRAP_MODE=bootstrap`：只初始化管理员、公司主体、管理员员工档案、默认账本和通用分类；账户、流水、预算、周期事项、税务、票据及其他演示初始化器不会注册到生产 Spring 上下文。
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`：启用生产启动 guard，发现演示配置、弱密钥或本地来源会直接拒绝启动。
 - `MAMOJI_FLYWAY_ENABLED=true`：所有环境只由 Flyway 管理正式 schema，应用启动过程不执行建表或兼容补列。
 - `MAMOJI_REGISTRATION_MODE=invite`：生产默认邀请制注册。

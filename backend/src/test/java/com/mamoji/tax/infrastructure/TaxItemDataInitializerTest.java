@@ -4,7 +4,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mamoji.platform.tenant.Company;
@@ -17,20 +16,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
 class TaxItemDataInitializerTest {
-    @Test
-    void bootstrapModeDoesNotCreateDemoTaxItems() {
-        TaxItemRepository taxItems = mock(TaxItemRepository.class);
-        CompanyRepository companies = mock(CompanyRepository.class);
-        PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
-        TaxItemDataInitializer initializer = new TaxItemDataInitializer(
-            taxItems, new TaxItemPolicy(), companies, transactions, "bootstrap"
-        );
-
-        initializer.initialize();
-
-        verifyNoInteractions(taxItems, companies, transactions);
-    }
-
     @Test
     void demoModeDoesNotRestoreTaxItemsAfterTheirLifecycleWasAudited() {
         TaxItemRepository taxItems = mock(TaxItemRepository.class);
@@ -46,7 +31,7 @@ class TaxItemDataInitializerTest {
         when(taxItems.findByCompany(42)).thenReturn(List.of());
         when(taxItems.hasLifecycleHistory(42)).thenReturn(true);
         TaxItemDataInitializer initializer = new TaxItemDataInitializer(
-            taxItems, new TaxItemPolicy(), companies, transactions, "demo"
+            taxItems, new TaxItemPolicy(), companies, transactions
         );
 
         initializer.initialize();

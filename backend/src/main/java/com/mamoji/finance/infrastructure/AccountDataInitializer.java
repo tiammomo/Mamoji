@@ -12,33 +12,25 @@ import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional account demo data after the company and its accounting ledger exist. */
 @Component
+@ConditionalOnProperty(name = "mamoji.bootstrap.mode", havingValue = "demo", matchIfMissing = true)
 @DependsOn("ledgerDataInitializer")
 public class AccountDataInitializer {
     private final FinanceRepository finances;
     private final CompanyRepository companies;
-    private final String bootstrapMode;
 
-    public AccountDataInitializer(
-        FinanceRepository finances,
-        CompanyRepository companies,
-        @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
-    ) {
+    public AccountDataInitializer(FinanceRepository finances, CompanyRepository companies) {
         this.finances = finances;
         this.companies = companies;
-        this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
     @PostConstruct
     void initialize() {
-        if ("bootstrap".equals(bootstrapMode)) {
-            return;
-        }
         Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparingLong(candidate -> candidate.id));

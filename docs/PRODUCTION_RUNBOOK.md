@@ -7,7 +7,7 @@
 - 设置 `MAMOJI_RUNTIME_ENVIRONMENT=production`，启用生产启动 guard。guard 会拒绝 demo/open/localhost/default secret 等高风险配置。
 - 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。当前进程内读模型只支持一个后端实例；第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`。完成数据库直读仓储改造后才能解除该限制。
 - 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。它只在首次空库初始化时创建管理员、公司主体和管理员员工档案；系统已有用户后，改密码请走应用内操作。
-- 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会生成测试账号、演示流水、演示员工、演示税费或家庭资产主体。
+- 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会注册 demo 初始化器，也不会生成测试账号、演示账户、演示流水、演示员工、演示预算、演示周期事项、演示税费、演示票据或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
 - 应用运行时不具备兼容建表通道；所有 schema 变更必须先以 Flyway migration 发布。
 - 已有公司数据经过 `EnterpriseDataInitializer` 时不会扫描或改写公司、员工和成员全表；成员授权以 `company_memberships` 为准，不从职位名称反向推断。若审计发现缺失关系，应依据真实授权记录显式修复。
