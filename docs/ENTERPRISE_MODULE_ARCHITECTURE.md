@@ -244,6 +244,8 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 票据单文件与批量上传也共享 validated multipart DTO，并映射为不依赖 Web 的 `ReceiptUploadCommand`。应用层返回 typed voucher 或不可变批量结果，API 响应保持既有 JSON 结构；共享元数据在对象存储和数据库操作前校验，逐文件格式、存储及重复冲突仍按部分成功语义汇总。
 
+票据列表使用 validated query DTO 映射为 `ReceiptListQuery`，非法公司 ID、金额、日期、枚举和分页参数不再静默降级。筛选、COUNT、稳定分页及 typed `ReceiptSummary` 聚合已下推 Evidence JDBC 适配器；列表在只读 `REPEATABLE_READ` 事务内保持总数与当前页一致，关键字 LIKE 元字符按字面量处理。
+
 生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；多副本发布自动逐实例验证 readiness、共享会话和全局注销，预生产可显式演练单副本停止与重新加入。扩容时仍必须合并计算数据库连接预算，并以双容器并发压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
 
 ## 10. 后续拆分顺序
@@ -251,9 +253,9 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 ### P0：完成核心边界
 
 - 审批用例、持久化端口和 JDBC 适配器已迁入纵向模块，并通过 `ApprovalEntityGateway` 隔离多态业务对象。
-- 票据 Controller、应用服务、仓储端口、领域模型及全部写命令已迁入 Evidence 纵向模块；下一步类型化列表查询和汇总响应。
+- 票据 Controller、应用服务、仓储端口、领域模型、全部写命令及列表/汇总查询已迁入 Evidence 纵向模块；下一步以 Flyway 硬化票据金额、日期、状态和生命周期列。
 - 账户用例已归入 Finance 模块；继续清理跨模块直接仓储依赖，保持账户写入只经过 Finance 契约。
-- 给交易、账户及票据查询补齐剩余 typed DTO 与客户端版本契约。
+- 给账户及其余聚合查询补齐 typed DTO 与客户端版本契约。
 - 将权限判断从旧整数角色进一步收口到 AccessContext。
 - 将组织人员和薪酬写用例逐步迁入 `people`、`workforce` 纵向目录；现有聚合读模型保持稳定契约。
 
