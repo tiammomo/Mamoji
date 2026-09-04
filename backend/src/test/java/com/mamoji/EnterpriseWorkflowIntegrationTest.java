@@ -593,6 +593,156 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void taxItemCommandsValidateDeriveAuditAndReadPostgresTruth() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Tax persistence " + System.nanoTime());
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM tax_items WHERE company_id = ?", Integer.class, companyId
+        );
+        Map<String, Object> invalidBody = new LinkedHashMap<>();
+        invalidBody.put("companyId", 0);
+        invalidBody.put("name", "   ");
+        invalidBody.put("period", "2026-13");
+        invalidBody.put("taxType", "sales_tax");
+        invalidBody.put("taxableAmount", -1);
+        invalidBody.put("taxAmount", -1);
+        invalidBody.put("paidAmount", -1);
+        invalidBody.put("deductibleAmount", -1);
+        invalidBody.put("taxRate", "100.00001");
+        invalidBody.put("status", "closed");
+        invalidBody.put("filingStatus", "filed");
+        invalidBody.put("paymentStatus", "settled");
+        invalidBody.put("frequency", "weekly");
+        invalidBody.put("responsiblePerson", " ");
+        invalidBody.put("riskLevel", "critical");
+        invalidBody.put("policyBasis", " ");
+        invalidBody.put("sourceType", "spreadsheet");
+        invalidBody.put("note", "x".repeat(2001));
+
+        ApiResponse invalid = request("POST", "/api/v1/enterprise/tax-items", invalidBody, token);
+        assertValidationFields(invalid, Set.of(
+            "companyId", "name", "period", "taxType", "taxableAmount", "taxAmount", "paidAmount",
+            "deductibleAmount", "taxRate", "status", "filingStatus", "paymentStatus", "frequency",
+            "responsiblePerson", "riskLevel", "policyBasis", "sourceType", "note"
+        ));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM tax_items WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        LocalDate today = LocalDate.now();
+        String period = today.toString().substring(0, 7);
+        Map<String, Object> createBody = new LinkedHashMap<>();
+        createBody.put("companyId", companyId);
+        createBody.put("name", "  Current VAT filing  ");
+        createBody.put("period", " " + period + " ");
+        createBody.put("taxType", " VAT ");
+        createBody.put("taxableAmount", "1000.0000");
+        createBody.put("taxAmount", "100.0000");
+        createBody.put("paidAmount", "25.0000");
+        createBody.put("deductibleAmount", "5.0000");
+        createBody.put("dueDate", today.plusDays(30).toString());
+        createBody.put("declarationDate", today.toString());
+        createBody.put("responsiblePerson", " Finance team ");
+        createBody.put("policyBasis", " CN-VAT-TEST ");
+        createBody.put("note", " quarter close ");
+        ApiResponse created = request("POST", "/api/v1/enterprise/tax-items", createBody, token);
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> item = parseMap(created.body());
+        long itemId = id(item);
+        assertEquals("Current VAT filing", item.get("name"));
+        assertEquals(period, item.get("period"));
+        assertEquals("vat", item.get("taxType"));
+        assertEquals(0, new BigDecimal("10.0000").compareTo(decimal(item.get("taxRate"))));
+        assertEquals("partial", item.get("paymentStatus"));
+        assertEquals("prepared", item.get("filingStatus"));
+        assertEquals("medium", item.get("riskLevel"));
+        assertEquals("Finance team", item.get("responsiblePerson"));
+        assertEquals("CN-VAT-TEST", item.get("policyBasis"));
+        assertEquals("quarter close", item.get("note"));
+
+        Map<String, Object> resetDefaults = new LinkedHashMap<>();
+        resetDefaults.put("note", null);
+        resetDefaults.put("responsiblePerson", null);
+        resetDefaults.put("policyBasis", null);
+        ApiResponse updated = request(
+            "PUT", "/api/v1/enterprise/tax-items/" + itemId, resetDefaults, token
+        );
+        assertEquals(200, updated.status(), updated.body());
+        Map<String, Object> updatedItem = parseMap(updated.body());
+        assertNull(updatedItem.get("note"));
+        assertEquals("财务负责人", updatedItem.get("responsiblePerson"));
+        assertFalse(text(updatedItem.get("policyBasis")).isBlank());
+
+        jdbc.update("UPDATE tax_items SET name = 'PostgreSQL truth' WHERE id = ?", itemId);
+        ApiResponse listed = request(
+            "GET", "/api/v1/enterprise/tax-items?companyId=" + companyId, null, token
+        );
+        assertEquals(200, listed.status(), listed.body());
+        assertEquals("PostgreSQL truth", parseList(listed.body()).stream()
+            .filter(value -> id(value) == itemId)
+            .findFirst()
+            .orElseThrow()
+            .get("name"));
+
+        ApiResponse deleted = request("DELETE", "/api/v1/enterprise/tax-items/" + itemId, null, token);
+        assertEquals(200, deleted.status(), deleted.body());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM tax_items WHERE id = ?", Integer.class, itemId
+        ));
+        assertEquals(Set.of("create", "update", "delete"), Set.copyOf(jdbc.queryForList("""
+            SELECT action FROM audit_logs WHERE entity_type = 'tax_item' AND entity_id = ?
+            """, String.class, itemId)));
+        assertEquals(Set.of(
+            "enterprise.tax_item.create",
+            "enterprise.tax_item.update",
+            "enterprise.tax_item.delete"
+        ), Set.copyOf(jdbc.queryForList("""
+            SELECT event_type FROM outbox_events WHERE aggregate_type = 'tax_item' AND aggregate_id = ?
+            """, String.class, itemId)));
+    }
+
+    @Test
+    void concurrentTaxItemCreationKeepsOneCompanyPeriod() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Concurrent tax " + System.nanoTime());
+        String period = String.valueOf(LocalDate.now().getYear());
+        Map<String, Object> body = Map.of(
+            "companyId", companyId,
+            "name", "Annual stamp duty",
+            "period", period,
+            "taxType", "stamp_duty",
+            "taxableAmount", 1000,
+            "taxAmount", 5,
+            "paidAmount", 0,
+            "frequency", "annual",
+            "dueDate", LocalDate.now().plusDays(30).toString()
+        );
+
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "POST", "/api/v1/enterprise/tax-items", body, token
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "POST", "/api/v1/enterprise/tax-items", body, token
+        );
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(List.of(200, 409), List.of(firstResponse.status(), secondResponse.status())
+            .stream().sorted().toList(), firstResponse.body() + " / " + secondResponse.body());
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM tax_items WHERE company_id = ? AND tax_type = 'stamp_duty' AND period = ?
+            """, Integer.class, companyId, period));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'tax_item' AND action = 'create'
+            """, Integer.class, companyId));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND event_type = 'enterprise.tax_item.create'
+            """, Integer.class, companyId));
+    }
+
+    @Test
     void outboxTerminalTransitionsRequireTheCurrentDeliveryLease() {
         String processedLease = "processed-owner-" + UUID.randomUUID();
         long processedId = processingOutboxEvent(processedLease);

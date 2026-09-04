@@ -28,6 +28,7 @@ flowchart TB
     access --> budget[Budget Control]
     access --> finance[Finance & Accounts]
     access --> evidence[Evidence & Receipts]
+    access --> tax[Tax Workspace]
     access --> people[People Core]
     access --> workforce[Workforce Cost]
 
@@ -44,6 +45,7 @@ flowchart TB
     budget --> outbox
     approvals --> outbox
     evidence --> outbox
+    tax --> outbox
 ```
 
 依赖方向是从业务用例指向平台契约或所属仓储。`workspace` 可以读取多个模块的投影，但不能反向成为它们的写入口。
@@ -64,6 +66,7 @@ flowchart TB
 | `budget` | 创建、调整、停用预算 | 执行额、使用率、风险 | `budgets` + 流水投影 | `/budgets`、Outbox |
 | `finance` | 账户维护、余额调整、对账 | 可用资金、账户风险 | `accounts/ledgers` | `/accounts`、`/ledgers` |
 | `evidence` | 票据、附件、审批/入账状态 | 凭证缺口、审计链 | `receipt_vouchers`、对象存储 | `/receipts`、Outbox |
+| `tax` | 税务事项创建、调整和删除 | 申报、缴款与风险状态 | `tax_items` | `/enterprise/tax-items`、Outbox |
 | `people-core` | 部门、员工与任职信息维护 | 组织、人员状态与经营投影 | `departments/employees/employment_events` | `/enterprise/departments`、`/enterprise/employees` |
 | `workforce-cost` | 薪酬批次生成、锁定 | 公司/部门人力成本、预算差异、趋势 | `payroll_runs/items` + 人员/流水只读投影 | `/payroll-runs`、`GET /workforce-cost` |
 | `notifications` | 偏好与发送状态 | 站内通知 | `notifications/deliveries` | `/notifications` |
@@ -197,6 +200,7 @@ workforce/
 | `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers`、`ledger_members` | Finance | Operations 通过账户 ID 和公司内可访问账本契约校验与调整 |
 | `receipt_vouchers` | Evidence | Approval 通过应用服务更新审批状态 |
+| `tax_items` | Tax | 专属 JDBC 仓储直接读写；企业汇总、通知和税务合规报告只读公司范围投影 |
 | `departments`、`employees`、`employment_events` | People Core | Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
 | `payroll_runs`、`payroll_run_items` | Workforce Cost | 报表与工作台只读已锁定或明确标识状态的快照 |
 | `approval_requests/actions` | Approvals | Workspace 只读待办数量 |
@@ -215,7 +219,7 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`InMemoryStore` 已不再持有业务集合，旧 `EnterpriseStore` 的剩余集合仅服务尚未拆分的企业、人员与税务读模型。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以公司外键、公司税种期间唯一约束和申报/缴款检查约束保护税务流程；税务事项由专属仓储直接读写，旧税务 Map、启动重载和重复补种已删除。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，税务演示初始化仅在空数据且无历史审计时执行；生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`InMemoryStore` 已不再持有业务集合，旧 `EnterpriseStore` 的剩余集合仅服务尚未拆分的企业与人员读模型。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
@@ -237,7 +241,7 @@ V8 迁移建立了：
 
 - 把演示数据改成显式 profile 或开发脚本，不在生产启动路径执行。
 - 删除 `InMemoryStore`、`EnterpriseStore` 的公开集合。
-- 将企业、人员和税务等剩余兼容模型迁出 `EnterpriseStore`；分类、预算、周期事项、流水、资金账户、账本及成员的强类型持久化已经完成。
+- 将企业和人员等剩余兼容模型迁出 `EnterpriseStore`；税务事项、分类、预算、周期事项、流水、资金账户、账本及成员的强类型持久化已经完成。
 
 ### P2：集成宿主平台
 

@@ -33,6 +33,7 @@ MAMOJI_OUTBOX_CONSUMER_STALE_LOCK_MINUTES=10
 - `payroll.run.created`
 - `payroll.run.closed`
 - `enterprise.<entity>.<action>`
+- `enterprise.tax_item.create` / `enterprise.tax_item.update` / `enterprise.tax_item.delete`
 - `receipt_voucher.<action>`
 - `accounting.account.<action>`
 - `operations.category.<action>`
