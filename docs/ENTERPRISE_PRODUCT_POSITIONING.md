@@ -120,7 +120,7 @@ Actor（登录人员） + Company（当前公司） + Role（角色）
 - 预算已按 `api/application/domain/infrastructure` 完成首个模块化试点。
 - 工作台已改为后端聚合读模型，前端不再并发拼装大量接口。
 - 人力成本已拆为独立后端聚合读模型，优先使用薪酬月结快照，无批次时明确标记为员工档案估算。
-- 资金账户、账本及成员、流水、分类、预算、周期事项与税务事项已移除旧 Store 中的 Map 和双写，以 PostgreSQL 专属仓储为唯一事实源；流水由 V17、账户由 V18、账本及成员由 V19、分类由 V20、税务事项由 V21 的类型、租户和流程约束保护。`InMemoryStore` 已不再持有业务集合，`EnterpriseStore` 中的剩余 Map 仅承载尚未拆分的企业与人员读模型。
+- 资金账户、账本及成员、流水、分类、预算、周期事项、税务事项与部门已移除旧 Store 中的 Map 和双写，以 PostgreSQL 专属仓储为唯一事实源；流水由 V17、账户由 V18、账本及成员由 V19、分类由 V20、税务事项由 V21、部门由 V22 的类型、租户和流程约束保护。`InMemoryStore` 已不再持有业务集合，`EnterpriseStore` 中的剩余 Map 仅承载尚未拆分的公司、员工与任职事件兼容状态。
 - 数据库仍保留单实例保护开关。等启动期兼容初始化完全迁出运行进程后，再把多实例作为默认生产拓扑。
 
 代码边界和后续拆分规则见 [ENTERPRISE_MODULE_ARCHITECTURE.md](ENTERPRISE_MODULE_ARCHITECTURE.md)。

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import com.mamoji.domain.Models.Employee;
+import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import java.util.List;
@@ -25,6 +26,7 @@ class EnterpriseStoreReadTest {
             jdbc,
             mock(UserDirectory.class),
             mock(AuditLogRepository.class),
+            mock(DepartmentRepository.class),
             "demo",
             "Test",
             "",

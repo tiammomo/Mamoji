@@ -96,12 +96,19 @@ class LegacyStoreBoundaryTest {
     void enterpriseStoreDoesNotExposeUnusedMutationOrProjectionHelpers() {
         assertNotPublic(EnterpriseStore.class, Set.of(
             "attachDepartmentNames",
+            "department",
             "deleteEmployee",
             "deleteTaxItem",
+            "findDepartment",
             "findTaxItem",
+            "saveDepartment",
             "saveTaxItem",
-            "saveEntityTransfer"
+            "saveEntityTransfer",
+            "sortedDepartments"
         ));
+        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("departments")),
+            "Departments must not return to the process-local enterprise compatibility view");
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("taxItems")),
             "Tax items must not return to the process-local enterprise compatibility view");

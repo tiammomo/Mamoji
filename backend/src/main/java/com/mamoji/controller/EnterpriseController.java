@@ -1,7 +1,6 @@
 package com.mamoji.controller;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
@@ -73,34 +72,6 @@ public class EnterpriseController {
         @RequestBody Map<String, Object> body
     ) {
         return service.updateCompanyProfile(authorization, companyId, body);
-    }
-
-    @GetMapping("/departments")
-    @RequiresProductModule("people-core")
-    public List<Department> departments(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam(value = "companyId", required = false) Long companyId
-    ) {
-        return service.listDepartments(authorization, companyId);
-    }
-
-    @PostMapping("/departments")
-    @RequiresProductModule("people-core")
-    public Department createDepartment(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
-    ) {
-        return service.createDepartment(authorization, body);
-    }
-
-    @PutMapping("/departments/{id}")
-    @RequiresProductModule("people-core")
-    public Department updateDepartment(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @PathVariable long id,
-        @RequestBody Map<String, Object> body
-    ) {
-        return service.updateDepartment(authorization, id, body);
     }
 
     @GetMapping("/employees")
