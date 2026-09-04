@@ -7,6 +7,7 @@ import io.minio.Http.Method;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -139,6 +140,29 @@ public class ObjectStorageService {
         } catch (Exception ex) {
             throw new IllegalStateException("MinIO download failed", ex);
         }
+    }
+
+    public void deleteObject(StoredObject storedObject) {
+        Objects.requireNonNull(storedObject, "storedObject");
+        if (!"minio".equals(storedObject.provider()) || isBlank(storedObject.objectKey())) {
+            return;
+        }
+        if (!enabled) {
+            throw new IllegalStateException("MinIO deletion is disabled");
+        }
+        String targetBucket = isBlank(storedObject.bucket()) ? bucket : storedObject.bucket();
+        try {
+            client().removeObject(RemoveObjectArgs.builder()
+                .bucket(targetBucket)
+                .object(storedObject.objectKey())
+                .build());
+        } catch (Exception ex) {
+            throw new IllegalStateException("MinIO deletion failed", ex);
+        }
+    }
+
+    public boolean isEnabled() {
+        return enabled;
     }
 
     public int presignedUrlExpirySeconds() {
