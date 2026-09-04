@@ -44,6 +44,8 @@ V27 会一次性回填历史票据的税期、业务状态、会计分录、会�
 
 V28 会把历史公司的所有者成员关系规范为有效 founder，并只在公司完全没有账本时创建默认经营账本；已有账本不会被替换。迁移还会按公司所有者分别补齐缺失的收入或支出分类，已有自定义分类保持不变。升级后新公司由 `CompanyProvisioningService` 在同一业务事务中创建主体、成员、账本和分类，生产启动不再执行公司全表扫描。
 
+V29 为 `notification_deliveries` 增加 Webhook 消费租约令牌。每次认领都会生成新令牌，投递成功、失败重试和死信转换只接受当前令牌，避免超时旧实例覆盖新实例状态。正式 Webhook 请求携带稳定 `Idempotency-Key`；自建接收方必须按该值去重，第三方入口仍按至少一次投递预期处理。
+
 ```bash
 cp .env.production.example .env.production
 vi .env.production
@@ -184,6 +186,7 @@ scripts/smoke-prod.sh
 - 磁盘可用空间低于 20%。
 - 备份任务失败或 24 小时内没有新备份。
 - Outbox `dead` 状态事件数量大于 0，或 `pending/failed` 积压持续增长。
+- Webhook 投递出现 `dead`，或 `notification_deliveries` 的 `pending/failed` 持续积压。
 
 Prometheus 已内置后端不可抓取、5xx、堆内存和 HikariCP 等规则；生产通知仍需接入公司现有告警平台或 Alertmanager。
 
@@ -193,6 +196,14 @@ Outbox 积压检查：
 docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres \
   psql -U "$MAMOJI_POSTGRES_USER" -d "$MAMOJI_POSTGRES_DB" \
   -c "SELECT status, count(*) FROM outbox_events GROUP BY status ORDER BY status;"
+```
+
+Webhook 投递积压检查：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres \
+  psql -U "$MAMOJI_POSTGRES_USER" -d "$MAMOJI_POSTGRES_DB" \
+  -c "SELECT status, count(*) FROM notification_deliveries GROUP BY status ORDER BY status;"
 ```
 
 ## 回滚

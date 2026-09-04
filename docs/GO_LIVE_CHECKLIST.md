@@ -22,6 +22,7 @@
 - 升级到 V26 前，已确认 `entity_transfers` 的来源主体、目标主体和操作者均有效，来源与目标不同，金额为正且不超过四位小数，类型、三位币种、日期、状态和生命周期时间合法。孤立主体/操作者、自划转、未知类型或非法金额不会被静默改写。
 - 升级到 V27 前，已确认 `receipt_vouchers.amount`、`tax_amount` 与 `tax_rate` 均为空值或合法数字，并已在备份副本核对一次性派生默认值回填结果；生产应用启动后不再执行票据全表兼容修复。
 - 升级到 V28 前，已在备份副本核对每个公司的所有者成员关系、现有账本及所有者分类；迁移只为缺失工作区的公司创建默认账本，只补齐所有者缺失的收入/支出类型，不替换已有账本或自定义分类。升级后生产启动不再扫描公司补种账本或分类。
+- V29 已为 Webhook 投递增加唯一租约令牌；企业自建接收方已按 `Idempotency-Key` 去重，并接受第三方通知入口仍可能按至少一次语义产生重复消息。
 - `MAMOJI_REGISTRATION_MODE=invite`，生产注册只允许邀请链接。
 - 已确认邀请原始 token 只在创建时展示一次，并使用受控渠道交付；邀请列表和数据库均不保存可直接使用的明文凭证。
 - `MAMOJI_ALLOWED_ORIGINS` 只包含生产域名，例如 `https://mamoji.example.com`。
@@ -61,7 +62,7 @@
 - Prometheus 可访问 `http://127.0.0.1:39090` 并成功抓取 `mamoji-backend`。
 - `docker/prometheus/alerts.yml` 中的后端不可用、5xx、堆内存和连接池告警规则已加载。
 - `outbox_events` 没有 `dead` 状态事件，`pending/failed` 没有持续积压。
-- `notification_deliveries` 没有 `dead` 状态投递，外部 Webhook 没有持续失败。
+- `notification_deliveries` 没有 `dead` 状态投递，`pending/failed` 没有持续积压，外部 Webhook 没有持续失败。
 - 告警通知渠道已接入公司现有平台，或已规划 Alertmanager 接入。
 - `/healthz` 已接入负载均衡或外部探针。
 - Docker 后端探针使用 `/actuator/health/readiness` 且数据库中断时会转为非就绪；`/actuator/health/liveness` 不依赖外部服务。

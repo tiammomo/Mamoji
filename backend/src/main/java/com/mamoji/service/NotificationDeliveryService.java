@@ -2,12 +2,15 @@ package com.mamoji.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.service.support.WebhookUrlValidator;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -31,6 +34,7 @@ public class NotificationDeliveryService {
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final WebhookUrlValidator webhookUrlValidator;
+    private final NotificationDeliveryStatusRepository statusRepository;
     private final OkHttpClient client;
     private final boolean enabled;
     private final int batchSize;
@@ -41,6 +45,7 @@ public class NotificationDeliveryService {
         JdbcTemplate jdbc,
         TransactionTemplate transactionTemplate,
         WebhookUrlValidator webhookUrlValidator,
+        NotificationDeliveryStatusRepository statusRepository,
         @Value("${mamoji.notifications.delivery.enabled:true}") boolean enabled,
         @Value("${mamoji.notifications.delivery.batch-size:20}") int batchSize,
         @Value("${mamoji.notifications.delivery.max-attempts:6}") int maxAttempts,
@@ -50,6 +55,7 @@ public class NotificationDeliveryService {
         this.jdbc = jdbc;
         this.transactionTemplate = transactionTemplate;
         this.webhookUrlValidator = webhookUrlValidator;
+        this.statusRepository = statusRepository;
         this.enabled = enabled;
         this.batchSize = Math.max(1, batchSize);
         this.maxAttempts = Math.max(1, maxAttempts);
@@ -92,7 +98,7 @@ public class NotificationDeliveryService {
             "/settings",
             OffsetDateTime.now().toString()
         );
-        postWebhook(target, payload);
+        postWebhook(target, payload, "mamoji:webhook-test:" + UUID.randomUUID());
     }
 
     @Scheduled(fixedDelayString = "${mamoji.notifications.delivery.fixed-delay-ms:10000}")
@@ -105,8 +111,8 @@ public class NotificationDeliveryService {
             try {
                 WebhookTarget target = requireTarget(task.userId());
                 NotificationPayload payload = notificationPayload(task.notificationId());
-                postWebhook(target, payload);
-                markDelivered(task.id());
+                postWebhook(target, payload, "mamoji:notification-delivery:" + task.id());
+                markDelivered(task);
             } catch (RuntimeException ex) {
                 markFailed(task, ex);
             }
@@ -126,16 +132,25 @@ public class NotificationDeliveryService {
                 LIMIT ?
                 FOR UPDATE SKIP LOCKED
                 """, this::mapDeliveryTask, now, batchSize);
+            List<DeliveryTask> claimed = new ArrayList<>(tasks.size());
             for (DeliveryTask task : tasks) {
+                String lockToken = UUID.randomUUID().toString();
                 jdbc.update("""
                     UPDATE notification_deliveries
-                    SET status = 'processing', attempts = ?, locked_at = ?, updated_at = ?
+                    SET status = 'processing', attempts = ?, locked_at = ?, lock_token = ?, updated_at = ?
                     WHERE id = ?
-                    """, task.attempts() + 1, now, now, task.id());
+                    """, task.attempts() + 1, now, lockToken, now, task.id());
+                claimed.add(new DeliveryTask(
+                    task.id(),
+                    task.notificationId(),
+                    task.userId(),
+                    task.channel(),
+                    task.provider(),
+                    task.attempts() + 1,
+                    lockToken
+                ));
             }
-            return tasks.stream()
-                .map(task -> new DeliveryTask(task.id(), task.notificationId(), task.userId(), task.channel(), task.provider(), task.attempts() + 1))
-                .toList();
+            return claimed;
         });
     }
 
@@ -144,7 +159,7 @@ public class NotificationDeliveryService {
         String staleBefore = OffsetDateTime.now().minusMinutes(staleLockMinutes).toString();
         int recovered = jdbc.update("""
             UPDATE notification_deliveries
-            SET status = 'failed', next_attempt_at = ?, locked_at = NULL, updated_at = ?,
+            SET status = 'failed', next_attempt_at = ?, locked_at = NULL, lock_token = NULL, updated_at = ?,
                 last_error = 'Recovered stale delivery lock'
             WHERE status = 'processing'
               AND locked_at IS NOT NULL
@@ -155,14 +170,15 @@ public class NotificationDeliveryService {
         }
     }
 
-    private void markDelivered(long id) {
+    private void markDelivered(DeliveryTask task) {
         String now = OffsetDateTime.now().toString();
-        jdbc.update("""
-            UPDATE notification_deliveries
-            SET status = 'delivered', delivered_at = ?, next_attempt_at = NULL, locked_at = NULL,
-                last_error = NULL, response_status = 200, updated_at = ?
-            WHERE id = ?
-            """, now, now, id);
+        if (!statusRepository.markDelivered(task.id(), task.lockToken(), now)) {
+            log.warn(
+                "Ignored delivered transition for notification delivery id={} because lease {} is no longer current",
+                task.id(),
+                task.lockToken()
+            );
+        }
     }
 
     private void markFailed(DeliveryTask task, RuntimeException ex) {
@@ -170,11 +186,22 @@ public class NotificationDeliveryService {
         boolean exhausted = task.attempts() >= maxAttempts;
         String nextAttemptAt = exhausted ? null : OffsetDateTime.now().plusSeconds(backoffSeconds(task.attempts())).toString();
         String status = exhausted ? "dead" : "failed";
-        jdbc.update("""
-            UPDATE notification_deliveries
-            SET status = ?, next_attempt_at = ?, locked_at = NULL, last_error = ?, updated_at = ?
-            WHERE id = ?
-            """, status, nextAttemptAt, truncate(errorMessage(ex), 1000), now, task.id());
+        boolean updated = statusRepository.markFailed(
+            task.id(),
+            task.lockToken(),
+            status,
+            nextAttemptAt,
+            truncate(errorMessage(ex), 1000),
+            now
+        );
+        if (!updated) {
+            log.warn(
+                "Ignored failed transition for notification delivery id={} because lease {} is no longer current",
+                task.id(),
+                task.lockToken()
+            );
+            return;
+        }
         if (exhausted) {
             log.error("Notification delivery id={} moved to dead after {} attempts", task.id(), task.attempts(), ex);
         } else {
@@ -227,12 +254,13 @@ public class NotificationDeliveryService {
         return new WebhookTarget(userId, true, targets.get(0).provider(), url);
     }
 
-    private void postWebhook(WebhookTarget target, NotificationPayload payload) {
+    private void postWebhook(WebhookTarget target, NotificationPayload payload, String idempotencyKey) {
         String body = webhookBody(target.provider(), payload);
         Request request = new Request.Builder()
             .url(target.url())
             .post(RequestBody.create(body, JSON))
             .header("Content-Type", "application/json")
+            .header("Idempotency-Key", idempotencyKey)
             .build();
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
@@ -284,7 +312,8 @@ public class NotificationDeliveryService {
             rs.getLong("user_id"),
             rs.getString("channel"),
             rs.getString("provider"),
-            rs.getInt("attempts")
+            rs.getInt("attempts"),
+            rs.getString("lock_token")
         );
     }
 
@@ -315,7 +344,15 @@ public class NotificationDeliveryService {
         return value == null || value.isBlank();
     }
 
-    private record DeliveryTask(long id, long notificationId, long userId, String channel, String provider, int attempts) {
+    private record DeliveryTask(
+        long id,
+        long notificationId,
+        long userId,
+        String channel,
+        String provider,
+        int attempts,
+        String lockToken
+    ) {
     }
 
     private record WebhookTarget(long userId, boolean enabled, String provider, String url) {

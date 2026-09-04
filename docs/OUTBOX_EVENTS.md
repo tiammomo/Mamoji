@@ -80,6 +80,10 @@ WHERE id = :event_id
 
 Outbox 保证至少一次投递，不承诺外部副作用天然只执行一次。站内通知使用 `event_id` 生成去重键；后续消息适配器也必须把 `event_id` 作为消息键，并由下游按该键实现幂等。
 
+外部 Webhook 使用 `notification_deliveries` 独立记录投递状态。V29 为每次 `processing` 认领增加唯一 `lock_token`，成功、重试或死信转换都必须匹配当前令牌；旧请求在超时恢复后返回时不能覆盖新消费者的状态。每次正式投递还会发送稳定的 `Idempotency-Key: mamoji:notification-delivery:<delivery_id>` 请求头。
+
+Webhook 仍是至少一次投递：例如接收方已经处理请求但响应在网络中丢失，Mamoji 会重试。企业自建接收方必须按 `Idempotency-Key` 去重；飞书、企业微信等不承诺识别该请求头的第三方入口仍可能出现重复消息，不能把通知投递当作财务写入的唯一依据。
+
 ## 未来接 RocketMQ
 
 未来需要 RocketMQ 时，保留业务侧 `OutboxEventService.publish(...)` 不变，只替换 `OutboxEventHandler` 的实现，把本地日志处理改为 RocketMQ 发布即可。发布到 RocketMQ 成功且当前消费租约仍有效后再标记 `processed`，失败继续沿用现有重试和死信机制。

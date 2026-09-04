@@ -24,7 +24,7 @@
 | P2 | 本地会话读写混在 `InMemoryStore` 且保留明文兼容回退 | Platform Identity 专属仓储、摘要约束、过期清理和恢复撤销 | 已落地 |
 | P2 | 注册邀请由 `InMemoryStore` 缓存且数据库/列表暴露可用明文凭证 | 专属邀请仓储、一次披露、摘要存储和并发单次消费 | 已落地 |
 | P2 | 本地用户账户同时存在 PostgreSQL 与进程缓存两份权威状态 | Platform Identity 专属仓储、数据库直读、比较更新和完整性约束 | 已落地 |
-| P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 进行中：消费租约已增加唯一令牌和终态 fencing，外部发布适配器待接入 |
+| P3 | 本地 Outbox handler 与消息发布未形成显式适配层 | 增加可选 RocketMQ adapter | 进行中：Outbox 与 Webhook 投递均已增加唯一租约令牌和终态 fencing，外部消息总线适配器待接入 |
 
 ## 目标包边界
 
@@ -63,7 +63,7 @@ api -> application -> domain
 
 ## 下一批变更
 
-1. 评估通知 Outbox 的外部消息适配层与失败重试边界；
+1. 为通知 Outbox 实现可选外部消息总线适配层，并保留站内通知降级路径；
 2. 统一需要可重复测试的业务时钟边界，避免业务规则直接依赖系统时间；
 3. 继续把审批、票据和账户写用例迁入纵向应用层边界。
 
@@ -73,6 +73,8 @@ api -> application -> domain
 首次管理员启动顺序、通用工具收口与最后一个旧 Store 退场见 [ADR 0002：删除 InMemoryStore 兼容层](adr/0002-retire-in-memory-store.md)。
 生产启动期全表修复和成员授权反向覆盖的退场见 [ADR 0003：删除生产启动期全表兼容修复](adr/0003-retire-startup-compatibility-repairs.md)。
 demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生产 Spring 上下文隔离 demo 初始化器](adr/0004-isolate-demo-initializers.md)。
+公司工作区默认数据的事务写入与历史补齐见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
+外部 Webhook 投递的租约 fencing 与幂等边界见 [ADR 0007：为外部通知投递增加租约 fencing](adr/0007-fence-notification-delivery-leases.md)。
 票据派生默认值的一次性回填与生产启动修复 Bean 退场见 [ADR 0005：以 Flyway 接管票据兼容回填](adr/0005-migrate-receipt-compatibility-repair.md)。
 公司开通事务、历史工作区一次性补齐和生产账本/分类扫描退场见 [ADR 0006：将公司工作区创建收口到业务事务](adr/0006-provision-company-workspaces-in-write-path.md)。
 
