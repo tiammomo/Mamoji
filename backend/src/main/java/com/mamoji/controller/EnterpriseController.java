@@ -5,13 +5,11 @@ import com.mamoji.domain.Models.Department;
 import com.mamoji.domain.Models.Employee;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.EmploymentEvent;
-import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.platform.product.RequiresProductModule;
 import com.mamoji.service.EnterpriseManagementService;
 import com.mamoji.service.TaxComplianceService;
 import java.util.List;
 import java.util.Map;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -142,15 +140,6 @@ public class EnterpriseController {
         return service.listEmploymentEvents(authorization, companyId);
     }
 
-    @GetMapping("/tax-items")
-    @RequiresProductModule("tax")
-    public List<TaxItem> taxItems(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestParam(value = "companyId", required = false) Long companyId
-    ) {
-        return service.listTaxItems(authorization, companyId);
-    }
-
     @GetMapping("/tax-compliance")
     @RequiresProductModule("tax")
     public Map<String, Object> taxCompliance(
@@ -158,34 +147,6 @@ public class EnterpriseController {
         @RequestParam(value = "companyId", required = false) Long companyId
     ) {
         return taxComplianceService.report(authorization, companyId);
-    }
-
-    @PostMapping("/tax-items")
-    @RequiresProductModule("tax")
-    public TaxItem createTaxItem(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @RequestBody Map<String, Object> body
-    ) {
-        return service.createTaxItem(authorization, body);
-    }
-
-    @PutMapping("/tax-items/{id}")
-    @RequiresProductModule("tax")
-    public TaxItem updateTaxItem(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @PathVariable long id,
-        @RequestBody Map<String, Object> body
-    ) {
-        return service.updateTaxItem(authorization, id, body);
-    }
-
-    @DeleteMapping("/tax-items/{id}")
-    @RequiresProductModule("tax")
-    public void deleteTaxItem(
-        @RequestHeader(value = "Authorization", required = false) String authorization,
-        @PathVariable long id
-    ) {
-        service.deleteTaxItem(authorization, id);
     }
 
     @GetMapping("/entity-transfers")

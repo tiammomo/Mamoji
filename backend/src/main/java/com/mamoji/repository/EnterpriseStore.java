@@ -8,7 +8,6 @@ import com.mamoji.domain.Models.EmployeeExperience;
 import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.domain.Models.SocialInsuranceItem;
-import com.mamoji.domain.Models.TaxItem;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
 import com.mamoji.platform.audit.domain.AuditLog;
@@ -43,7 +42,6 @@ public class EnterpriseStore {
     public final Map<Long, Employee> employees = new ConcurrentHashMap<>();
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
     public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
-    public final Map<Long, TaxItem> taxItems = new ConcurrentHashMap<>();
     private static final String DEFAULT_SOCIAL_INSURANCE_REGION = "深圳";
     private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
     private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
@@ -128,7 +126,6 @@ public class EnterpriseStore {
         loadAll();
         ensureInitialEnterpriseData();
         ensureCompanyPolicyDefaults();
-        ensureTaxItemDefaults();
         if (!isBootstrapMode()) {
             ensureHouseholdSubject();
             ensureCompensationBenchmarkEmployees();
@@ -145,14 +142,12 @@ public class EnterpriseStore {
         employees.clear();
         entityTransfers.clear();
         employmentEvents.clear();
-        taxItems.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM departments", rs -> departments.put(rs.getLong("id"), mapDepartment(rs)));
         forEachRow("SELECT * FROM employees", rs -> employees.put(rs.getLong("id"), mapEmployee(rs)));
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
         forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
-        forEachRow("SELECT * FROM tax_items", rs -> taxItems.put(rs.getLong("id"), mapTaxItem(rs)));
     }
 
     /** Reload the process-local compatibility view after a controlled restore. */
@@ -272,10 +267,6 @@ public class EnterpriseStore {
             .filter(employee -> employee.companyId == company.id && "departed".equals(employee.status))
             .forEach(employee -> event(company.id, employee.id, "offboard", employee.leaveDate, "演示员工离职交接完成", owner.id()));
 
-        taxItem(company.id, "2026-Q2 增值税申报", "2026-Q2", "vat", "17800", "0", "0", "2026-07-15", "estimated", "深圳小规模创业团队季度零税款申报口径");
-        taxItem(company.id, "2026-Q2 企业所得税预缴", "2026-Q2", "corporate_income_tax", "45200", "2260", "0", "2026-07-15", "pending", "按季度利润估算");
-        taxItem(company.id, "2026-06 个税代扣代缴", "2026-06", "personal_income_tax", "74000", "6800", "1200", "2026-07-15", "pending", "按当前员工薪资样例估算");
-        taxItem(company.id, "2026-Q2 附加税费确认", "2026-Q2", "surcharge", "0", "0", "0", "2026-07-15", "estimated", "增值税为零时附加税费同步为零");
     }
 
     private void ensureCompensationBenchmarkEmployees() {
@@ -497,194 +488,6 @@ public class EnterpriseStore {
         });
     }
 
-    private void ensureTaxItemDefaults() {
-        taxItems.values().forEach(item -> {
-            boolean updated = hydrateTaxItemDefaults(item);
-            updated = applyShenzhenStartupTaxDefaults(item) || updated;
-            String riskLevel = riskLevelFor(item);
-            if (!riskLevel.equals(item.riskLevel)) {
-                item.riskLevel = riskLevel;
-                updated = true;
-            }
-            if (updated) {
-                item.updatedAt = InMemoryStore.now();
-                saveTaxItem(item);
-            }
-        });
-    }
-
-    private boolean hydrateTaxItemDefaults(TaxItem item) {
-        boolean updated = false;
-        if (item.taxableAmount == null) {
-            item.taxableAmount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (item.taxAmount == null) {
-            item.taxAmount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (item.paidAmount == null) {
-            item.paidAmount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (item.deductibleAmount == null) {
-            item.deductibleAmount = BigDecimal.ZERO;
-            updated = true;
-        }
-        if (item.taxRate == null || item.taxRate.compareTo(BigDecimal.ZERO) == 0 && item.taxableAmount.compareTo(BigDecimal.ZERO) > 0) {
-            item.taxRate = inferredTaxRate(item);
-            updated = true;
-        }
-        if (isBlank(item.status)) {
-            item.status = paymentStatusFor(item).equals("paid") ? "paid" : "pending";
-            updated = true;
-        }
-        if (isBlank(item.paymentStatus)) {
-            item.paymentStatus = paymentStatusFor(item);
-            updated = true;
-        }
-        if (isBlank(item.filingStatus)) {
-            item.filingStatus = filingStatusFor(item.status);
-            updated = true;
-        }
-        if (isBlank(item.frequency)) {
-            item.frequency = frequencyFor(item.period);
-            updated = true;
-        }
-        if (isBlank(item.responsiblePerson)) {
-            item.responsiblePerson = "财务负责人";
-            updated = true;
-        }
-        if (isBlank(item.riskLevel)) {
-            item.riskLevel = riskLevelFor(item);
-            updated = true;
-        }
-        String expectedPolicyBasis = findCompany(item.companyId)
-            .map(this::defaultPolicyProfileKey)
-            .orElse(DEFAULT_POLICY_PROFILE);
-        if (isBlank(item.policyBasis)
-            || (SHENZHEN_STARTUP_POLICY_PROFILE.equals(expectedPolicyBasis)
-                && (DEFAULT_POLICY_PROFILE.equals(item.policyBasis) || LEGACY_SHENZHEN_POLICY_PROFILE.equals(item.policyBasis)))) {
-            item.policyBasis = expectedPolicyBasis;
-            updated = true;
-        }
-        if (isBlank(item.sourceType)) {
-            item.sourceType = "manual";
-            updated = true;
-        }
-        return updated;
-    }
-
-    private boolean applyShenzhenStartupTaxDefaults(TaxItem item) {
-        Company company = findCompany(item.companyId).orElse(null);
-        if (company == null
-            || company.city == null
-            || !company.city.contains("深圳")
-            || company.taxpayerType == null
-            || !company.taxpayerType.contains("小规模")
-            || !"demo_estimate".equals(item.sourceType)) {
-            return false;
-        }
-        boolean updated = false;
-        if (!sameText(item.responsiblePerson, "代理记账/财务负责人")) {
-            item.responsiblePerson = "代理记账/财务负责人";
-            updated = true;
-        }
-        if ("vat".equals(item.taxType)) {
-            updated = setStartupTaxValues(
-                item,
-                "2026-Q2 增值税申报",
-                "2026-Q2",
-                new BigDecimal("17800"),
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                "2026-07-15",
-                "estimated",
-                "深圳小规模创业团队季度零税款申报口径"
-            ) || updated;
-        } else if ("surcharge".equals(item.taxType)) {
-            updated = setStartupTaxValues(
-                item,
-                "2026-Q2 附加税费确认",
-                "2026-Q2",
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                "2026-07-15",
-                "estimated",
-                "增值税为零时附加税费同步为零"
-            ) || updated;
-        }
-        return updated;
-    }
-
-    private boolean setStartupTaxValues(
-        TaxItem item,
-        String name,
-        String period,
-        BigDecimal taxableAmount,
-        BigDecimal taxAmount,
-        BigDecimal paidAmount,
-        String dueDate,
-        String status,
-        String note
-    ) {
-        boolean updated = false;
-        if (!sameText(item.name, name)) {
-            item.name = name;
-            updated = true;
-        }
-        if (!sameText(item.period, period)) {
-            item.period = period;
-            updated = true;
-        }
-        if (!sameMoney(item.taxableAmount, taxableAmount)) {
-            item.taxableAmount = taxableAmount;
-            updated = true;
-        }
-        if (!sameMoney(item.taxAmount, taxAmount)) {
-            item.taxAmount = taxAmount;
-            updated = true;
-        }
-        if (!sameMoney(item.paidAmount, paidAmount)) {
-            item.paidAmount = paidAmount;
-            updated = true;
-        }
-        BigDecimal taxRate = inferredTaxRate(item);
-        if (!sameMoney(item.taxRate, taxRate)) {
-            item.taxRate = taxRate;
-            updated = true;
-        }
-        if (!sameText(item.dueDate, dueDate)) {
-            item.dueDate = dueDate;
-            updated = true;
-        }
-        if (!sameText(item.status, status)) {
-            item.status = status;
-            updated = true;
-        }
-        String filingStatus = filingStatusFor(item.status);
-        if (!sameText(item.filingStatus, filingStatus)) {
-            item.filingStatus = filingStatus;
-            updated = true;
-        }
-        String paymentStatus = paymentStatusFor(item);
-        if (!sameText(item.paymentStatus, paymentStatus)) {
-            item.paymentStatus = paymentStatus;
-            updated = true;
-        }
-        String frequency = frequencyFor(item.period);
-        if (!sameText(item.frequency, frequency)) {
-            item.frequency = frequency;
-            updated = true;
-        }
-        if (!sameText(item.note, note)) {
-            item.note = note;
-            updated = true;
-        }
-        return updated;
-    }
-
     public List<Company> sortedCompanies() {
         return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
     }
@@ -725,30 +528,6 @@ public class EnterpriseStore {
             (rs, rowNum) -> mapEmploymentEvent(rs),
             companyId
         );
-    }
-
-    public List<TaxItem> sortedTaxItems(long companyId) {
-        return jdbc.query(
-            "SELECT * FROM tax_items WHERE company_id = ? ORDER BY due_date, id",
-            (rs, rowNum) -> mapTaxItem(rs),
-            companyId
-        ).stream().peek(item -> {
-                hydrateTaxItemDefaults(item);
-                item.paymentStatus = paymentStatusFor(item);
-                item.riskLevel = riskLevelFor(item);
-            })
-            .toList();
-    }
-
-    public List<TaxItem> allTaxItems() {
-        return jdbc.query("SELECT * FROM tax_items ORDER BY company_id, due_date, id", (rs, rowNum) -> mapTaxItem(rs))
-            .stream()
-            .peek(item -> {
-                hydrateTaxItemDefaults(item);
-                item.paymentStatus = paymentStatusFor(item);
-                item.riskLevel = riskLevelFor(item);
-            })
-            .toList();
     }
 
     public List<Employee> allEmployees() {
@@ -819,10 +598,6 @@ public class EnterpriseStore {
                 employee.departmentName = rs.getString("resolved_department_name");
                 return employee;
             }, userId, companyId).stream().findFirst();
-    }
-
-    public Optional<TaxItem> findTaxItem(long id) {
-        return jdbc.query("SELECT * FROM tax_items WHERE id = ?", (rs, rowNum) -> mapTaxItem(rs), id).stream().findFirst();
     }
 
     public Company company(long ownerId, String name, String creditCode, String industry, String taxpayerType, String currency) {
@@ -1132,73 +907,6 @@ public class EnterpriseStore {
         return event;
     }
 
-    public TaxItem taxItem(
-        long companyId,
-        String name,
-        String period,
-        String taxType,
-        String taxableAmount,
-        String taxAmount,
-        String paidAmount,
-        String dueDate,
-        String status,
-        String note
-    ) {
-        TaxItem item = new TaxItem();
-        item.companyId = companyId;
-        item.name = name;
-        item.period = period;
-        item.taxType = taxType;
-        item.taxableAmount = money(taxableAmount);
-        item.taxAmount = money(taxAmount);
-        item.paidAmount = money(paidAmount);
-        item.deductibleAmount = BigDecimal.ZERO;
-        item.taxRate = inferredTaxRate(item);
-        item.dueDate = dueDate;
-        item.status = status;
-        item.filingStatus = filingStatusFor(status);
-        item.paymentStatus = paymentStatusFor(item);
-        item.frequency = frequencyFor(period);
-        item.declarationDate = null;
-        item.paymentDate = item.paymentStatus.equals("paid") ? dueDate : null;
-        item.responsiblePerson = "财务负责人";
-        item.riskLevel = riskLevelFor(item);
-        item.policyBasis = findCompany(companyId)
-            .map(company -> company.policyProfileKey)
-            .orElse("CN-DEFAULT-DEMO-POLICY");
-        item.sourceType = "demo_estimate";
-        item.note = note;
-        stamp(item);
-        item.id = insert("""
-            INSERT INTO tax_items (
-                company_id, name, period, tax_type, taxable_amount, tax_amount, paid_amount, deductible_amount, tax_rate,
-                due_date, status, filing_status, payment_status, frequency, declaration_date, payment_date,
-                responsible_person, risk_level, policy_basis, source_type, note, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ps -> bindTaxItem(ps, item));
-        taxItems.put(item.id, item);
-        return item;
-    }
-
-    public void saveTaxItem(TaxItem item) {
-        taxItems.put(item.id, item);
-        jdbc.update("""
-            UPDATE tax_items SET company_id = ?, name = ?, period = ?, tax_type = ?, taxable_amount = ?, tax_amount = ?,
-                paid_amount = ?, deductible_amount = ?, tax_rate = ?, due_date = ?, status = ?, filing_status = ?,
-                payment_status = ?, frequency = ?, declaration_date = ?, payment_date = ?, responsible_person = ?,
-                risk_level = ?, policy_basis = ?, source_type = ?, note = ?, updated_at = ?
-            WHERE id = ?
-            """, item.companyId, item.name, item.period, item.taxType, moneyText(item.taxableAmount), moneyText(item.taxAmount),
-            moneyText(item.paidAmount), moneyText(item.deductibleAmount), moneyText(item.taxRate), item.dueDate, item.status,
-            item.filingStatus, item.paymentStatus, item.frequency, item.declarationDate, item.paymentDate, item.responsiblePerson,
-            item.riskLevel, item.policyBasis, item.sourceType, item.note, item.updatedAt, item.id);
-    }
-
-    public void deleteTaxItem(long id) {
-        taxItems.remove(id);
-        jdbc.update("DELETE FROM tax_items WHERE id = ?", id);
-    }
-
     public EntityTransfer entityTransfer(
         long fromEntityId,
         long toEntityId,
@@ -1352,79 +1060,6 @@ public class EnterpriseStore {
         return "bootstrap".equals(bootstrapMode);
     }
 
-    private BigDecimal inferredTaxRate(TaxItem item) {
-        BigDecimal taxableAmount = money(item.taxableAmount);
-        if (taxableAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
-        }
-        return money(item.taxAmount)
-            .multiply(new BigDecimal("100"))
-            .divide(taxableAmount, 2, RoundingMode.HALF_UP);
-    }
-
-    private String paymentStatusFor(TaxItem item) {
-        BigDecimal taxAmount = money(item.taxAmount);
-        BigDecimal paidAmount = money(item.paidAmount);
-        if (taxAmount.compareTo(BigDecimal.ZERO) <= 0 || paidAmount.compareTo(taxAmount) >= 0) {
-            return "paid";
-        }
-        if (paidAmount.compareTo(BigDecimal.ZERO) > 0) {
-            return "partial";
-        }
-        return "unpaid";
-    }
-
-    private String filingStatusFor(String status) {
-        return switch (status == null ? "" : status) {
-            case "paid" -> "accepted";
-            case "pending" -> "submitted";
-            case "overdue" -> "overdue";
-            case "estimated" -> "prepared";
-            default -> "not_started";
-        };
-    }
-
-    private String frequencyFor(String period) {
-        if (period == null) {
-            return "monthly";
-        }
-        String normalized = period.toUpperCase();
-        if (normalized.contains("Q")) {
-            return "quarterly";
-        }
-        if (normalized.matches("\\d{4}")) {
-            return "annual";
-        }
-        return "monthly";
-    }
-
-    private String riskLevelFor(TaxItem item) {
-        BigDecimal unpaid = money(item.taxAmount).subtract(money(item.paidAmount));
-        if (unpaid.compareTo(BigDecimal.ZERO) <= 0 || "paid".equals(item.status)) {
-            return "low";
-        }
-        LocalDate dueDate = parseDate(item.dueDate).orElse(LocalDate.now());
-        LocalDate today = LocalDate.now();
-        if (dueDate.isBefore(today) || "overdue".equals(item.status)) {
-            return "high";
-        }
-        if (!dueDate.isAfter(today.plusDays(7)) || unpaid.compareTo(new BigDecimal("50000")) >= 0) {
-            return "medium";
-        }
-        if ("manual".equals(item.sourceType) || "not_started".equals(item.filingStatus)) {
-            return "medium";
-        }
-        return "low";
-    }
-
-    private Optional<LocalDate> parseDate(String value) {
-        try {
-            return value == null || value.isBlank() ? Optional.empty() : Optional.of(LocalDate.parse(value));
-        } catch (RuntimeException ignored) {
-            return Optional.empty();
-        }
-    }
-
     private Department mapDepartment(ResultSet rs) throws SQLException {
         Department department = new Department();
         department.id = rs.getLong("id");
@@ -1568,36 +1203,6 @@ public class EnterpriseStore {
         return event;
     }
 
-    private TaxItem mapTaxItem(ResultSet rs) throws SQLException {
-        TaxItem item = new TaxItem();
-        item.id = rs.getLong("id");
-        item.companyId = rs.getLong("company_id");
-        item.name = rs.getString("name");
-        item.period = rs.getString("period");
-        item.taxType = rs.getString("tax_type");
-        item.taxableAmount = money(rs.getString("taxable_amount"));
-        item.taxAmount = money(rs.getString("tax_amount"));
-        item.paidAmount = money(rs.getString("paid_amount"));
-        item.deductibleAmount = money(rs.getString("deductible_amount"));
-        item.taxRate = money(rs.getString("tax_rate"));
-        item.dueDate = rs.getString("due_date");
-        item.status = rs.getString("status");
-        item.filingStatus = rs.getString("filing_status");
-        item.paymentStatus = rs.getString("payment_status");
-        item.frequency = rs.getString("frequency");
-        item.declarationDate = rs.getString("declaration_date");
-        item.paymentDate = rs.getString("payment_date");
-        item.responsiblePerson = rs.getString("responsible_person");
-        item.riskLevel = rs.getString("risk_level");
-        item.policyBasis = rs.getString("policy_basis");
-        item.sourceType = rs.getString("source_type");
-        item.note = rs.getString("note");
-        item.createdAt = rs.getString("created_at");
-        item.updatedAt = rs.getString("updated_at");
-        hydrateTaxItemDefaults(item);
-        return item;
-    }
-
     private EntityTransfer mapEntityTransfer(ResultSet rs) throws SQLException {
         EntityTransfer transfer = new EntityTransfer();
         transfer.id = rs.getLong("id");
@@ -1707,32 +1312,6 @@ public class EnterpriseStore {
         ps.setString(9, experience.skills);
         ps.setString(10, experience.createdAt);
         ps.setString(11, experience.updatedAt);
-    }
-
-    private void bindTaxItem(PreparedStatement ps, TaxItem item) throws SQLException {
-        ps.setLong(1, item.companyId);
-        ps.setString(2, item.name);
-        ps.setString(3, item.period);
-        ps.setString(4, item.taxType);
-        ps.setString(5, moneyText(item.taxableAmount));
-        ps.setString(6, moneyText(item.taxAmount));
-        ps.setString(7, moneyText(item.paidAmount));
-        ps.setString(8, moneyText(item.deductibleAmount));
-        ps.setString(9, moneyText(item.taxRate));
-        ps.setString(10, item.dueDate);
-        ps.setString(11, item.status);
-        ps.setString(12, item.filingStatus);
-        ps.setString(13, item.paymentStatus);
-        ps.setString(14, item.frequency);
-        ps.setString(15, item.declarationDate);
-        ps.setString(16, item.paymentDate);
-        ps.setString(17, item.responsiblePerson);
-        ps.setString(18, item.riskLevel);
-        ps.setString(19, item.policyBasis);
-        ps.setString(20, item.sourceType);
-        ps.setString(21, item.note);
-        ps.setString(22, item.createdAt);
-        ps.setString(23, item.updatedAt);
     }
 
     private void bindEntityTransfer(PreparedStatement ps, EntityTransfer transfer) throws SQLException {

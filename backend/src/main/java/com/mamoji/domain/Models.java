@@ -181,33 +181,6 @@ public final class Models {
         public String createdAt;
     }
 
-    public static class TaxItem {
-        public long id;
-        public long companyId;
-        public String name;
-        public String period;
-        public String taxType;
-        public BigDecimal taxableAmount;
-        public BigDecimal taxAmount;
-        public BigDecimal paidAmount;
-        public BigDecimal deductibleAmount;
-        public BigDecimal taxRate;
-        public String dueDate;
-        public String status;
-        public String filingStatus;
-        public String paymentStatus;
-        public String frequency;
-        public String declarationDate;
-        public String paymentDate;
-        public String responsiblePerson;
-        public String riskLevel;
-        public String policyBasis;
-        public String sourceType;
-        public String note;
-        public String createdAt;
-        public String updatedAt;
-    }
-
     public static class EntityTransfer {
         public long id;
         public long fromEntityId;
