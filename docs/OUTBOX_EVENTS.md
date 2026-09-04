@@ -35,6 +35,7 @@ MAMOJI_OUTBOX_CONSUMER_STALE_LOCK_MINUTES=10
 - `enterprise.<entity>.<action>`
 - `receipt_voucher.<action>`
 - `accounting.account.<action>`
+- `operations.category.<action>`
 
 ## 运维查询
 

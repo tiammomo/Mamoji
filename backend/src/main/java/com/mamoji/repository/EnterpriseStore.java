@@ -92,7 +92,6 @@ public class EnterpriseStore {
     };
 
     private final JdbcTemplate jdbc;
-    private final InMemoryStore coreStore;
     private final UserDirectory userDirectory;
     private final AuditLogRepository auditLogRepository;
     private final String bootstrapMode;
@@ -104,7 +103,6 @@ public class EnterpriseStore {
 
     public EnterpriseStore(
         JdbcTemplate jdbc,
-        InMemoryStore coreStore,
         UserDirectory userDirectory,
         AuditLogRepository auditLogRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
@@ -115,7 +113,6 @@ public class EnterpriseStore {
         @Value("${mamoji.bootstrap.company-currency:CNY}") String bootstrapCompanyCurrency
     ) {
         this.jdbc = jdbc;
-        this.coreStore = coreStore;
         this.userDirectory = userDirectory;
         this.auditLogRepository = auditLogRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
@@ -139,7 +136,6 @@ public class EnterpriseStore {
         }
         ensureEmployeePayrollDefaults();
         ensureAccessDefaults();
-        initializeCategoryCompanyScopes();
         attachDepartmentNames();
     }
 
@@ -182,20 +178,6 @@ public class EnterpriseStore {
             .filter(user -> user.role() == 1)
             .min(Comparator.comparing(UserDirectory.Entry::id))
             .or(() -> users.stream().min(Comparator.comparing(UserDirectory.Entry::id)));
-    }
-
-    private void initializeCategoryCompanyScopes() {
-        Map<Long, Long> defaultCompanyByUser = new HashMap<>();
-        sortedCompanies().forEach(company -> defaultCompanyByUser.putIfAbsent(company.ownerId, company.id));
-        employees.values().stream()
-            .sorted(Comparator.comparing(employee -> employee.id))
-            .filter(employee -> employee.userId != null)
-            .forEach(employee -> defaultCompanyByUser.putIfAbsent(employee.userId, employee.companyId));
-        coreStore.assignUnscopedCategoryData(defaultCompanyByUser);
-        sortedCompanies().forEach(company -> coreStore.ensureCompanyAccountingCategories(
-            company.ownerId,
-            company.id
-        ));
     }
 
     private void ensureBootstrapEnterpriseData() {
