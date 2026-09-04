@@ -1,10 +1,10 @@
 package com.mamoji.recurring.infrastructure;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.recurring.application.RecurringItemRepository;
 import com.mamoji.recurring.domain.RecurringItem;
 import com.mamoji.recurring.domain.RecurringSchedule;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -13,22 +13,24 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /** Owns optional recurring-rule demo data after enterprise subjects exist. */
 @Component
+@DependsOn("enterpriseStore")
 public class RecurringItemDataInitializer {
     private final RecurringItemRepository recurringItems;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final String bootstrapMode;
 
     public RecurringItemDataInitializer(
         RecurringItemRepository recurringItems,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode
     ) {
         this.recurringItems = recurringItems;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.bootstrapMode = bootstrapMode == null ? "demo" : bootstrapMode.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -37,7 +39,7 @@ public class RecurringItemDataInitializer {
         if ("bootstrap".equals(bootstrapMode)) {
             return;
         }
-        Optional<Company> company = enterpriseStore.sortedCompanies().stream()
+        Optional<Company> company = companies.findAll().stream()
             .filter(candidate -> "company".equals(candidate.entityType))
             .min(Comparator.comparing(candidate -> candidate.id));
         if (company.isEmpty()) {

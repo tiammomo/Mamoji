@@ -55,7 +55,7 @@ flowchart TB
 | 边界 | 命令职责 | 查询职责 | 主要数据 | 对外契约 |
 | --- | --- | --- | --- | --- |
 | `platform.identity` | 本地账户、凭证、资料、会话与注册邀请生命周期 | 当前 Actor、账户、邀请摘要 | `users/auth_tokens/registration_invites`/外部身份声明 | `ActorContext`、`@CurrentActor` |
-| `platform.tenant` | 同步成员关系 | 公司、角色、部门、范围 | `company_memberships` | `CompanyMembershipRepository` |
+| `platform.tenant` | 公司主体资料、成员关系 | 公司、角色、部门、范围 | `companies/company_memberships` | `CompanyRepository`、`CompanyMembershipRepository` |
 | `platform.access` | 权限校验 | 完整访问上下文 | 角色权限矩阵 | `/platform/access-context` |
 | `access-management` | 公司成员和角色维护 | 成员、角色、数据范围 | `users/company_memberships` | `/admin/users` |
 | `platform.product` | 模块启停 | 已启用能力 | 环境配置 | `ProductModuleCatalog`、`@RequiresProductModule` |
@@ -191,6 +191,7 @@ workforce/
 | 表或投影 | 所属模块 | 其他模块如何使用 |
 | --- | --- | --- |
 | `users` | Platform Identity | 认证与资料通过本地账户仓储读写；Access Management 仅使用不含密码的权限管理投影，禁止维护进程内用户副本 |
+| `companies` | Platform Tenant | 公司资料由 `CompanyRepository` 直接读写 PostgreSQL；访问控制和业务初始化器只读取租户契约，禁止通过旧 Store 修改主体 |
 | `company_memberships` | Platform Tenant | 只通过成员仓储读取 |
 | `auth_tokens` | Platform Identity | 本地身份适配器按令牌摘要创建、认证、撤销和清理，其他模块不得直接访问 |
 | `registration_invites` | Platform Identity | 邀请仓储按 SHA-256 摘要发行并以行锁单次消费；原始凭证只在创建响应披露一次 |
@@ -219,7 +220,7 @@ V8 迁移建立了：
 - 金额、日期、状态和公司 ID 的基础约束；
 - 常用成员查询索引。
 
-在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以公司外键、公司税种期间唯一约束和申报/缴款检查约束保护税务流程；税务事项由专属仓储直接读写，旧税务 Map、启动重载和重复补种已删除。V22 将部门预算和生命周期时间改为 `NUMERIC(20,2)` 与 `TIMESTAMPTZ`，以公司内复合外键、规范化名称唯一索引和不可变触发器保护部门、负责人、员工及成员的租户关系；部门专属仓储已取代旧部门 Map 和 Map 型写命令。V23 将员工薪酬、日期和生命周期字段改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以公司内直属经理复合外键、用户/核验人外键、规范化邮箱/工号唯一索引及公司归属不可变触发器保护人员数据；员工专属仓储已取代旧员工 Map、SQL 映射和双写。V24 将任职事件生效日期和创建时间改为 `DATE` 与 `TIMESTAMPTZ`，通过公司内员工复合外键、操作者外键、类型/备注约束和不可更新触发器保护追加式人员历史；任职事件专属仓储已取代旧事件 Map、SQL 映射和写入口。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，税务演示初始化仅在空数据且无历史审计时执行；生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`InMemoryStore` 已不再持有业务集合，旧 `EnterpriseStore` 的剩余集合仅服务尚未拆分的公司与主体划转兼容状态。
+在线服务读取已经从进程 Map 切到 PostgreSQL。周期事项由专属 JDBC 仓储直接读写，V15 将金额、日期、公司归属和执行游标收紧为数据库约束。预算同样由应用层仓储契约和 JDBC 实现直接读写，V16 将金额、日期、时间戳、公司/用户归属及投影状态收紧为强类型约束，并移除了旧预算 Map、双写与启动全表重算。V17 将流水金额、业务日期、退款标记和生命周期时间改为 `NUMERIC(18,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，增加公司内账户/分类/账本/预算/原流水复合外键，并移除流水 Map、重载和事务后双写。V18 将资金账户金额、日期、净资产标记和生命周期时间改为 `NUMERIC(20,4)`、`DATE`、`BOOLEAN` 与 `TIMESTAMPTZ`，强制公司/用户归属及公司内账本引用，并移除账户 Map、重载和事务后双写。V19 将账本默认标记和生命周期时间改为 `BOOLEAN` 与 `TIMESTAMPTZ`，为账本成员补充不可为空的公司范围，并通过公司成员复合外键、每公司唯一默认账本索引和 owner 成员约束阻止跨公司授权或删除所有者。V20 将分类生命周期改为 `TIMESTAMPTZ`，以公司成员复合外键、个人公司范围内名称唯一约束和数据库触发器保护分类归属及已引用分类的收支语义；分类 JDBC 仓储是唯一事实源，不再双写进程 Map。V21 将税务金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以公司外键、公司税种期间唯一约束和申报/缴款检查约束保护税务流程；税务事项由专属仓储直接读写，旧税务 Map、启动重载和重复补种已删除。V22 将部门预算和生命周期时间改为 `NUMERIC(20,2)` 与 `TIMESTAMPTZ`，以公司内复合外键、规范化名称唯一索引和不可变触发器保护部门、负责人、员工及成员的租户关系；部门专属仓储已取代旧部门 Map 和 Map 型写命令。V23 将员工薪酬、日期和生命周期字段改为 `NUMERIC(20,4)`、`DATE` 与 `TIMESTAMPTZ`，以公司内直属经理复合外键、用户/核验人外键、规范化邮箱/工号唯一索引及公司归属不可变触发器保护人员数据；员工专属仓储已取代旧员工 Map、SQL 映射和双写。V24 将任职事件生效日期和创建时间改为 `DATE` 与 `TIMESTAMPTZ`，通过公司内员工复合外键、操作者外键、类型/备注约束和不可更新触发器保护追加式人员历史；任职事件专属仓储已取代旧事件 Map、SQL 映射和写入口。V25 将公司生命周期时间改为 `TIMESTAMPTZ`，增加乐观锁版本、所有者外键、规范化信用代码唯一索引、主体类型/币种/地区/财年约束和所有者不可变触发器；公司专属仓储已取代旧公司 Map、SQL 映射和写入口，访问控制与各模块初始化器直接读取租户契约。账本、账户、分类和流水分别由独立初始化器按依赖顺序创建，税务演示初始化仅在空数据且无历史审计时执行；生产 `bootstrap` 模式只创建通用默认分类，不生成演示业务数据。`InMemoryStore` 已不再持有业务集合，旧 `EnterpriseStore` 的剩余集合仅服务尚未拆分的主体划转兼容状态。
 
 当前生产配置仍默认开启 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。解除该保护前必须完成：
 
@@ -241,7 +242,7 @@ V8 迁移建立了：
 
 - 把演示数据改成显式 profile 或开发脚本，不在生产启动路径执行。
 - 删除 `InMemoryStore`、`EnterpriseStore` 的公开集合。
-- 将企业和主体划转等剩余兼容模型迁出 `EnterpriseStore`；人员、税务事项、分类、预算、周期事项、流水、资金账户、账本及成员的强类型持久化已经完成。
+- 将主体划转这一最后的兼容模型迁出 `EnterpriseStore`；公司、人员、税务事项、分类、预算、周期事项、流水、资金账户、账本及成员的强类型持久化已经完成。
 
 ### P2：集成宿主平台
 

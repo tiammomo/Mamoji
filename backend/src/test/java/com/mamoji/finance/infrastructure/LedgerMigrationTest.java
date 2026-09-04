@@ -79,7 +79,7 @@ class LedgerMigrationTest {
                 WHERE success = true ORDER BY installed_rank DESC LIMIT 1
                 """)) {
                 version.next();
-                assertEquals("24", version.getString("version"));
+                assertEquals("25", version.getString("version"));
             }
             assertEquals(Set.of(
                 "fk_ledgers_company",

@@ -11,10 +11,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.platform.identity.account.application.UserDirectory;
+import com.mamoji.platform.tenant.CompanyRepository;
 import com.mamoji.repository.EnterpriseStore;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,10 +26,12 @@ class ReceiptVoucherDataInitializerTest {
     @Test
     void bootstrapModeOnlyRepairsExistingEvidenceData() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
         UserDirectory userDirectory = mock(UserDirectory.class);
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
+            companies,
             enterpriseStore,
             userDirectory,
             "bootstrap"
@@ -38,12 +41,13 @@ class ReceiptVoucherDataInitializerTest {
 
         verify(receiptVouchers).repairLegacyDefaults();
         verify(receiptVouchers, never()).insert(any());
-        verifyNoInteractions(enterpriseStore, userDirectory);
+        verifyNoInteractions(companies, enterpriseStore, userDirectory);
     }
 
     @Test
     void demoModeCreatesEvidenceAndAuditFixturesOnce() {
         ReceiptVoucherRepository receiptVouchers = mock(ReceiptVoucherRepository.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
         UserDirectory userDirectory = mock(UserDirectory.class);
         Company company = new Company();
@@ -54,7 +58,7 @@ class ReceiptVoucherDataInitializerTest {
         );
         List<ReceiptVoucher> inserted = new ArrayList<>();
         AtomicLong ids = new AtomicLong(100);
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(enterpriseStore.hasAuditLogEntityType("receipt_voucher")).thenReturn(false);
         when(userDirectory.findAll()).thenReturn(List.of(owner));
         when(receiptVouchers.findByCompany(company.id)).thenReturn(List.of());
@@ -71,6 +75,7 @@ class ReceiptVoucherDataInitializerTest {
         when(receiptVouchers.findAll()).thenAnswer(invocation -> List.copyOf(inserted));
         ReceiptVoucherDataInitializer initializer = new ReceiptVoucherDataInitializer(
             receiptVouchers,
+            companies,
             enterpriseStore,
             userDirectory,
             "demo"

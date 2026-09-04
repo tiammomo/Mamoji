@@ -11,11 +11,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.finance.domain.Account;
 import com.mamoji.finance.domain.Ledger;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -30,31 +30,31 @@ class AccountDataInitializerTest {
     @Test
     void bootstrapModeDoesNotCreateDemoAccounts() {
         FinanceRepository finances = mock(FinanceRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         AccountDataInitializer initializer = new AccountDataInitializer(
             finances,
-            enterpriseStore,
+            companies,
             "bootstrap"
         );
 
         initializer.initialize();
 
-        verifyNoInteractions(finances, enterpriseStore);
+        verifyNoInteractions(finances, companies);
     }
 
     @Test
     void demoModeCreatesTypedCompanyScopedAccountsOnlyOnce() {
         FinanceRepository finances = mock(FinanceRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
         Ledger ledger = ledger();
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(finances.findAccounts(company.ownerId, company.id))
             .thenReturn(List.of())
             .thenReturn(List.of(new Account()));
         when(finances.ensureAccountingLedger(company.ownerId, company.id, company.currency, company.name))
             .thenReturn(ledger);
-        AccountDataInitializer initializer = new AccountDataInitializer(finances, enterpriseStore, "demo");
+        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies, "demo");
 
         initializer.initialize();
         initializer.initialize();
@@ -93,11 +93,11 @@ class AccountDataInitializerTest {
     @Test
     void demoModeLeavesExistingAccountsUntouched() {
         FinanceRepository finances = mock(FinanceRepository.class);
-        EnterpriseStore enterpriseStore = mock(EnterpriseStore.class);
+        CompanyRepository companies = mock(CompanyRepository.class);
         Company company = company();
-        when(enterpriseStore.sortedCompanies()).thenReturn(List.of(company));
+        when(companies.findAll()).thenReturn(List.of(company));
         when(finances.findAccounts(company.ownerId, company.id)).thenReturn(List.of(new Account()));
-        AccountDataInitializer initializer = new AccountDataInitializer(finances, enterpriseStore, "demo");
+        AccountDataInitializer initializer = new AccountDataInitializer(finances, companies, "demo");
 
         initializer.initialize();
 

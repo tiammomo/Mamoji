@@ -1,7 +1,7 @@
 package com.mamoji.service.support;
 
 import com.mamoji.common.Roles;
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.people.application.EmployeeRepository;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.platform.identity.ActorIdentityProvider;
@@ -9,7 +9,7 @@ import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembership;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
-import com.mamoji.repository.EnterpriseStore;
+import com.mamoji.platform.tenant.CompanyRepository;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -21,20 +21,20 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AccessControlService {
     private final ActorIdentityProvider identityProvider;
-    private final EnterpriseStore enterpriseStore;
+    private final CompanyRepository companies;
     private final EmployeeRepository employees;
     private final CompanyMembershipRepository memberships;
     private final ProductModuleCatalog productModules;
 
     public AccessControlService(
         ActorIdentityProvider identityProvider,
-        EnterpriseStore enterpriseStore,
+        CompanyRepository companies,
         EmployeeRepository employees,
         CompanyMembershipRepository memberships,
         ProductModuleCatalog productModules
     ) {
         this.identityProvider = identityProvider;
-        this.enterpriseStore = enterpriseStore;
+        this.companies = companies;
         this.employees = employees;
         this.memberships = memberships;
         this.productModules = productModules;
@@ -134,7 +134,7 @@ public class AccessControlService {
             return true;
         }
         Set<String> roleSet = Set.of(roles);
-        Company company = enterpriseStore.findCompany(companyId).orElse(null);
+        Company company = companies.findById(companyId).orElse(null);
         if (company != null && company.ownerId == user.id && roleSet.contains("founder")) {
             return true;
         }
@@ -148,7 +148,7 @@ public class AccessControlService {
     }
 
     private boolean isCompanyOwner(User user, long companyId) {
-        Company company = enterpriseStore.findCompany(companyId).orElse(null);
+        Company company = companies.findById(companyId).orElse(null);
         return company != null && company.ownerId == user.id;
     }
 
@@ -172,7 +172,7 @@ public class AccessControlService {
         if (companyId == null || companyId == 0) {
             return defaultCompany(user);
         }
-        Company company = enterpriseStore.findCompany(companyId)
+        Company company = companies.findById(companyId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Company not found"));
         if (!canAccessCompany(user, company.id)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No access to company");
@@ -182,7 +182,7 @@ public class AccessControlService {
 
     public List<Company> accessibleCompanies(User user) {
         if (user.role == Roles.ADMIN) {
-            return enterpriseStore.sortedCompanies().stream()
+            return companies.findAll().stream()
                 .filter(company -> productModules.householdEnabled() || !"household".equals(company.entityType))
                 .toList();
         }
@@ -190,7 +190,7 @@ public class AccessControlService {
         memberships.findActiveByUser(user.id).stream()
             .map(CompanyMembership::companyId)
             .forEach(employeeCompanyIds::add);
-        return enterpriseStore.sortedCompanies().stream()
+        return companies.findAll().stream()
             .filter(company -> productModules.householdEnabled() || !"household".equals(company.entityType))
             .filter(company -> company.ownerId == user.id || employeeCompanyIds.contains(company.id))
             .toList();

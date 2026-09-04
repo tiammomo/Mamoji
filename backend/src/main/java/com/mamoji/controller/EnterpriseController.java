@@ -1,6 +1,6 @@
 package com.mamoji.controller;
 
-import com.mamoji.domain.Models.Company;
+import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmploymentEvent;
