@@ -1,4 +1,4 @@
-package com.mamoji.service;
+package com.mamoji.evidence.application;
 
 import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
@@ -6,11 +6,11 @@ import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.domain.Models.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
-import com.mamoji.evidence.infrastructure.ReceiptVoucherRepository;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.audit.application.AuditTrailService;
+import com.mamoji.service.OutboxEventService;
 import com.mamoji.service.support.AccessControlService;
 import com.mamoji.service.support.ObjectStorageService.StoredObject;
 import com.mamoji.service.support.ObjectStorageService;
@@ -29,9 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -49,7 +49,7 @@ import static com.mamoji.service.support.DomainSupport.require;
 import static com.mamoji.service.support.DomainSupport.touch;
 
 @Service
-public class ReceiptService {
+public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     private static final BigDecimal LARGE_AMOUNT = new BigDecimal("10000");
     private static final String DEFAULT_FILE_NAME = "receipt-attachment";
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
@@ -58,27 +58,27 @@ public class ReceiptService {
     private final AccessControlService accessControl;
     private final AuditTrailService auditTrail;
     private final ReceiptVoucherRepository receiptVouchers;
+    private final ReceiptFileHashRepository receiptFileHashes;
     private final TransactionQueryRepository transactions;
     private final ObjectStorageService objectStorageService;
     private final OutboxEventService outboxEventService;
-    private final JdbcTemplate jdbc;
 
-    public ReceiptService(
+    public ReceiptApplicationService(
         AccessControlService accessControl,
         AuditTrailService auditTrail,
         ReceiptVoucherRepository receiptVouchers,
+        ReceiptFileHashRepository receiptFileHashes,
         TransactionQueryRepository transactions,
         ObjectStorageService objectStorageService,
-        OutboxEventService outboxEventService,
-        JdbcTemplate jdbc
+        OutboxEventService outboxEventService
     ) {
         this.accessControl = accessControl;
         this.auditTrail = auditTrail;
         this.receiptVouchers = receiptVouchers;
+        this.receiptFileHashes = receiptFileHashes;
         this.transactions = transactions;
         this.objectStorageService = objectStorageService;
         this.outboxEventService = outboxEventService;
-        this.jdbc = jdbc;
     }
 
     public PagedResponse<ReceiptVoucher> list(String authorization, Map<String, String> params) {
@@ -246,7 +246,8 @@ public class ReceiptService {
      * accept approvalStatus so an approval cannot be bypassed with a direct update.
      */
     @Transactional
-    public ReceiptVoucher updateApprovalStatus(String authorization, long id, String approvalStatus) {
+    @Override
+    public void updateApprovalStatus(String authorization, long id, String approvalStatus) {
         User user = accessControl.requireUser(authorization);
         ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
@@ -256,7 +257,6 @@ public class ReceiptService {
         touch(voucher);
         receiptVouchers.save(voucher);
         logVoucher(user, voucher, "approval_workflow", updateSummary(previousSnapshot, voucher));
-        return voucher;
     }
 
     @Transactional
@@ -266,19 +266,15 @@ public class ReceiptService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt image is required");
         }
         Company company = accessControl.resolveCompany(user, optionalLong(params.get("companyId")).orElse(null));
-        String fileHash = sha256(file);
-        List<Long> duplicateVoucherIds = jdbc.queryForList(
-            "SELECT voucher_id FROM receipt_file_hashes WHERE company_id = ? AND sha256 = ? LIMIT 1",
-            Long.class,
-            company.id,
-            fileHash
-        );
-        if (!duplicateVoucherIds.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate receipt file; existing voucher #" + duplicateVoucherIds.getFirst());
-        }
-        String filename = file.getOriginalFilename() == null ? "receipt" : file.getOriginalFilename();
         String voucherType = normalizeVoucherType(params.getOrDefault("voucherType", "purchase_invoice"));
         requireReceiptCreatePermission(user, company.id, voucherType);
+        String fileHash = sha256(file);
+        receiptFileHashes.lock(company.id, fileHash);
+        OptionalLong duplicateVoucherId = receiptFileHashes.findVoucherId(company.id, fileHash);
+        if (duplicateVoucherId.isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate receipt file; existing voucher #" + duplicateVoucherId.getAsLong());
+        }
+        String filename = file.getOriginalFilename() == null ? "receipt" : file.getOriginalFilename();
         StoredObject storedObject;
         try {
             storedObject = objectStorageService.storeReceiptFile(company.id, file);
@@ -322,10 +318,14 @@ public class ReceiptService {
         voucher.fileUrl = storedObject.url();
         voucher.riskLevel = riskFor(voucher);
         receiptVouchers.save(voucher);
-        jdbc.update("""
-            INSERT INTO receipt_file_hashes (company_id, voucher_id, sha256, file_name, file_size, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, company.id, voucher.id, fileHash, filename, file.getSize(), OffsetDateTime.now().toString());
+        receiptFileHashes.register(
+            company.id,
+            voucher.id,
+            fileHash,
+            filename,
+            file.getSize(),
+            OffsetDateTime.now().toString()
+        );
         logVoucher(user, voucher, "upload", "上传并创建票据凭证「" + voucher.title + "」");
         return Map.of(
             "success", true,
@@ -409,7 +409,7 @@ public class ReceiptService {
         }
     }
 
-    public FileDownload fileDownload(String authorization, long id) {
+    public ReceiptFileDownload fileDownload(String authorization, long id) {
         User user = accessControl.requireUser(authorization);
         ReceiptVoucher voucher = requireReceiptVoucher(id);
         if (!accessControl.canAccessCompany(user, voucher.companyId)) {
@@ -419,7 +419,7 @@ public class ReceiptService {
             byte[] content = objectStorageService
                 .downloadObject(voucher.fileStorageProvider, voucher.fileBucket, voucher.fileObjectKey)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt file is not stored in object storage"));
-            return new FileDownload(
+            return new ReceiptFileDownload(
                 content,
                 isBlank(voucher.fileName) ? DEFAULT_FILE_NAME : voucher.fileName,
                 isBlank(voucher.fileType) ? DEFAULT_CONTENT_TYPE : voucher.fileType
@@ -785,8 +785,5 @@ public class ReceiptService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    public record FileDownload(byte[] content, String fileName, String contentType) {
     }
 }

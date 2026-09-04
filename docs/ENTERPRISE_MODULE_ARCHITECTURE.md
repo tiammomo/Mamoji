@@ -204,7 +204,7 @@ workforce/
 | `recurring_items` | Recurring | 通过专属仓储加行锁维护规则和执行游标；Operations 仅接收执行后创建流水的命令 |
 | `budgets` | Budget | 专属 JDBC 仓储是唯一写入口；Operations 只请求匹配预算，Workspace 只读 |
 | `accounts`、`ledgers`、`ledger_members` | Finance | Operations 通过账户 ID 和公司内可访问账本契约校验与调整 |
-| `receipt_vouchers` | Evidence | Approval 应用层通过 `ApprovalEntityGateway` 校验公司归属并同步审批状态，不直接依赖票据仓储或服务 |
+| `receipt_vouchers`、`receipt_file_hashes` | Evidence | 票据写入经 `ReceiptVoucherRepository`/`ReceiptFileHashRepository`；Approval 应用层通过 `ApprovalEntityGateway` 调用窄化的审批状态契约，不直接依赖票据仓储或完整用例服务 |
 | `tax_items` | Tax | 专属 JDBC 仓储直接读写；企业汇总、通知和税务合规报告只读公司范围投影 |
 | `departments`、`employees`、`employment_events` | People Core | 部门、员工和追加式任职历史分别由 `DepartmentRepository`、`EmployeeRepository`、`EmploymentEventRepository` 直接读写 PostgreSQL；Workforce Cost 仅通过有范围约束的 SQL 投影读取 |
 | `payroll_runs`、`payroll_run_items` | Workforce Cost | 报表与工作台只读已锁定或明确标识状态的快照 |
@@ -238,13 +238,16 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 
 审批用例与持久化边界已完成纵向收口：`ApprovalApplicationService` 只编排访问控制、状态机、审计和业务对象网关，`ApprovalRepository` 负责审批请求、动作轨迹、分页汇总以及幂等键/业务对象的 PostgreSQL 事务锁。响应记录已拆到稳定的 API/Domain 类型，HTTP JSON 契约保持不变。
 
+票据用例也已迁入 `evidence.api/application`：`ReceiptApplicationService` 只通过 `ReceiptVoucherRepository` 与 `ReceiptFileHashRepository` 访问票据数据，JDBC 与 SQL 位于对应 infrastructure 适配器。相同公司与 SHA-256 的并发上传先获取 PostgreSQL 事务 advisory lock，再检查重复文件，确保只创建一个凭证并让另一个请求稳定返回冲突。Approval 适配器只依赖 `ReceiptApprovalStatusService`，不再注入完整票据用例服务。
+
 生命周期级 `SingleInstanceDatabaseGuard` 已删除。生产部署通过 `MAMOJI_BACKEND_REPLICAS` 明确控制后端副本数，默认为 1；多副本发布自动逐实例验证 readiness、共享会话和全局注销，预生产可显式演练单副本停止与重新加入。扩容时仍必须合并计算数据库连接预算，并以双容器并发压测验证目标容量，而不是依赖进程锁掩盖并发缺陷。
 
 ## 10. 后续拆分顺序
 
 ### P0：完成核心边界
 
-- 审批用例、持久化端口和 JDBC 适配器已迁入纵向模块，并通过 `ApprovalEntityGateway` 隔离多态业务对象；继续迁移票据的旧横向 Service。
+- 审批用例、持久化端口和 JDBC 适配器已迁入纵向模块，并通过 `ApprovalEntityGateway` 隔离多态业务对象。
+- 票据 Controller、应用服务、仓储端口和 JDBC 适配器已迁入 Evidence 纵向模块；继续将共享 `Models.ReceiptVoucher` 收口为 Evidence 领域类型，并为写命令补齐 typed DTO。
 - 账户用例已归入 Finance 模块；继续清理跨模块直接仓储依赖，保持账户写入只经过 Finance 契约。
 - 给交易、账户、票据补齐 typed DTO 与客户端版本契约。
 - 将权限判断从旧整数角色进一步收口到 AccessContext。
