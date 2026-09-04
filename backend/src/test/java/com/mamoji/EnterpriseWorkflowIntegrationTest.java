@@ -464,6 +464,50 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
     }
 
     @Test
+    void employmentHistoryPersistsTypedCompanyScopedLifecycleEvents() throws Exception {
+        String adminToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(adminToken, "Employment History " + System.nanoTime());
+        String employeeToken = registerInvitedUser(uniqueEmail("employment-history"));
+        Map<String, Object> employeeUser = parseMap(request("GET", "/api/v1/auth/me", null, employeeToken).body());
+        Map<String, Object> employee = createEmployee(
+            adminToken,
+            companyId,
+            ((Number) employeeUser.get("id")).longValue(),
+            text(employeeUser.get("email")),
+            "employee"
+        );
+        long employeeId = id(employee);
+
+        ApiResponse departure = request(
+            "PUT",
+            "/api/v1/enterprise/employees/" + employeeId,
+            Map.of("status", "departed", "leaveDate", "2026-07-31"),
+            adminToken
+        );
+        assertEquals(200, departure.status(), departure.body());
+
+        ApiResponse history = request(
+            "GET",
+            "/api/v1/enterprise/employment-events?companyId=" + companyId,
+            null,
+            adminToken
+        );
+        assertEquals(200, history.status(), history.body());
+        List<Map<String, Object>> employeeEvents = parseList(history.body()).stream()
+            .filter(event -> ((Number) event.get("employeeId")).longValue() == employeeId)
+            .toList();
+        assertEquals(2, employeeEvents.size());
+        assertEquals(
+            List.of("offboard", "onboard"),
+            employeeEvents.stream().map(event -> event.get("type")).toList()
+        );
+        assertEquals(
+            List.of("2026-07-31", "2026-07-01"),
+            employeeEvents.stream().map(event -> event.get("effectiveDate")).toList()
+        );
+    }
+
+    @Test
     void concurrentApprovalSubmissionCreatesOnlyOnePendingRequest() throws Exception {
         String token = adminToken();
         long companyId = createCompany(token, "Concurrent approval");

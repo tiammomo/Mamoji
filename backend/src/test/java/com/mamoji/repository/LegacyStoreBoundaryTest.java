@@ -2,6 +2,7 @@ package com.mamoji.repository;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.people.application.EmploymentEventRepository;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.identity.account.application.LocalUserAccountRepository;
 import com.mamoji.platform.identity.account.application.UserDirectory;
@@ -99,6 +100,7 @@ class LegacyStoreBoundaryTest {
             "department",
             "deleteEmployee",
             "deleteTaxItem",
+            "event",
             "findActiveEmployeeByUser",
             "findDepartment",
             "findEmployee",
@@ -108,7 +110,8 @@ class LegacyStoreBoundaryTest {
             "saveTaxItem",
             "saveEntityTransfer",
             "sortedDepartments",
-            "sortedEmployees"
+            "sortedEmployees",
+            "sortedEmploymentEvents"
         ));
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("departments")),
@@ -116,6 +119,9 @@ class LegacyStoreBoundaryTest {
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("employees")),
             "Employees must not return to the process-local enterprise compatibility view");
+        assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
+            .noneMatch(field -> field.getName().equals("employmentEvents")),
+            "Employment events must not return to the process-local enterprise compatibility view");
         assertTrue(Arrays.stream(EnterpriseStore.class.getDeclaredFields())
             .noneMatch(field -> field.getName().equals("taxItems")),
             "Tax items must not return to the process-local enterprise compatibility view");
@@ -131,6 +137,19 @@ class LegacyStoreBoundaryTest {
 
         assertTrue(exposedMethods.isEmpty(), () ->
             "Audit logs must remain append-only at the persistence boundary: " + exposedMethods
+        );
+    }
+
+    @Test
+    void employmentEventPersistenceBoundaryExposesNoUpdateOperation() {
+        Set<String> forbiddenPrefixes = Set.of("update", "replace", "save");
+        Set<String> exposedMethods = Arrays.stream(EmploymentEventRepository.class.getDeclaredMethods())
+            .map(method -> method.getName().toLowerCase())
+            .filter(name -> forbiddenPrefixes.stream().anyMatch(name::startsWith))
+            .collect(Collectors.toSet());
+
+        assertTrue(exposedMethods.isEmpty(), () ->
+            "Employment events must remain append-only outside the explicit demo-reset deletion: " + exposedMethods
         );
     }
 

@@ -1,7 +1,6 @@
 package com.mamoji.repository;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.platform.audit.application.AuditLogRepository;
 import com.mamoji.platform.audit.domain.AuditEvent;
@@ -9,9 +8,11 @@ import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.application.EmploymentEventRepository;
 import com.mamoji.people.domain.Department;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmployeeCompensationPolicy;
+import com.mamoji.people.domain.EmploymentEvent;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
@@ -36,7 +37,6 @@ import org.springframework.stereotype.Component;
 public class EnterpriseStore {
     public final Map<Long, Company> companies = new ConcurrentHashMap<>();
     public final Map<Long, EntityTransfer> entityTransfers = new ConcurrentHashMap<>();
-    public final Map<Long, EmploymentEvent> employmentEvents = new ConcurrentHashMap<>();
     private static final String DEFAULT_POLICY_PROFILE = "CN-DEFAULT-DEMO-POLICY";
     private static final String LEGACY_SHENZHEN_POLICY_PROFILE = "CN-GD-SZ-DEMO-POLICY";
     private static final String SHENZHEN_STARTUP_POLICY_PROFILE = "CN-GD-SZ-STARTUP-LITE";
@@ -57,6 +57,7 @@ public class EnterpriseStore {
     private final AuditLogRepository auditLogRepository;
     private final DepartmentRepository departmentRepository;
     private final EmployeeRepository employeeRepository;
+    private final EmploymentEventRepository employmentEventRepository;
     private final String bootstrapMode;
     private final String bootstrapCompanyName;
     private final String bootstrapCompanyCreditCode;
@@ -70,6 +71,7 @@ public class EnterpriseStore {
         AuditLogRepository auditLogRepository,
         DepartmentRepository departmentRepository,
         EmployeeRepository employeeRepository,
+        EmploymentEventRepository employmentEventRepository,
         @Value("${mamoji.bootstrap.mode:demo}") String bootstrapMode,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String bootstrapCompanyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String bootstrapCompanyCreditCode,
@@ -82,6 +84,7 @@ public class EnterpriseStore {
         this.auditLogRepository = auditLogRepository;
         this.departmentRepository = departmentRepository;
         this.employeeRepository = employeeRepository;
+        this.employmentEventRepository = employmentEventRepository;
         this.bootstrapMode = defaultIfBlank(bootstrapMode, "demo").toLowerCase(Locale.ROOT);
         this.bootstrapCompanyName = defaultIfBlank(bootstrapCompanyName, "我的公司");
         this.bootstrapCompanyCreditCode = blankToNull(bootstrapCompanyCreditCode);
@@ -107,11 +110,9 @@ public class EnterpriseStore {
     private void loadAll() {
         companies.clear();
         entityTransfers.clear();
-        employmentEvents.clear();
 
         forEachRow("SELECT * FROM companies", rs -> companies.put(rs.getLong("id"), mapCompany(rs)));
         forEachRow("SELECT * FROM entity_transfers", rs -> entityTransfers.put(rs.getLong("id"), mapEntityTransfer(rs)));
-        forEachRow("SELECT * FROM employment_events", rs -> employmentEvents.put(rs.getLong("id"), mapEmploymentEvent(rs)));
     }
 
     /** Reload the process-local compatibility view after a controlled restore. */
@@ -178,7 +179,14 @@ public class EnterpriseStore {
             "0",
             null
         );
-        event(company.id, founder.id, "onboard", founder.hireDate, "生产环境初始化管理员员工档案", owner.id());
+        createSeedEmploymentEvent(
+            company.id,
+            founder.id,
+            "onboard",
+            founder.hireDate,
+            "生产环境初始化管理员员工档案",
+            owner.id()
+        );
         auditLog(company.id, "company", company.id, "bootstrap", "生产环境初始化公司主体: " + company.name, owner.id(), owner.nickname());
     }
 
@@ -222,13 +230,27 @@ public class EnterpriseStore {
             "市场运营", "full_time", "departed", "viewer", "self", "2026-02-15", "2026-06-03",
             "14000", "2100", "1680", "500", "18280", "吴先生 13800000014");
 
-        event(company.id, founder.id, "onboard", founder.hireDate, "公司创始人账号初始化", owner.id());
+        createSeedEmploymentEvent(company.id, founder.id, "onboard", founder.hireDate, "公司创始人账号初始化", owner.id());
         employeeRepository.findByCompany(company.id, false).stream()
             .filter(employee -> employee.companyId == company.id && employee.id != founder.id)
-            .forEach(employee -> event(company.id, employee.id, "onboard", employee.hireDate, "演示员工入职", owner.id()));
+            .forEach(employee -> createSeedEmploymentEvent(
+                company.id,
+                employee.id,
+                "onboard",
+                employee.hireDate,
+                "演示员工入职",
+                owner.id()
+            ));
         employeeRepository.findByCompany(company.id, false).stream()
             .filter(employee -> employee.companyId == company.id && "departed".equals(employee.status))
-            .forEach(employee -> event(company.id, employee.id, "offboard", employee.leaveDate, "演示员工离职交接完成", owner.id()));
+            .forEach(employee -> createSeedEmploymentEvent(
+                company.id,
+                employee.id,
+                "offboard",
+                employee.leaveDate,
+                "演示员工离职交接完成",
+                owner.id()
+            ));
 
     }
 
@@ -285,7 +307,14 @@ public class EnterpriseStore {
             benchmarkEmployee.materialStatus = "verified";
             employeeRepository.update(benchmarkEmployee);
             if (operatorUserId > 0) {
-                event(company.id, benchmarkEmployee.id, "onboard", benchmarkEmployee.hireDate, "薪酬档位样例入职", operatorUserId);
+                createSeedEmploymentEvent(
+                    company.id,
+                    benchmarkEmployee.id,
+                    "onboard",
+                    benchmarkEmployee.hireDate,
+                    "薪酬档位样例入职",
+                    operatorUserId
+                );
             }
         }
         retainOnlyCompensationBenchmarkEmployees(company);
@@ -302,7 +331,10 @@ public class EnterpriseStore {
         }
         jdbc.update("DELETE FROM payroll_run_items WHERE run_id IN (SELECT id FROM payroll_runs WHERE company_id = ?)", company.id);
         jdbc.update("DELETE FROM payroll_runs WHERE company_id = ?", company.id);
-        employeeIdsToRemove.forEach(employeeRepository::deleteForDemoReset);
+        employeeIdsToRemove.forEach(employeeId -> {
+            employmentEventRepository.deleteByEmployeeForDemoReset(employeeId);
+            employeeRepository.deleteForDemoReset(employeeId);
+        });
     }
 
     private boolean isDemoCompany(Company company) {
@@ -451,14 +483,6 @@ public class EnterpriseStore {
 
     public List<Company> sortedCompanies() {
         return jdbc.query("SELECT * FROM companies ORDER BY id", (rs, rowNum) -> mapCompany(rs));
-    }
-
-    public List<EmploymentEvent> sortedEmploymentEvents(long companyId) {
-        return jdbc.query(
-            "SELECT * FROM employment_events WHERE company_id = ? ORDER BY effective_date DESC, id",
-            (rs, rowNum) -> mapEmploymentEvent(rs),
-            companyId
-        );
     }
 
     public List<EntityTransfer> sortedEntityTransfers(List<Long> accessibleEntityIds, Long entityId) {
@@ -616,7 +640,14 @@ public class EnterpriseStore {
         return employeeRepository.insert(employee);
     }
 
-    public EmploymentEvent event(long companyId, long employeeId, String type, String effectiveDate, String note, long operatorUserId) {
+    private EmploymentEvent createSeedEmploymentEvent(
+        long companyId,
+        long employeeId,
+        String type,
+        String effectiveDate,
+        String note,
+        long operatorUserId
+    ) {
         EmploymentEvent event = new EmploymentEvent();
         event.companyId = companyId;
         event.employeeId = employeeId;
@@ -624,21 +655,7 @@ public class EnterpriseStore {
         event.effectiveDate = effectiveDate;
         event.note = note == null ? "" : note;
         event.operatorUserId = operatorUserId;
-        event.createdAt = InMemoryStore.now();
-        event.id = insert("""
-            INSERT INTO employment_events (company_id, employee_id, type, effective_date, note, operator_user_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, ps -> {
-            ps.setLong(1, event.companyId);
-            ps.setLong(2, event.employeeId);
-            ps.setString(3, event.type);
-            ps.setString(4, event.effectiveDate);
-            ps.setString(5, event.note);
-            ps.setLong(6, event.operatorUserId);
-            ps.setString(7, event.createdAt);
-        });
-        employmentEvents.put(event.id, event);
-        return event;
+        return employmentEventRepository.append(event);
     }
 
     public EntityTransfer entityTransfer(
@@ -751,19 +768,6 @@ public class EnterpriseStore {
 
     private boolean isBootstrapMode() {
         return "bootstrap".equals(bootstrapMode);
-    }
-
-    private EmploymentEvent mapEmploymentEvent(ResultSet rs) throws SQLException {
-        EmploymentEvent event = new EmploymentEvent();
-        event.id = rs.getLong("id");
-        event.companyId = rs.getLong("company_id");
-        event.employeeId = rs.getLong("employee_id");
-        event.type = rs.getString("type");
-        event.effectiveDate = rs.getString("effective_date");
-        event.note = rs.getString("note");
-        event.operatorUserId = rs.getLong("operator_user_id");
-        event.createdAt = rs.getString("created_at");
-        return event;
     }
 
     private EntityTransfer mapEntityTransfer(ResultSet rs) throws SQLException {

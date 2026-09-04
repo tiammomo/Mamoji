@@ -1,16 +1,17 @@
 package com.mamoji.service;
 
 import com.mamoji.domain.Models.Company;
-import com.mamoji.domain.Models.EmploymentEvent;
 import com.mamoji.domain.Models.EntityTransfer;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
 import com.mamoji.people.application.DepartmentRepository;
 import com.mamoji.people.application.EmployeeRepository;
+import com.mamoji.people.application.EmploymentEventRepository;
 import com.mamoji.people.domain.Employee;
 import com.mamoji.people.domain.EmployeeCertificate;
 import com.mamoji.people.domain.EmployeeCompensationPolicy;
 import com.mamoji.people.domain.EmployeeExperience;
+import com.mamoji.people.domain.EmploymentEvent;
 import com.mamoji.platform.identity.User;
 import com.mamoji.platform.product.ProductModuleCatalog;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
@@ -50,6 +51,7 @@ public class EnterpriseManagementService {
     private final CategoryRepository categoryRepository;
     private final DepartmentRepository departments;
     private final EmployeeRepository employeeRepository;
+    private final EmploymentEventRepository employmentEvents;
     private final TaxItemRepository taxItems;
     private final AccessControlService accessControl;
     private final EnterprisePermissionCatalog permissionCatalog;
@@ -63,6 +65,7 @@ public class EnterpriseManagementService {
         CategoryRepository categoryRepository,
         DepartmentRepository departments,
         EmployeeRepository employeeRepository,
+        EmploymentEventRepository employmentEvents,
         TaxItemRepository taxItems,
         AccessControlService accessControl,
         EnterprisePermissionCatalog permissionCatalog,
@@ -75,6 +78,7 @@ public class EnterpriseManagementService {
         this.categoryRepository = categoryRepository;
         this.departments = departments;
         this.employeeRepository = employeeRepository;
+        this.employmentEvents = employmentEvents;
         this.taxItems = taxItems;
         this.accessControl = accessControl;
         this.permissionCatalog = permissionCatalog;
@@ -230,7 +234,7 @@ public class EnterpriseManagementService {
         employeeRepository.insert(employee);
         memberships.synchronize(employee);
         syncEmployeeProfileLists(employee, body);
-        enterpriseStore.event(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
+        recordEmploymentEvent(company.id, employee.id, "onboard", employee.hireDate, "新增员工信息", operator.id);
         audit(company.id, "employee", employee.id, "create", "创建员工档案: " + employee.name, operator);
         return employee;
     }
@@ -253,7 +257,14 @@ public class EnterpriseManagementService {
         if (!oldStatus.equals(employee.status)) {
             String eventType = employee.status.equals("departed") ? "offboard" : "status_change";
             String effectiveDate = employee.status.equals("departed") && employee.leaveDate != null ? employee.leaveDate : LocalDate.now().toString();
-            enterpriseStore.event(employee.companyId, employee.id, eventType, effectiveDate, "员工状态从 " + oldStatus + " 更新为 " + employee.status, operator.id);
+            recordEmploymentEvent(
+                employee.companyId,
+                employee.id,
+                eventType,
+                effectiveDate,
+                "员工状态从 " + oldStatus + " 更新为 " + employee.status,
+                operator.id
+            );
         }
         audit(employee.companyId, "employee", employee.id, "update", "更新员工档案: " + employee.name, operator);
         return employee;
@@ -261,7 +272,7 @@ public class EnterpriseManagementService {
 
     public List<EmploymentEvent> listEmploymentEvents(String authorization, Long companyId) {
         Company company = accessControl.resolveCompany(accessControl.requireUser(authorization), companyId);
-        return enterpriseStore.sortedEmploymentEvents(company.id);
+        return employmentEvents.findByCompany(company.id);
     }
 
     public List<EntityTransfer> listEntityTransfers(String authorization, Long entityId) {
@@ -322,6 +333,24 @@ public class EnterpriseManagementService {
             user.id,
             payload
         );
+    }
+
+    private EmploymentEvent recordEmploymentEvent(
+        long companyId,
+        long employeeId,
+        String type,
+        String effectiveDate,
+        String note,
+        long operatorUserId
+    ) {
+        EmploymentEvent event = new EmploymentEvent();
+        event.companyId = companyId;
+        event.employeeId = employeeId;
+        event.type = type;
+        event.effectiveDate = effectiveDate;
+        event.note = note;
+        event.operatorUserId = operatorUserId;
+        return employmentEvents.append(event);
     }
 
     private void applyCompanyFields(Company company, Map<String, Object> body) {

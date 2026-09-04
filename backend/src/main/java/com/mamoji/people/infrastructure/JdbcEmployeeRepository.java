@@ -209,7 +209,6 @@ public class JdbcEmployeeRepository implements EmployeeRepository {
     public void deleteForDemoReset(long id) {
         jdbc.update("DELETE FROM employee_certificates WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employee_experiences WHERE employee_id = ?", id);
-        jdbc.update("DELETE FROM employment_events WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM payroll_run_items WHERE employee_id = ?", id);
         jdbc.update("DELETE FROM employees WHERE id = ?", id);
     }
