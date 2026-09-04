@@ -95,6 +95,10 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         Company company = accessControl.resolveCompany(user, request.companyId());
         String voucherType = valueOr(request.voucherType(), "purchase_invoice");
         requireReceiptCreatePermission(user, company.id, voucherType);
+        BigDecimal amount = valueOr(request.amount(), BigDecimal.ZERO);
+        BigDecimal taxAmount = valueOr(request.taxAmount(), BigDecimal.ZERO);
+        LocalDate issueDate = valueOr(request.issueDate(), LocalDate.now());
+        validateVoucherBoundaries(amount, taxAmount, issueDate, request.dueDate());
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
             validateTransaction(user, request.transactionId(), company.id).map(tx -> tx.id).orElse(null),
@@ -103,9 +107,9 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             voucherType,
             valueOr(request.direction(), "expense"),
             valueOr(request.counterparty(), "待补充"),
-            valueOr(request.amount(), BigDecimal.ZERO),
-            valueOr(request.taxAmount(), BigDecimal.ZERO),
-            valueOr(request.issueDate(), LocalDate.now()).toString(),
+            amount,
+            taxAmount,
+            issueDate.toString(),
             stringValue(request.dueDate()),
             valueOr(request.status(), "pending_review"),
             nullableTextValue(request.fileName()),
@@ -130,6 +134,12 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         requireReceiptWritePermission(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
         applyUpdateFields(user, voucher, request);
+        validateVoucherBoundaries(
+            voucher.amount,
+            voucher.taxAmount,
+            LocalDate.parse(voucher.issueDate),
+            voucher.dueDate == null ? null : LocalDate.parse(voucher.dueDate)
+        );
         voucher.riskLevel = riskFor(voucher);
         touch(voucher);
         receiptVouchers.save(voucher);
@@ -165,6 +175,10 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         Company company = accessControl.resolveCompany(user, request.companyId());
         String voucherType = valueOr(request.voucherType(), "purchase_invoice");
         requireReceiptCreatePermission(user, company.id, voucherType);
+        BigDecimal amount = valueOr(request.amount(), BigDecimal.ZERO);
+        BigDecimal taxAmount = valueOr(request.taxAmount(), BigDecimal.ZERO);
+        LocalDate issueDate = valueOr(request.issueDate(), LocalDate.now());
+        validateVoucherBoundaries(amount, taxAmount, issueDate, request.dueDate());
         String fileHash = sha256(file);
         receiptFileHashes.lock(company.id, fileHash);
         OptionalLong duplicateVoucherId = receiptFileHashes.findVoucherId(company.id, fileHash);
@@ -188,9 +202,9 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             voucherType,
             valueOr(request.direction(), "expense"),
             valueOr(request.counterparty(), "待补充"),
-            valueOr(request.amount(), BigDecimal.ZERO),
-            valueOr(request.taxAmount(), BigDecimal.ZERO),
-            valueOr(request.issueDate(), LocalDate.now()).toString(),
+            amount,
+            taxAmount,
+            issueDate.toString(),
             stringValue(request.dueDate()),
             valueOr(request.status(), "pending_review"),
             filename,
@@ -331,6 +345,24 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
             && query.maxAmount() != null
             && query.minAmount().compareTo(query.maxAmount()) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "minAmount must not exceed maxAmount");
+        }
+    }
+
+    private void validateVoucherBoundaries(
+        BigDecimal amount,
+        BigDecimal taxAmount,
+        LocalDate issueDate,
+        LocalDate dueDate
+    ) {
+        if (taxAmount.compareTo(amount) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "taxAmount must not exceed amount");
+        }
+        BigDecimal taxExcludedAmount = amount.subtract(taxAmount);
+        if (taxExcludedAmount.signum() > 0 && taxAmount.compareTo(taxExcludedAmount) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "taxAmount implies a taxRate above 100");
+        }
+        if (dueDate != null && dueDate.isBefore(issueDate)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dueDate must not be before issueDate");
         }
     }
 

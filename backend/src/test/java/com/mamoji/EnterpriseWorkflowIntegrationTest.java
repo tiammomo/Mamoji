@@ -166,20 +166,64 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
         ));
 
-        ApiResponse created = request("POST", "/api/v1/receipts", Map.of(
+        ApiResponse invalidTaxAmount = request("POST", "/api/v1/receipts", Map.of(
             "companyId", companyId,
-            "title", "Typed receipt contract",
-            "voucherType", "purchase_invoice",
-            "direction", "expense",
-            "counterparty", "Supplier",
-            "amount", 120,
-            "taxPeriod", "2026-08",
-            "businessPurpose", "Project materials",
-            "dueDate", "2026-09-15",
-            "note", "Keep until cleared"
+            "title", "Tax exceeds receipt total",
+            "amount", 100,
+            "taxAmount", 101,
+            "issueDate", "2026-09-01"
+        ), token);
+        assertEquals(400, invalidTaxAmount.status(), invalidTaxAmount.body());
+        ApiResponse invalidInferredTaxRate = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Tax implies an invalid rate",
+            "amount", 100,
+            "taxAmount", 60,
+            "issueDate", "2026-09-01"
+        ), token);
+        assertEquals(400, invalidInferredTaxRate.status(), invalidInferredTaxRate.body());
+        ApiResponse invalidDueDate = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Due date before issue date",
+            "amount", 100,
+            "issueDate", "2026-09-02",
+            "dueDate", "2026-09-01"
+        ), token);
+        assertEquals(400, invalidDueDate.status(), invalidDueDate.body());
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse created = request("POST", "/api/v1/receipts", Map.ofEntries(
+            Map.entry("companyId", companyId),
+            Map.entry("title", "Typed receipt contract"),
+            Map.entry("voucherType", "purchase_invoice"),
+            Map.entry("direction", "expense"),
+            Map.entry("counterparty", "Supplier"),
+            Map.entry("amount", 120),
+            Map.entry("taxAmount", 20),
+            Map.entry("taxPeriod", "2026-08"),
+            Map.entry("businessPurpose", "Project materials"),
+            Map.entry("dueDate", "2026-09-15"),
+            Map.entry("note", "Keep until cleared")
         ), token);
         assertEquals(200, created.status(), created.body());
         long voucherId = ((Number) parseMap(created.body()).get("id")).longValue();
+        long version = jdbc.queryForObject(
+            "SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId
+        );
+
+        ApiResponse invalidAmountUpdate = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "amount", 10
+        ), token);
+        assertEquals(400, invalidAmountUpdate.status(), invalidAmountUpdate.body());
+        ApiResponse invalidDateUpdate = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "dueDate", "2026-07-31"
+        ), token);
+        assertEquals(400, invalidDateUpdate.status(), invalidDateUpdate.body());
+        assertEquals(version, jdbc.queryForObject(
+            "SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId
+        ));
 
         Map<String, Object> clearFields = new LinkedHashMap<>();
         clearFields.put("taxPeriod", null);

@@ -9,6 +9,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.OffsetDateTime;
+import java.util.HashSet;
+import java.util.Set;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
@@ -27,9 +30,12 @@ class ReceiptVoucherMigrationTest {
         long purchaseId;
         long reimbursementId;
         long completeId;
+        long companyId;
+        long otherCompanyId;
         try (Connection connection = connection(POSTGRES); Statement statement = connection.createStatement()) {
             long ownerId = insertUser(statement, "receipt-migration@mamoji.test");
-            long companyId = insertCompany(statement, ownerId, "Receipt migration company");
+            companyId = insertCompany(statement, ownerId, "Receipt migration company");
+            otherCompanyId = insertCompany(statement, ownerId, "Other receipt migration company");
             purchaseId = insertReceipt(
                 statement,
                 companyId,
@@ -125,7 +131,10 @@ class ReceiptVoucherMigrationTest {
                     "借：管理费用 5700，应交税费-进项税额 300；贷：应付账款 6000",
                     result.getString("accounting_entry")
                 );
-                assertEquals("2026-08-31T09:00:00Z", result.getString("accounted_at"));
+                assertEquals(
+                    OffsetDateTime.parse("2026-08-31T09:00:00Z"),
+                    result.getObject("accounted_at", OffsetDateTime.class)
+                );
                 assertEquals("metadata_only", result.getString("file_storage_provider"));
                 assertEquals(1, result.getLong("version"));
             }
@@ -144,12 +153,165 @@ class ReceiptVoucherMigrationTest {
                 assertEquals("posted", result.getString("accounting_status"));
                 assertEquals(voucherNumber("202607", reimbursementId), result.getString("accounting_voucher_no"));
                 assertEquals("借：管理费用 100；贷：其他应付款-员工 100", result.getString("accounting_entry"));
-                assertEquals("2026-08-31T09:00:00Z", result.getString("accounted_at"));
+                assertEquals(
+                    OffsetDateTime.parse("2026-08-31T09:00:00Z"),
+                    result.getObject("accounted_at", OffsetDateTime.class)
+                );
                 assertEquals("none", result.getString("file_storage_provider"));
                 assertEquals(1, result.getLong("version"));
             }
             assertEquals(7, version(statement, completeId));
-            assertEquals("30", latestVersion(statement));
+            assertEquals("31", latestVersion(statement));
+
+            try (ResultSet types = statement.executeQuery("""
+                SELECT pg_typeof(amount)::TEXT AS amount_type,
+                       pg_typeof(tax_rate)::TEXT AS tax_rate_type,
+                       pg_typeof(issue_date)::TEXT AS issue_date_type,
+                       pg_typeof(file_size)::TEXT AS file_size_type,
+                       pg_typeof(created_at)::TEXT AS created_at_type
+                FROM receipt_vouchers WHERE id = %d
+                """.formatted(purchaseId))) {
+                types.next();
+                assertEquals("numeric", types.getString("amount_type"));
+                assertEquals("numeric", types.getString("tax_rate_type"));
+                assertEquals("date", types.getString("issue_date_type"));
+                assertEquals("bigint", types.getString("file_size_type"));
+                assertEquals("timestamp with time zone", types.getString("created_at_type"));
+            }
+            try (ResultSet constraints = statement.executeQuery("""
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'receipt_vouchers'::regclass
+                  AND conname IN (
+                    'uq_receipt_vouchers_company_id',
+                    'fk_receipt_vouchers_company',
+                    'fk_receipt_vouchers_company_transaction',
+                    'fk_receipt_vouchers_operator',
+                    'fk_receipt_vouchers_approver',
+                    'ck_receipt_vouchers_amounts',
+                    'ck_receipt_vouchers_dates',
+                    'ck_receipt_vouchers_status',
+                    'ck_receipt_vouchers_approval_audit',
+                    'ck_receipt_vouchers_accounting_lifecycle',
+                    'ck_receipt_vouchers_lifecycle',
+                    'ck_receipt_vouchers_version'
+                  )
+                  AND convalidated
+                """)) {
+                Set<String> names = new HashSet<>();
+                while (constraints.next()) names.add(constraints.getString("conname"));
+                assertEquals(Set.of(
+                    "uq_receipt_vouchers_company_id",
+                    "fk_receipt_vouchers_company",
+                    "fk_receipt_vouchers_company_transaction",
+                    "fk_receipt_vouchers_operator",
+                    "fk_receipt_vouchers_approver",
+                    "ck_receipt_vouchers_amounts",
+                    "ck_receipt_vouchers_dates",
+                    "ck_receipt_vouchers_status",
+                    "ck_receipt_vouchers_approval_audit",
+                    "ck_receipt_vouchers_accounting_lifecycle",
+                    "ck_receipt_vouchers_lifecycle",
+                    "ck_receipt_vouchers_version"
+                ), names);
+            }
+            try (ResultSet indexes = statement.executeQuery("""
+                SELECT indexname
+                FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND tablename = 'receipt_vouchers'
+                  AND indexname IN (
+                    'idx_receipt_vouchers_company_issue',
+                    'idx_receipt_vouchers_company_status',
+                    'idx_receipt_vouchers_company_voucher_type',
+                    'idx_receipt_vouchers_company_missing_transaction'
+                  )
+                """)) {
+                Set<String> names = new HashSet<>();
+                while (indexes.next()) names.add(indexes.getString("indexname"));
+                assertEquals(Set.of(
+                    "idx_receipt_vouchers_company_issue",
+                    "idx_receipt_vouchers_company_status",
+                    "idx_receipt_vouchers_company_voucher_type",
+                    "idx_receipt_vouchers_company_missing_transaction"
+                ), names);
+            }
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_vouchers SET tax_amount = amount + 1 WHERE id = " + purchaseId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_vouchers SET status = 'unknown' WHERE id = " + purchaseId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_vouchers SET due_date = issue_date - 1 WHERE id = " + purchaseId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_vouchers SET approved_by_user_id = operator_user_id WHERE id = " + purchaseId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_vouchers SET company_id = " + otherCompanyId + " WHERE id = " + purchaseId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO receipt_file_hashes (
+                    company_id, voucher_id, sha256, file_name, file_size, created_at
+                ) VALUES (
+                    %d, %d, 'cross-company-hash', 'receipt.pdf', 10, CURRENT_TIMESTAMP::TEXT
+                )
+                """.formatted(otherCompanyId, purchaseId)));
+            assertEquals(3, statement.executeUpdate(
+                "UPDATE receipt_vouchers SET note = note WHERE company_id = " + companyId
+            ));
+        }
+    }
+
+    @Test
+    void migrationRejectsInvalidReceiptClassificationWithoutPartialSchemaUpgrade() throws Exception {
+        try (PostgreSQLContainer<?> dirtyDatabase = new PostgreSQLContainer<>("postgres:18.4-alpine")) {
+            dirtyDatabase.start();
+            migrateToThirty(dirtyDatabase);
+            try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
+                long ownerId = insertUser(statement, "dirty-receipt-status@mamoji.test");
+                long companyId = insertCompany(statement, ownerId, "Dirty receipt status company");
+                insertReceipt(
+                    statement,
+                    companyId,
+                    ownerId,
+                    "bank_slip",
+                    "expense",
+                    "25.00",
+                    "0",
+                    "2026-09-01",
+                    "unexpected",
+                    "not_required",
+                    "not_applicable",
+                    "not_applicable",
+                    "not_required",
+                    "not_started",
+                    null,
+                    "complete entry",
+                    null,
+                    null,
+                    "none",
+                    0
+                );
+            }
+
+            FlywayException failure = assertThrows(FlywayException.class, () -> migrateLatest(dirtyDatabase));
+            assertTrue(containsMessage(failure, "invalid classification or tax period"));
+
+            try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
+                assertEquals("30", latestVersion(statement));
+                try (ResultSet type = statement.executeQuery("""
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'receipt_vouchers'
+                      AND column_name = 'amount'
+                    """)) {
+                    type.next();
+                    assertEquals("text", type.getString("data_type"));
+                }
+            }
         }
     }
 
@@ -324,6 +486,14 @@ class ReceiptVoucherMigrationTest {
         Flyway.configure()
             .dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
             .target("26")
+            .load()
+            .migrate();
+    }
+
+    private static void migrateToThirty(PostgreSQLContainer<?> database) {
+        Flyway.configure()
+            .dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
+            .target("30")
             .load()
             .migrate();
     }

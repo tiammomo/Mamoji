@@ -31,6 +31,18 @@ class ReceiptVoucherPolicyTest {
     }
 
     @Test
+    void initializesPostedReceiptWithAccountingTimestamp() {
+        ReceiptVoucher voucher = ReceiptVoucherPolicy.initialize(
+            draft(new BigDecimal("100"), BigDecimal.ZERO, "bank_slip", "linked", "bank-slip.pdf"),
+            TODAY,
+            "2026-08-31T10:00:00+08:00"
+        );
+
+        assertEquals("posted", voucher.accountingStatus);
+        assertEquals("2026-08-31T10:00:00+08:00", voucher.accountedAt);
+    }
+
+    @Test
     void hydratesLegacyClosedInvoiceAndCreatesAccountingVoucherNumber() {
         ReceiptVoucher voucher = new ReceiptVoucher();
         voucher.id = 23;

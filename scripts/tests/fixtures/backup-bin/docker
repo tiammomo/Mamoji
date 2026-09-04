@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${MAMOJI_BACKUP_FAKE_STATE_DIR:?fake state directory is required}"
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$*" >>"$STATE_DIR/docker.log"
+
+set_service_state() {
+  local service="$1"
+  local state="$2"
+  if [[ "$state" == "running" ]]; then
+    rm -f "$STATE_DIR/$service.stopped"
+  else
+    touch "$STATE_DIR/$service.stopped"
+  fi
+}
+
+service_is_running() {
+  [[ ! -f "$STATE_DIR/$1.stopped" ]]
+}
+
+if [[ "${1:-}" == "run" ]]; then
+  if [[ "${MAMOJI_BACKUP_FAKE_OBJECT_FAILURE:-false}" == "true" ]]; then
+    echo "simulated object backup failure" >&2
+    exit 1
+  fi
+  printf 'fake-minio-data'
+  exit 0
+fi
+
+[[ "${1:-}" == "compose" ]]
+
+command_name=""
+for argument in "$@"; do
+  case "$argument" in
+    ps|stop|up|start|exec|config|build)
+      command_name="$argument"
+      break
+      ;;
+  esac
+done
+
+case "$command_name" in
+  ps)
+    service="${*: -1}"
+    if [[ " $* " == *" --all "* ]]; then
+      printf '%s-container\n' "$service"
+    elif service_is_running "$service"; then
+      printf '%s-container\n' "$service"
+    fi
+    ;;
+  stop)
+    for service in postgres minio backend frontend caddy; do
+      if [[ " $* " == *" $service "* ]]; then
+        set_service_state "$service" stopped
+      fi
+    done
+    ;;
+  up|start)
+    for service in postgres minio backend frontend caddy; do
+      if [[ " $* " == *" $service "* ]]; then
+        set_service_state "$service" running
+      fi
+    done
+    ;;
+  exec)
+    printf 'fake-postgres-dump'
+    ;;
+  config|build)
+    ;;
+  *)
+    echo "unexpected fake docker invocation: $*" >&2
+    exit 1
+    ;;
+esac

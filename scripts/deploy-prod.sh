@@ -36,12 +36,19 @@ compose() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
+compose config >/dev/null
+compose build backend frontend
+
 if [[ "$SKIP_BACKUP" != "true" ]]; then
-  ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" "$ROOT_DIR/scripts/backup-prod.sh"
+  ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" \
+    MAMOJI_BACKUP_KEEP_APPLICATION_STOPPED=true \
+    "$ROOT_DIR/scripts/backup-prod.sh"
+else
+  echo "Entering deployment maintenance window without a backup"
+  compose stop caddy frontend backend >/dev/null
 fi
 
-compose config >/dev/null
-compose up -d --build --scale backend="$BACKEND_REPLICAS" --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS"
+compose up -d --no-build --scale backend="$BACKEND_REPLICAS" --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS"
 compose ps
 
 if [[ "$SKIP_SMOKE" != "true" ]]; then
