@@ -23,7 +23,6 @@ class EnterpriseStoreReadTest {
         ));
         EnterpriseStore store = new EnterpriseStore(
             jdbc,
-            mock(InMemoryStore.class),
             mock(UserDirectory.class),
             mock(AuditLogRepository.class),
             "demo",

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.finance.application.FinanceRepository;
+import com.mamoji.operations.application.CategoryRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.time.LocalDate;
@@ -30,6 +31,9 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
 
     @Autowired
     FinanceRepository finances;
+
+    @Autowired
+    CategoryRepository categories;
 
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
@@ -254,6 +258,174 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
               AND member.role = 'owner'
               AND ledger.owner_id = member.user_id
             """, Integer.class, companyId, userId));
+    }
+
+    @Test
+    void categoryCommandsValidateScopeNormalizeFieldsAndProtectReferencedType() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Category validation " + System.nanoTime());
+        long otherCompanyId = createCompany(token, "Other category scope " + System.nanoTime());
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM categories WHERE company_id = ?",
+            Integer.class,
+            companyId
+        );
+
+        ApiResponse invalid = request("POST", "/api/v1/categories", Map.of(
+            "companyId", 0,
+            "name", "   ",
+            "type", "unsupported",
+            "icon", "   ",
+            "color", "red"
+        ), token);
+        assertValidationFields(invalid, Set.of("companyId", "name", "type", "icon", "color"));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM categories WHERE company_id = ?",
+            Integer.class,
+            companyId
+        ));
+        assertEquals(400, request(
+            "GET",
+            "/api/v1/categories?companyId=" + companyId + "&type=unsupported",
+            null,
+            token
+        ).status());
+
+        ApiResponse createdResponse = request("POST", "/api/v1/categories", Map.of(
+            "companyId", companyId,
+            "name", "  Customer success  ",
+            "type", " EXPENSE ",
+            "icon", "  CS  ",
+            "color", "#AABBCC"
+        ), token);
+        assertEquals(200, createdResponse.status(), createdResponse.body());
+        Map<String, Object> category = parseMap(createdResponse.body());
+        long categoryId = ((Number) category.get("id")).longValue();
+        assertEquals(companyId, ((Number) category.get("companyId")).longValue());
+        assertEquals("Customer success", category.get("name"));
+        assertEquals("expense", category.get("type"));
+        assertEquals("CS", category.get("icon"));
+        assertEquals("#aabbcc", category.get("color"));
+
+        ApiResponse duplicate = request("POST", "/api/v1/categories", Map.of(
+            "companyId", companyId,
+            "name", "Customer success",
+            "type", "expense"
+        ), token);
+        assertEquals(409, duplicate.status(), duplicate.body());
+
+        ApiResponse crossScope = request(
+            "PUT",
+            "/api/v1/categories/" + categoryId + "?companyId=" + otherCompanyId,
+            Map.of("name", "Must not move"),
+            token
+        );
+        assertEquals(403, crossScope.status(), crossScope.body());
+
+        ApiResponse updatedResponse = request(
+            "PUT",
+            "/api/v1/categories/" + categoryId + "?companyId=" + companyId,
+            Map.of("name", "  Customer care  ", "color", "#DDEEFF"),
+            token
+        );
+        assertEquals(200, updatedResponse.status(), updatedResponse.body());
+        Map<String, Object> updated = parseMap(updatedResponse.body());
+        assertEquals("Customer care", updated.get("name"));
+        assertEquals("#ddeeff", updated.get("color"));
+
+        Map<String, Object> account = createAccount(token, companyId, "Category reference account", "1000");
+        createTransaction(token, companyId, account, updated, "10");
+        ApiResponse typeChange = request(
+            "PUT",
+            "/api/v1/categories/" + categoryId + "?companyId=" + companyId,
+            Map.of("type", "income"),
+            token
+        );
+        assertEquals(409, typeChange.status(), typeChange.body());
+        assertEquals("expense", jdbc.queryForObject(
+            "SELECT type FROM categories WHERE id = ?",
+            String.class,
+            categoryId
+        ));
+        assertEquals(409, request(
+            "DELETE",
+            "/api/v1/categories/" + categoryId + "?companyId=" + companyId,
+            null,
+            token
+        ).status());
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'category' AND entity_id = ?
+            """, Integer.class, companyId, categoryId));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND aggregate_type = 'category' AND aggregate_id = ?
+            """, Integer.class, companyId, categoryId));
+    }
+
+    @Test
+    void concurrentCategoryDefaultInitializationProducesOneCategoryPerType() throws Exception {
+        String token = adminToken();
+        long userId = ((Number) parseMap(request("GET", "/api/v1/auth/me", null, token).body()).get("id"))
+            .longValue();
+        long companyId = createCompany(token, "Category default race " + System.nanoTime());
+        jdbc.update("DELETE FROM categories WHERE company_id = ?", companyId);
+
+        List<CompletableFuture<Void>> attempts = IntStream.range(0, 8)
+            .mapToObj(ignored -> CompletableFuture.runAsync(() ->
+                categories.ensureCompanyDefaults(userId, companyId)))
+            .toList();
+        CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM categories WHERE company_id = ? AND user_id = ?",
+            Integer.class,
+            companyId,
+            userId
+        ));
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT COUNT(DISTINCT type) FROM categories WHERE company_id = ? AND user_id = ?",
+            Integer.class,
+            companyId,
+            userId
+        ));
+    }
+
+    @Test
+    void categoryReadsUsePostgresAsTheSingleSource() throws Exception {
+        String token = adminToken();
+        long companyId = createCompany(token, "Category database truth " + System.nanoTime());
+        Map<String, Object> created = createCategory(token, companyId, "Original category", "expense");
+        long categoryId = ((Number) created.get("id")).longValue();
+
+        jdbc.update(
+            "UPDATE categories SET name = ?, color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "Database category",
+            "#123456",
+            categoryId
+        );
+        List<Map<String, Object>> afterUpdate = parseList(request(
+            "GET",
+            "/api/v1/categories?companyId=" + companyId,
+            null,
+            token
+        ).body());
+        Map<String, Object> reloaded = afterUpdate.stream()
+            .filter(category -> ((Number) category.get("id")).longValue() == categoryId)
+            .findFirst()
+            .orElseThrow();
+        assertEquals("Database category", reloaded.get("name"));
+        assertEquals("#123456", reloaded.get("color"));
+
+        jdbc.update("DELETE FROM categories WHERE id = ?", categoryId);
+        List<Map<String, Object>> afterDelete = parseList(request(
+            "GET",
+            "/api/v1/categories?companyId=" + companyId,
+            null,
+            token
+        ).body());
+        assertFalse(afterDelete.stream().anyMatch(category ->
+            ((Number) category.get("id")).longValue() == categoryId));
     }
 
     @Test
@@ -579,7 +751,6 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         Map<String, Object> category = createCategory(token, companyId, "Deleted category", "expense");
         long accountId = ((Number) account.get("id")).longValue();
         long categoryId = ((Number) category.get("id")).longValue();
-        assertEquals("Deleted category", coreStore.categories.get(categoryId).name);
 
         CompletableFuture<ApiResponse> create;
         try (Connection blocker = lockRow("SELECT id FROM accounts WHERE id = ? FOR UPDATE", accountId)) {
@@ -607,7 +778,6 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         assertEquals(400, created.status(), created.body());
         assertEquals(0, transactionCount(token, companyId));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM categories WHERE id = ?", Integer.class, categoryId));
-        assertFalse(coreStore.categories.containsKey(categoryId));
     }
 
     @Test

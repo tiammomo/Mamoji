@@ -3,7 +3,7 @@ package com.mamoji.operations.domain;
 /** Operations-owned transaction classification. */
 public class Category {
     public long id;
-    public Long companyId;
+    public long companyId;
     public String name;
     public String icon;
     public String color;
