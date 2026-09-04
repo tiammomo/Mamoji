@@ -4,7 +4,7 @@ import com.mamoji.common.PageRequest;
 import com.mamoji.common.PagedResponse;
 import com.mamoji.platform.audit.domain.AuditLog;
 import com.mamoji.platform.tenant.Company;
-import com.mamoji.domain.Models.ReceiptVoucher;
+import com.mamoji.evidence.domain.ReceiptVoucher;
 import com.mamoji.evidence.domain.ReceiptVoucherDraft;
 import com.mamoji.operations.application.TransactionQueryRepository;
 import com.mamoji.operations.domain.TransactionRecord;
@@ -39,12 +39,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import static com.mamoji.common.PayloadReader.decimalParam;
 import static com.mamoji.common.PayloadReader.longParam;
-import static com.mamoji.common.PayloadReader.longValue;
 import static com.mamoji.common.PayloadReader.nullableText;
-import static com.mamoji.common.PayloadReader.number;
 import static com.mamoji.common.PayloadReader.optionalLong;
 import static com.mamoji.common.PayloadReader.text;
-import static com.mamoji.common.PayloadReader.textOr;
 import static com.mamoji.service.support.DomainSupport.require;
 import static com.mamoji.service.support.DomainSupport.touch;
 
@@ -190,35 +187,32 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     }
 
     @Transactional
-    public ReceiptVoucher create(String authorization, Map<String, Object> body) {
+    public ReceiptVoucher create(String authorization, ReceiptCreateCommand request) {
         User user = accessControl.requireUser(authorization);
-        Company company = accessControl.resolveCompany(user, optionalLong(body.get("companyId")).orElse(null));
-        String voucherType = normalizeVoucherType(textOr(body.get("voucherType"), "purchase_invoice"));
-        if (body.containsKey("approvalStatus")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Approval status is managed by the approval workflow");
-        }
+        Company company = accessControl.resolveCompany(user, request.companyId());
+        String voucherType = valueOr(request.voucherType(), "purchase_invoice");
         requireReceiptCreatePermission(user, company.id, voucherType);
         ReceiptVoucher voucher = receiptVouchers.insert(new ReceiptVoucherDraft(
             company.id,
-            validateTransaction(user, optionalLong(body.get("transactionId")).orElse(null), company.id).map(tx -> tx.id).orElse(null),
-            textOr(body.get("voucherNo"), nextVoucherNo()),
-            textOr(body.get("title"), "新票据凭证"),
+            validateTransaction(user, request.transactionId(), company.id).map(tx -> tx.id).orElse(null),
+            valueOr(request.voucherNo(), nextVoucherNo()),
+            valueOr(request.title(), "新票据凭证"),
             voucherType,
-            normalizeDirection(textOr(body.get("direction"), "expense")),
-            textOr(body.get("counterparty"), "待补充"),
-            number(body.get("amount"), BigDecimal.ZERO),
-            number(body.get("taxAmount"), BigDecimal.ZERO),
-            validateDate("issueDate", textOr(body.get("issueDate"), LocalDate.now().toString())),
-            validateOptionalDate("dueDate", nullableText(body.get("dueDate"))),
-            normalizeStatus(textOr(body.get("status"), "pending_review")),
-            nullableText(body.get("fileName")),
-            longValue(body.get("fileSize"), 0),
-            nullableText(body.get("fileType")),
+            valueOr(request.direction(), "expense"),
+            valueOr(request.counterparty(), "待补充"),
+            valueOr(request.amount(), BigDecimal.ZERO),
+            valueOr(request.taxAmount(), BigDecimal.ZERO),
+            valueOr(request.issueDate(), LocalDate.now()).toString(),
+            stringValue(request.dueDate()),
+            valueOr(request.status(), "pending_review"),
+            nullableTextValue(request.fileName()),
+            valueOr(request.fileSize(), 0L),
+            nullableTextValue(request.fileType()),
             "low",
-            nullableText(body.get("note")),
+            nullableTextValue(request.note()),
             user.id
         ));
-        applyVoucherFields(user, voucher, body);
+        applyCreateFields(voucher, request);
         voucher.riskLevel = riskFor(voucher);
         receiptVouchers.save(voucher);
         logVoucher(user, voucher, "create", "创建票据凭证「" + voucher.title + "」");
@@ -226,13 +220,13 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
     }
 
     @Transactional
-    public ReceiptVoucher update(String authorization, long id, Map<String, Object> body) {
+    public ReceiptVoucher update(String authorization, long id, ReceiptUpdateCommand request) {
         User user = accessControl.requireUser(authorization);
         ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
         requireReceiptWritePermission(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
-        applyVoucherFields(user, voucher, body);
+        applyUpdateFields(user, voucher, request);
         voucher.riskLevel = riskFor(voucher);
         touch(voucher);
         receiptVouchers.save(voucher);
@@ -252,7 +246,7 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
         String previousSnapshot = workflowSnapshot(voucher);
-        applyVoucherFields(user, voucher, Map.of("approvalStatus", approvalStatus));
+        applyApprovalStatus(user, voucher, approvalStatus);
         voucher.riskLevel = riskFor(voucher);
         touch(voucher);
         receiptVouchers.save(voucher);
@@ -477,121 +471,158 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         return isBlank(params.get("maxAmount")) || voucher.amount.compareTo(decimalParam(params, "maxAmount", voucher.amount)) <= 0;
     }
 
-    private void applyVoucherFields(User user, ReceiptVoucher voucher, Map<String, Object> body) {
-        if (body.containsKey("transactionId")) {
+    private void applyCreateFields(ReceiptVoucher voucher, ReceiptCreateCommand request) {
+        if (request.taxRate() != null) {
+            voucher.taxRate = request.taxRate();
+        }
+        if (request.taxPeriod() != null) {
+            voucher.taxPeriod = request.taxPeriod();
+        }
+        if (request.invoiceCheckStatus() != null) {
+            voucher.invoiceCheckStatus = request.invoiceCheckStatus();
+        }
+        if (request.deductionStatus() != null) {
+            voucher.deductionStatus = request.deductionStatus();
+        }
+        if (request.reimbursementStatus() != null) {
+            voucher.reimbursementStatus = request.reimbursementStatus();
+        }
+        if (request.accountingStatus() != null) {
+            applyAccountingStatus(voucher, request.accountingStatus());
+        }
+        if (request.accountingVoucherNo() != null) {
+            voucher.accountingVoucherNo = nullableTextValue(request.accountingVoucherNo());
+        }
+        if (request.accountingEntry() != null) {
+            voucher.accountingEntry = nullableTextValue(request.accountingEntry());
+        }
+        if (request.businessPurpose() != null) {
+            voucher.businessPurpose = nullableTextValue(request.businessPurpose());
+        }
+        if (request.expenseOwner() != null) {
+            voucher.expenseOwner = nullableTextValue(request.expenseOwner());
+        }
+    }
+
+    private void applyUpdateFields(User user, ReceiptVoucher voucher, ReceiptUpdateCommand request) {
+        if (request.transactionIdPresent()) {
             voucher.transactionId = validateTransaction(
                 user,
-                optionalLong(body.get("transactionId")).orElse(null),
+                request.transactionId(),
                 voucher.companyId
             ).map(tx -> tx.id).orElse(null);
         }
-        if (body.containsKey("voucherNo")) {
-            voucher.voucherNo = textOr(body.get("voucherNo"), voucher.voucherNo);
+        if (request.voucherNo() != null) {
+            voucher.voucherNo = request.voucherNo();
         }
-        if (body.containsKey("title")) {
-            voucher.title = textOr(body.get("title"), voucher.title);
+        if (request.title() != null) {
+            voucher.title = request.title();
         }
-        if (body.containsKey("voucherType")) {
-            voucher.voucherType = normalizeVoucherType(textOr(body.get("voucherType"), voucher.voucherType));
-            if (!body.containsKey("invoiceCheckStatus")) {
+        if (request.voucherType() != null) {
+            voucher.voucherType = request.voucherType();
+            if (request.invoiceCheckStatus() == null) {
                 voucher.invoiceCheckStatus = switch (voucher.voucherType) {
                     case "sales_invoice", "purchase_invoice" -> "pending";
                     default -> "not_required";
                 };
             }
-            if (!body.containsKey("deductionStatus")) {
+            if (request.deductionStatus() == null) {
                 voucher.deductionStatus = "purchase_invoice".equals(voucher.voucherType) ? "pending" : "not_applicable";
             }
-            if (!body.containsKey("reimbursementStatus")) {
+            if (request.reimbursementStatus() == null) {
                 voucher.reimbursementStatus = "reimbursement".equals(voucher.voucherType) ? "submitted" : "not_applicable";
             }
         }
-        if (body.containsKey("direction")) {
-            voucher.direction = normalizeDirection(textOr(body.get("direction"), voucher.direction));
+        if (request.direction() != null) {
+            voucher.direction = request.direction();
         }
-        if (body.containsKey("counterparty")) {
-            voucher.counterparty = textOr(body.get("counterparty"), voucher.counterparty);
+        if (request.counterparty() != null) {
+            voucher.counterparty = request.counterparty();
         }
-        if (body.containsKey("amount")) {
-            voucher.amount = number(body.get("amount"), voucher.amount);
+        if (request.amount() != null) {
+            voucher.amount = request.amount();
         }
-        if (body.containsKey("taxAmount")) {
-            voucher.taxAmount = number(body.get("taxAmount"), voucher.taxAmount);
+        if (request.taxAmount() != null) {
+            voucher.taxAmount = request.taxAmount();
         }
-        if (body.containsKey("taxRate")) {
-            voucher.taxRate = number(body.get("taxRate"), voucher.taxRate);
+        if (request.taxRate() != null) {
+            voucher.taxRate = request.taxRate();
         }
-        if (body.containsKey("taxPeriod")) {
-            voucher.taxPeriod = nullableText(body.get("taxPeriod"));
+        if (request.taxPeriodPresent()) {
+            voucher.taxPeriod = nullableTextValue(request.taxPeriod());
         }
-        if (body.containsKey("invoiceCheckStatus")) {
-            voucher.invoiceCheckStatus = normalizeInvoiceCheckStatus(textOr(body.get("invoiceCheckStatus"), voucher.invoiceCheckStatus));
+        if (request.invoiceCheckStatus() != null) {
+            voucher.invoiceCheckStatus = request.invoiceCheckStatus();
         }
-        if (body.containsKey("deductionStatus")) {
-            voucher.deductionStatus = normalizeDeductionStatus(textOr(body.get("deductionStatus"), voucher.deductionStatus));
+        if (request.deductionStatus() != null) {
+            voucher.deductionStatus = request.deductionStatus();
         }
-        if (body.containsKey("reimbursementStatus")) {
-            voucher.reimbursementStatus = normalizeReimbursementStatus(textOr(body.get("reimbursementStatus"), voucher.reimbursementStatus));
+        if (request.reimbursementStatus() != null) {
+            voucher.reimbursementStatus = request.reimbursementStatus();
         }
-        if (body.containsKey("approvalStatus")) {
-            String nextApprovalStatus = normalizeApprovalStatus(textOr(body.get("approvalStatus"), voucher.approvalStatus));
-            if ("approved".equals(nextApprovalStatus) && !"approved".equals(voucher.approvalStatus)) {
-                voucher.approvedByUserId = user.id;
-                voucher.approvedAt = OffsetDateTime.now().toString();
-                if ("submitted".equals(voucher.reimbursementStatus)) {
-                    voucher.reimbursementStatus = "approved";
-                }
-            }
-            voucher.approvalStatus = nextApprovalStatus;
+        if (request.accountingStatus() != null) {
+            applyAccountingStatus(voucher, request.accountingStatus());
         }
-        if (body.containsKey("accountingStatus")) {
-            String nextAccountingStatus = normalizeAccountingStatus(textOr(body.get("accountingStatus"), voucher.accountingStatus));
-            if ("posted".equals(nextAccountingStatus) && !"posted".equals(voucher.accountingStatus)) {
-                if (!Set.of("approved", "not_required").contains(voucher.approvalStatus)) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete or waive approval before posting the accounting voucher");
-                }
-                voucher.accountedAt = OffsetDateTime.now().toString();
-                if (isBlank(voucher.accountingVoucherNo)) {
-                    String period = isBlank(voucher.taxPeriod) ? voucher.issueDate.substring(0, 7) : voucher.taxPeriod;
-                    voucher.accountingVoucherNo = "JV-" + period.replace("-", "") + "-" + String.format("%04d", voucher.id);
-                }
-            }
-            voucher.accountingStatus = nextAccountingStatus;
+        if (request.accountingVoucherNoPresent()) {
+            voucher.accountingVoucherNo = nullableTextValue(request.accountingVoucherNo());
         }
-        if (body.containsKey("accountingVoucherNo")) {
-            voucher.accountingVoucherNo = nullableText(body.get("accountingVoucherNo"));
+        if (request.accountingEntryPresent()) {
+            voucher.accountingEntry = nullableTextValue(request.accountingEntry());
         }
-        if (body.containsKey("accountingEntry")) {
-            voucher.accountingEntry = nullableText(body.get("accountingEntry"));
+        if (request.businessPurposePresent()) {
+            voucher.businessPurpose = nullableTextValue(request.businessPurpose());
         }
-        if (body.containsKey("businessPurpose")) {
-            voucher.businessPurpose = nullableText(body.get("businessPurpose"));
+        if (request.expenseOwnerPresent()) {
+            voucher.expenseOwner = nullableTextValue(request.expenseOwner());
         }
-        if (body.containsKey("expenseOwner")) {
-            voucher.expenseOwner = nullableText(body.get("expenseOwner"));
+        if (request.issueDate() != null) {
+            voucher.issueDate = request.issueDate().toString();
         }
-        if (body.containsKey("issueDate")) {
-            voucher.issueDate = validateDate("issueDate", textOr(body.get("issueDate"), voucher.issueDate));
+        if (request.dueDatePresent()) {
+            voucher.dueDate = stringValue(request.dueDate());
         }
-        if (body.containsKey("dueDate")) {
-            voucher.dueDate = validateOptionalDate("dueDate", nullableText(body.get("dueDate")));
+        if (request.status() != null) {
+            voucher.status = request.status();
         }
-        if (body.containsKey("status")) {
-            voucher.status = normalizeStatus(textOr(body.get("status"), voucher.status));
+        if (request.fileNamePresent()) {
+            voucher.fileName = nullableTextValue(request.fileName());
         }
-        if (body.containsKey("fileName")) {
-            voucher.fileName = nullableText(body.get("fileName"));
+        if (request.fileSize() != null) {
+            voucher.fileSize = request.fileSize();
         }
-        if (body.containsKey("fileSize")) {
-            voucher.fileSize = longValue(body.get("fileSize"), voucher.fileSize);
+        if (request.fileTypePresent()) {
+            voucher.fileType = nullableTextValue(request.fileType());
         }
-        if (body.containsKey("fileType")) {
-            voucher.fileType = nullableText(body.get("fileType"));
-        }
-        if (body.containsKey("note")) {
-            voucher.note = nullableText(body.get("note"));
+        if (request.notePresent()) {
+            voucher.note = nullableTextValue(request.note());
         }
         voucher.operatorUserId = user.id;
+    }
+
+    private void applyApprovalStatus(User user, ReceiptVoucher voucher, String approvalStatus) {
+        String nextApprovalStatus = normalizeApprovalStatus(approvalStatus);
+        if ("approved".equals(nextApprovalStatus) && !"approved".equals(voucher.approvalStatus)) {
+            voucher.approvedByUserId = user.id;
+            voucher.approvedAt = OffsetDateTime.now().toString();
+            if ("submitted".equals(voucher.reimbursementStatus)) {
+                voucher.reimbursementStatus = "approved";
+            }
+        }
+        voucher.approvalStatus = nextApprovalStatus;
+    }
+
+    private void applyAccountingStatus(ReceiptVoucher voucher, String nextAccountingStatus) {
+        if ("posted".equals(nextAccountingStatus) && !"posted".equals(voucher.accountingStatus)) {
+            if (!Set.of("approved", "not_required").contains(voucher.approvalStatus)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete or waive approval before posting the accounting voucher");
+            }
+            voucher.accountedAt = OffsetDateTime.now().toString();
+            if (isBlank(voucher.accountingVoucherNo)) {
+                String period = isBlank(voucher.taxPeriod) ? voucher.issueDate.substring(0, 7) : voucher.taxPeriod;
+                voucher.accountingVoucherNo = "JV-" + period.replace("-", "") + "-" + String.format("%04d", voucher.id);
+            }
+        }
+        voucher.accountingStatus = nextAccountingStatus;
     }
 
     private Optional<TransactionRecord> validateTransaction(User user, Long transactionId, long companyId) {
@@ -643,6 +674,22 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
 
     private String nextVoucherNo() {
         return "RC-" + LocalDate.now().toString().replace("-", "") + "-" + (receiptVouchers.count() + 1);
+    }
+
+    private static String valueOr(String value, String fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private static <T> T valueOr(T value, T fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private static String stringValue(LocalDate value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static String nullableTextValue(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private ReceiptVoucher requireReceiptVoucher(long id) {
