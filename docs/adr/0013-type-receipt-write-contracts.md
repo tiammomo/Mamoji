@@ -20,7 +20,7 @@ Evidence 纵向边界建立后，票据 JSON 创建和更新接口仍接收 `Map
 - 违反 DTO 约束的 JSON 写请求在落库前返回统一的 HTTP 400 Problem Detail，错误码为 `validation_failed` 并包含字段错误。
 - 未声明状态不再被静默降级为默认状态，减少错误业务数据进入票据流程。
 - 票据领域类型拥有明确模块归属，跨模块读取方需要显式依赖 Evidence 领域或应用契约。
-- HTTP 路径、成功响应结构和前端现有合法 payload 保持兼容；multipart 上传元数据仍沿用参数 Map，后续单独类型化。
+- HTTP 路径、成功响应结构和前端现有合法 payload 保持兼容；multipart 上传元数据与批量结果随后由 [ADR 0014](0014-type-receipt-upload-contracts.md) 类型化。
 
 ## 验证与回退
 

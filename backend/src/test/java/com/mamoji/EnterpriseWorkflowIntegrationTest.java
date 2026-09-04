@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mamoji.evidence.application.ReceiptApplicationService;
+import com.mamoji.evidence.application.ReceiptUploadCommand;
 import com.mamoji.notification.infrastructure.NotificationDeliveryStatusRepository;
 import com.mamoji.notification.infrastructure.OutboxEventStatusRepository;
 import com.mamoji.platform.scheduling.infrastructure.ScheduledJobLeaseRepository;
@@ -66,10 +67,27 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         byte[] png = new byte[] {
             (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
         };
-        Map<String, String> params = Map.of(
-            "companyId", Long.toString(companyId),
-            "voucherType", "purchase_invoice",
-            "amount", "99.00"
+        ReceiptUploadCommand command = new ReceiptUploadCommand(
+            companyId,
+            null,
+            null,
+            null,
+            "purchase_invoice",
+            null,
+            null,
+            new BigDecimal("99.00"),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
         );
 
         java.util.function.Supplier<HttpStatus> upload = () -> {
@@ -77,7 +95,7 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
                 receipts.upload(
                     "Bearer " + token,
                     new MockMultipartFile("file", "same.png", "image/png", png),
-                    params
+                    command
                 );
                 return HttpStatus.OK;
             } catch (org.springframework.web.server.ResponseStatusException ex) {
@@ -174,6 +192,110 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertNull(voucher.get("dueDate"));
         assertNull(voucher.get("note"));
         assertEquals("Project materials", voucher.get("businessPurpose"));
+    }
+
+    @Test
+    void receiptMultipartContractsValidateSingleAndBatchUploadMetadata() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Receipt multipart contract " + System.nanoTime());
+        byte[] png = new byte[] {
+            (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01
+        };
+        int before = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        );
+
+        ApiResponse invalid = multipartRequest(
+            "/api/v1/receipts/upload",
+            Map.of(
+                "companyId", Long.toString(companyId),
+                "voucherType", "unsupported",
+                "direction", "sideways",
+                "amount", "-1",
+                "taxRate", "101",
+                "taxPeriod", "2026-13"
+            ),
+            List.of(new MultipartPart("file", "invalid.png", "image/png", png)),
+            token
+        );
+        assertValidationFields(invalid, Set.of("voucherType", "direction", "amount", "taxRate", "taxPeriod"));
+
+        ApiResponse invalidDate = multipartRequest(
+            "/api/v1/receipts/upload",
+            Map.of("companyId", Long.toString(companyId), "issueDate", "2026-02-30"),
+            List.of(new MultipartPart("file", "invalid-date.png", "image/png", png)),
+            token
+        );
+        assertValidationFields(invalidDate, Set.of("issueDate"));
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        ));
+
+        ApiResponse batchInvalid = multipartRequest(
+            "/api/v1/receipts/batch-upload",
+            Map.of("companyId", Long.toString(companyId), "invoiceCheckStatus", "unknown"),
+            List.of(new MultipartPart("files", "batch-invalid.png", "image/png", png)),
+            token
+        );
+        assertValidationFields(batchInvalid, Set.of("invoiceCheckStatus"));
+
+        ApiResponse uploaded = multipartRequest(
+            "/api/v1/receipts/upload",
+            Map.ofEntries(
+                Map.entry("companyId", Long.toString(companyId)),
+                Map.entry("title", "Typed multipart receipt"),
+                Map.entry("voucherType", "purchase_invoice"),
+                Map.entry("direction", "expense"),
+                Map.entry("counterparty", "Supplier"),
+                Map.entry("amount", "128.50"),
+                Map.entry("taxAmount", "8.50"),
+                Map.entry("taxRate", "7.0833"),
+                Map.entry("taxPeriod", "2026-09"),
+                Map.entry("issueDate", "2026-09-05"),
+                Map.entry("dueDate", "2026-09-30"),
+                Map.entry("note", "Multipart metadata")
+            ),
+            List.of(new MultipartPart("file", "typed.png", "image/png", new byte[] {
+                (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02
+            })),
+            token
+        );
+        assertEquals(200, uploaded.status(), uploaded.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> voucher = (Map<String, Object>) parseMap(uploaded.body()).get("voucher");
+        assertEquals("Typed multipart receipt", voucher.get("title"));
+        assertEquals("2026-09", voucher.get("taxPeriod"));
+        assertEquals("2026-09-30", voucher.get("dueDate"));
+        assertEquals(0, new BigDecimal("128.50").compareTo(decimal(voucher.get("amount"))));
+
+        ApiResponse batchUploaded = multipartRequest(
+            "/api/v1/receipts/batch-upload",
+            Map.of(
+                "companyId", Long.toString(companyId),
+                "voucherType", "purchase_invoice",
+                "amount", "32.00",
+                "issueDate", "2026-09-05"
+            ),
+            List.of(
+                new MultipartPart("files", "batch-duplicate.png", "image/png", new byte[] {
+                    (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02
+                }),
+                new MultipartPart("files", "batch-new.png", "image/png", new byte[] {
+                    (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x03
+                })
+            ),
+            token
+        );
+        assertEquals(200, batchUploaded.status(), batchUploaded.body());
+        Map<String, Object> batch = parseMap(batchUploaded.body());
+        assertEquals(1, batch.get("successCount"));
+        assertEquals(1, batch.get("failureCount"));
+        assertTrue(batch.get("vouchers") instanceof List<?>);
+        assertTrue(batch.get("failures") instanceof List<?>);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> failures = (List<Map<String, Object>>) batch.get("failures");
+        assertEquals("batch-duplicate.png", failures.getFirst().get("fileName"));
+        assertEquals(409, failures.getFirst().get("status"));
     }
 
     @Test
