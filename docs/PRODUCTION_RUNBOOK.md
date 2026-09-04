@@ -52,6 +52,8 @@ V30 创建 `scheduled_job_leases`。通知提醒先使用 PostgreSQL 时钟原�
 
 V31 会先预检票据及文件哈希的租户引用、金额/税率、日期、枚举、长度和生命周期组合，再把票据金额与税率改为 `NUMERIC`、业务日期改为 `DATE`、生命周期时间改为 `TIMESTAMPTZ`，并增加公司复合外键、检查约束、不可变触发器和公司前缀查询索引。存在非法历史行时整个迁移回滚并保持 V30；应按异常信息修复源数据后在备份副本重新演练。该迁移会锁定并重写票据表，且旧应用的字符串 JDBC 写法不兼容新 schema，因此必须安排维护窗口并使用默认一致性备份，不得设置 `SKIP_BACKUP=true`。
 
+V32 会先预检附件指纹的公司/票据引用、SHA-256、basename、文件大小和创建时间，并拒绝规范化后重复摘要；随后把摘要和文件名改为有界 `VARCHAR`、创建时间改为 `TIMESTAMPTZ`，增加检查约束、租户前缀索引和不可变触发器。可确定的大写摘要、首尾空白和客户端路径会规范化，其他非法历史行会使迁移回滚并保持 V31。该迁移同样需要维护窗口和 PostgreSQL/MinIO 一致性备份，且不得让 V31 应用与 V32 schema 重叠运行。
+
 生产 bootstrap 不新增 schema。`ProductionBootstrapCommand` 在一个数据库事务内取得固定 transaction advisory lock，并在持锁后重新检查公司是否存在；首次管理员和完整公司工作区要么一起提交，要么一起回滚。原生命周期级单实例连接锁和 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED` 已删除。
 
 ```bash
@@ -251,7 +253,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec postgr
 1. 保留上一个可用镜像 tag 或代码 tag。
 2. 先备份当前现场。
 3. 如果 schema 仍与上一版本兼容，切回上一版本代码或镜像并执行 `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`。
-4. 如果涉及 V31 等破坏性 schema 变更，保持应用停止，先使用发布前一致性备份恢复 PostgreSQL 与 MinIO，再启动上一版本；不要让旧镜像直接访问新 schema。
+4. 如果涉及 V31、V32 等破坏性 schema 变更，保持应用停止，先使用发布前一致性备份恢复 PostgreSQL 与 MinIO，再启动上一版本；不要让旧镜像直接访问新 schema。
 
 ## 审计
 

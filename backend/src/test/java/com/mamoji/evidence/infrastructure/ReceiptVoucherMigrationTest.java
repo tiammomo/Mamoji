@@ -1,6 +1,7 @@
 package com.mamoji.evidence.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,6 +31,7 @@ class ReceiptVoucherMigrationTest {
         long purchaseId;
         long reimbursementId;
         long completeId;
+        long fileHashId;
         long companyId;
         long otherCompanyId;
         try (Connection connection = connection(POSTGRES); Statement statement = connection.createStatement()) {
@@ -108,6 +110,16 @@ class ReceiptVoucherMigrationTest {
             statement.executeUpdate(
                 "UPDATE receipt_vouchers SET tax_period = '2026-09' WHERE id = " + completeId
             );
+            try (ResultSet result = statement.executeQuery("""
+                INSERT INTO receipt_file_hashes (
+                    company_id, voucher_id, sha256, file_name, file_size, created_at
+                ) VALUES (
+                    %d, %d, '  %s  ', '  C:\\fakepath\\complete.pdf  ', 10, '  2026-08-31T09:00:00Z  '
+                ) RETURNING id
+                """.formatted(companyId, completeId, "A".repeat(64)))) {
+                result.next();
+                fileHashId = result.getLong("id");
+            }
         }
 
         migrateLatest(POSTGRES);
@@ -161,7 +173,7 @@ class ReceiptVoucherMigrationTest {
                 assertEquals(1, result.getLong("version"));
             }
             assertEquals(7, version(statement, completeId));
-            assertEquals("31", latestVersion(statement));
+            assertEquals("32", latestVersion(statement));
 
             try (ResultSet types = statement.executeQuery("""
                 SELECT pg_typeof(amount)::TEXT AS amount_type,
@@ -177,6 +189,37 @@ class ReceiptVoucherMigrationTest {
                 assertEquals("date", types.getString("issue_date_type"));
                 assertEquals("bigint", types.getString("file_size_type"));
                 assertEquals("timestamp with time zone", types.getString("created_at_type"));
+            }
+            try (ResultSet fileHash = statement.executeQuery("""
+                SELECT sha256, file_name, file_size, created_at,
+                       pg_typeof(created_at)::TEXT AS created_at_type
+                FROM receipt_file_hashes WHERE id = %d
+                """.formatted(fileHashId))) {
+                fileHash.next();
+                assertEquals("a".repeat(64), fileHash.getString("sha256"));
+                assertEquals("complete.pdf", fileHash.getString("file_name"));
+                assertEquals(10, fileHash.getLong("file_size"));
+                assertEquals(
+                    OffsetDateTime.parse("2026-08-31T09:00:00Z"),
+                    fileHash.getObject("created_at", OffsetDateTime.class)
+                );
+                assertEquals("timestamp with time zone", fileHash.getString("created_at_type"));
+            }
+            try (ResultSet fileHashColumns = statement.executeQuery("""
+                SELECT column_name, character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'receipt_file_hashes'
+                  AND column_name IN ('sha256', 'file_name')
+                """)) {
+                java.util.Map<String, Integer> lengths = new java.util.HashMap<>();
+                while (fileHashColumns.next()) {
+                    lengths.put(
+                        fileHashColumns.getString("column_name"),
+                        fileHashColumns.getInt("character_maximum_length")
+                    );
+                }
+                assertEquals(java.util.Map.of("sha256", 64, "file_name", 255), lengths);
             }
             try (ResultSet constraints = statement.executeQuery("""
                 SELECT conname
@@ -215,6 +258,35 @@ class ReceiptVoucherMigrationTest {
                     "ck_receipt_vouchers_version"
                 ), names);
             }
+            try (ResultSet constraints = statement.executeQuery("""
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'receipt_file_hashes'::regclass
+                  AND conname IN (
+                    'fk_receipt_file_hashes_company',
+                    'fk_receipt_file_hashes_company_voucher',
+                    'ck_receipt_file_hashes_company_positive',
+                    'ck_receipt_file_hashes_voucher_positive',
+                    'ck_receipt_file_hashes_sha256',
+                    'ck_receipt_file_hashes_file_name',
+                    'ck_receipt_file_hashes_file_size',
+                    'ck_receipt_file_hashes_created_at'
+                  )
+                  AND convalidated
+                """)) {
+                Set<String> names = new HashSet<>();
+                while (constraints.next()) names.add(constraints.getString("conname"));
+                assertEquals(Set.of(
+                    "fk_receipt_file_hashes_company",
+                    "fk_receipt_file_hashes_company_voucher",
+                    "ck_receipt_file_hashes_company_positive",
+                    "ck_receipt_file_hashes_voucher_positive",
+                    "ck_receipt_file_hashes_sha256",
+                    "ck_receipt_file_hashes_file_name",
+                    "ck_receipt_file_hashes_file_size",
+                    "ck_receipt_file_hashes_created_at"
+                ), names);
+            }
             try (ResultSet indexes = statement.executeQuery("""
                 SELECT indexname
                 FROM pg_indexes
@@ -236,6 +308,14 @@ class ReceiptVoucherMigrationTest {
                     "idx_receipt_vouchers_company_missing_transaction"
                 ), names);
             }
+            assertEquals(1, statement.executeUpdate(
+                "UPDATE receipt_file_hashes SET file_name = file_name WHERE id = " + fileHashId
+            ));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE receipt_file_hashes SET file_name = 'changed.pdf' WHERE id = " + fileHashId
+            ));
+            assertTrue(indexExists(statement, "idx_receipt_file_hashes_company_voucher"));
+            assertFalse(indexExists(statement, "idx_receipt_file_hashes_voucher"));
             assertThrows(SQLException.class, () -> statement.executeUpdate(
                 "UPDATE receipt_vouchers SET tax_amount = amount + 1 WHERE id = " + purchaseId
             ));
@@ -255,9 +335,9 @@ class ReceiptVoucherMigrationTest {
                 INSERT INTO receipt_file_hashes (
                     company_id, voucher_id, sha256, file_name, file_size, created_at
                 ) VALUES (
-                    %d, %d, 'cross-company-hash', 'receipt.pdf', 10, CURRENT_TIMESTAMP::TEXT
+                    %d, %d, '%s', 'receipt.pdf', 10, CURRENT_TIMESTAMP
                 )
-                """.formatted(otherCompanyId, purchaseId)));
+                """.formatted(otherCompanyId, purchaseId, "b".repeat(64))));
             assertEquals(3, statement.executeUpdate(
                 "UPDATE receipt_vouchers SET note = note WHERE company_id = " + companyId
             ));
@@ -354,6 +434,41 @@ class ReceiptVoucherMigrationTest {
             try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
                 assertEquals("26", latestVersion(statement));
                 assertEquals(0, version(statement, receiptId));
+            }
+        }
+    }
+
+    @Test
+    void migrationRejectsInvalidFileDigestWithoutPartialSchemaUpgrade() throws Exception {
+        try (PostgreSQLContainer<?> dirtyDatabase = new PostgreSQLContainer<>("postgres:18.4-alpine")) {
+            dirtyDatabase.start();
+            migrateToThirtyOne(dirtyDatabase);
+            try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
+                long ownerId = insertUser(statement, "dirty-file-digest@mamoji.test");
+                long companyId = insertCompany(statement, ownerId, "Dirty file digest company");
+                long receiptId = insertTypedReceipt(statement, companyId, ownerId);
+                statement.executeUpdate("""
+                    INSERT INTO receipt_file_hashes (
+                        company_id, voucher_id, sha256, file_name, file_size, created_at
+                    ) VALUES (%d, %d, 'not-a-digest', 'receipt.pdf', 10, '2026-09-01T08:00:00Z')
+                    """.formatted(companyId, receiptId));
+            }
+
+            FlywayException failure = assertThrows(FlywayException.class, () -> migrateLatest(dirtyDatabase));
+            assertTrue(containsMessage(failure, "invalid SHA-256 digest"));
+
+            try (Connection connection = connection(dirtyDatabase); Statement statement = connection.createStatement()) {
+                assertEquals("31", latestVersion(statement));
+                try (ResultSet type = statement.executeQuery("""
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'receipt_file_hashes'
+                      AND column_name = 'created_at'
+                    """)) {
+                    type.next();
+                    assertEquals("text", type.getString("data_type"));
+                }
             }
         }
     }
@@ -460,6 +575,42 @@ class ReceiptVoucherMigrationTest {
         }
     }
 
+    private static long insertTypedReceipt(Statement statement, long companyId, long operatorId) throws SQLException {
+        try (ResultSet result = statement.executeQuery("""
+            INSERT INTO receipt_vouchers (
+                company_id, transaction_id, voucher_no, title, voucher_type, direction, counterparty,
+                amount, tax_amount, tax_rate, tax_period, invoice_check_status, deduction_status,
+                reimbursement_status, approval_status, accounting_status, accounting_voucher_no,
+                accounting_entry, approved_by_user_id, approved_at, accounted_at, business_purpose,
+                expense_owner, issue_date, due_date, status, file_name, file_size, file_type,
+                file_storage_provider, file_bucket, file_object_key, file_url, risk_level, note,
+                operator_user_id, created_at, updated_at, version
+            ) VALUES (
+                %d, NULL, 'RV-' || md5(random()::TEXT), 'Typed receipt', 'bank_slip', 'expense', 'Vendor',
+                25, 0, 0, NULL, 'not_required', 'not_applicable', 'not_applicable', 'not_required',
+                'not_started', NULL, NULL, NULL, NULL, NULL, NULL, NULL, DATE '2026-09-01', NULL,
+                'pending_review', 'receipt.pdf', 10, 'application/pdf', 'metadata_only', NULL, NULL,
+                NULL, 'low', NULL, %d, TIMESTAMPTZ '2026-09-01T08:00:00Z',
+                TIMESTAMPTZ '2026-09-01T08:00:00Z', 0
+            ) RETURNING id
+            """.formatted(companyId, operatorId))) {
+            result.next();
+            return result.getLong("id");
+        }
+    }
+
+    private static boolean indexExists(Statement statement, String indexName) throws SQLException {
+        try (ResultSet result = statement.executeQuery("""
+            SELECT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = current_schema() AND indexname = '%s'
+            )
+            """.formatted(indexName))) {
+            result.next();
+            return result.getBoolean(1);
+        }
+    }
+
     private static String latestVersion(Statement statement) throws SQLException {
         try (ResultSet result = statement.executeQuery("""
             SELECT version FROM flyway_schema_history
@@ -494,6 +645,14 @@ class ReceiptVoucherMigrationTest {
         Flyway.configure()
             .dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
             .target("30")
+            .load()
+            .migrate();
+    }
+
+    private static void migrateToThirtyOne(PostgreSQLContainer<?> database) {
+        Flyway.configure()
+            .dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
+            .target("31")
             .load()
             .migrate();
     }

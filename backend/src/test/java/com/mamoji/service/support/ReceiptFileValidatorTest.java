@@ -23,6 +23,31 @@ class ReceiptFileValidatorTest {
     }
 
     @Test
+    void keepsOnlyTheSubmittedBaseName() {
+        byte[] pdf = "%PDF-1.7\n".getBytes(StandardCharsets.US_ASCII);
+
+        ReceiptFileValidator.ValidatedReceiptFile result = validator.validate(
+            new MockMultipartFile("file", "C:\\fakepath\\invoice.pdf", "application/pdf", pdf)
+        );
+
+        assertEquals("invoice.pdf", result.originalFilename());
+    }
+
+    @Test
+    void rejectsOverlongOrControlCharacterFileNames() {
+        byte[] pdf = "%PDF-1.7\n".getBytes(StandardCharsets.US_ASCII);
+
+        assertThrows(ReceiptFileValidator.InvalidReceiptFileException.class,
+            () -> validator.validate(new MockMultipartFile(
+                "file", "a".repeat(252) + ".pdf", "application/pdf", pdf
+            )));
+        assertThrows(ReceiptFileValidator.InvalidReceiptFileException.class,
+            () -> validator.validate(new MockMultipartFile(
+                "file", "invoice\n.pdf", "application/pdf", pdf
+            )));
+    }
+
+    @Test
     void rejectsHtmlSvgAndScriptContentEvenWhenRenamed() {
         assertInvalid("invoice.png", "image/png", "<html><script>alert(1)</script></html>");
         assertInvalid("invoice.pdf", "application/pdf", "<svg xmlns='http://www.w3.org/2000/svg'></svg>");

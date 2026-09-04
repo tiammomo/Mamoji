@@ -466,6 +466,17 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
         ));
 
+        ApiResponse overlongFilename = multipartRequest(
+            "/api/v1/receipts/upload",
+            Map.of("companyId", Long.toString(companyId)),
+            List.of(new MultipartPart("file", "a".repeat(252) + ".png", "image/png", png)),
+            token
+        );
+        assertEquals(400, overlongFilename.status(), overlongFilename.body());
+        assertEquals(before, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM receipt_vouchers WHERE company_id = ?", Integer.class, companyId
+        ));
+
         ApiResponse batchInvalid = multipartRequest(
             "/api/v1/receipts/batch-upload",
             Map.of("companyId", Long.toString(companyId), "invoiceCheckStatus", "unknown"),
@@ -502,6 +513,18 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals("2026-09", voucher.get("taxPeriod"));
         assertEquals("2026-09-30", voucher.get("dueDate"));
         assertEquals(0, new BigDecimal("128.50").compareTo(decimal(voucher.get("amount"))));
+        Map<String, Object> attachment = jdbc.queryForMap("""
+            SELECT sha256, file_name, file_size
+            FROM receipt_file_hashes WHERE voucher_id = ?
+            """, ((Number) voucher.get("id")).longValue());
+        assertTrue(String.valueOf(attachment.get("sha256")).matches("[0-9a-f]{64}"));
+        assertEquals("typed.png", attachment.get("file_name"));
+        assertEquals(9L, ((Number) attachment.get("file_size")).longValue());
+        assertNotNull(jdbc.queryForObject(
+            "SELECT created_at FROM receipt_file_hashes WHERE voucher_id = ?",
+            OffsetDateTime.class,
+            ((Number) voucher.get("id")).longValue()
+        ));
 
         ApiResponse batchUploaded = multipartRequest(
             "/api/v1/receipts/batch-upload",
