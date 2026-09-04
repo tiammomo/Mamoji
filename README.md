@@ -373,6 +373,13 @@ MAMOJI_LOAD_OPERATIONS=200 \
 scripts/concurrency-smoke.sh
 ```
 
+多后端副本运行验收（逐实例 readiness、跨实例会话与注销；故障切换模式仅用于预生产或批准维护窗口）：
+
+```bash
+scripts/replica-smoke.sh
+MAMOJI_REPLICA_SMOKE_ALLOW_RESTART=yes scripts/replica-smoke.sh
+```
+
 查询 Outbox 状态：
 
 ```bash
