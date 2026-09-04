@@ -5,6 +5,7 @@
 - `.env.production` 已从 `.env.production.example` 复制，并替换所有 `replace-with`、`example.com`、默认密码和默认 MinIO 密钥。
 - `MAMOJI_RUNTIME_ENVIRONMENT=production`，`scripts/check-prod-env.sh` 已通过，生产启动 guard 未报错。
 - `MAMOJI_BACKEND_REPLICAS` 是正整数；大于 1 时已按“副本数 × 每实例 Hikari 上限”复核 PostgreSQL `max_connections` 与运维连接余量。
+- 多副本部署的自动 `scripts/replica-smoke.sh` 已通过：实际副本数、逐实例 readiness、跨实例登录态和跨实例注销失效均符合预期；首次扩容还在预生产批准窗口完成了单副本停止、入口继续服务和副本恢复就绪演练。
 - `MAMOJI_BOOTSTRAP_MODE=bootstrap`，首次管理员密码长度不少于 12 位，且至少包含大小写、数字、符号中的三类；该模式不会注册 demo 初始化器，多个后端同时启动时只会原子创建一套管理员和公司工作区。
 - 应用启动不执行运行时 DDL，生产 schema 只由已校验的 Flyway migration 管理。
 - 从 V13 及更早版本升级前，已确认 `users` 不存在规范化后重复邮箱、非法角色/权限、空密码摘要或不可解析时间戳，V14 预检可以通过。
@@ -70,5 +71,6 @@
 - Docker 后端探针使用 `/actuator/health/readiness` 且数据库中断时会转为非就绪；`/actuator/health/liveness` 不依赖外部服务。
 - 磁盘空间、CPU、内存、PostgreSQL volume、MinIO volume 已纳入主机级监控。
 - 发布后执行 `scripts/smoke-prod.sh` 并人工抽查登录、员工、薪酬、税务、附件和审计日志。
+- 多副本发布没有使用 `SKIP_REPLICA_SMOKE=true`；如因紧急处置跳过，发布记录包含原因和后续补验结果。
 - 在预生产执行 `scripts/concurrency-smoke.sh` 只读模式并记录并发数、p95/p99、错误率、Hikari 等待和 CPU/内存；混合模式只在显式允许写入的维护窗口执行，且确认临时分类已清理。
 - 在预生产执行 `MAMOJI_WORKFLOW_ALLOW_WRITES=yes scripts/workflow-smoke.sh`，确认账户、分类、流水新增/修改/删除与余额回滚闭环通过，且临时业务数据已清理。

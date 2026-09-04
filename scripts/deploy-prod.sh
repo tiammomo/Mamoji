@@ -6,6 +6,7 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.prod.yml}"
 SKIP_BACKUP="${SKIP_BACKUP:-false}"
 SKIP_SMOKE="${SKIP_SMOKE:-false}"
+SKIP_REPLICA_SMOKE="${SKIP_REPLICA_SMOKE:-false}"
 RUN_CONCURRENCY_SMOKE="${RUN_CONCURRENCY_SMOKE:-false}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -45,6 +46,12 @@ compose ps
 
 if [[ "$SKIP_SMOKE" != "true" ]]; then
   ENV_FILE="$ENV_FILE" "$ROOT_DIR/scripts/smoke-prod.sh"
+fi
+
+if (( BACKEND_REPLICAS > 1 )) && [[ "$SKIP_REPLICA_SMOKE" != "true" ]]; then
+  ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" \
+    MAMOJI_REPLICA_SMOKE_EXPECTED_REPLICAS="$BACKEND_REPLICAS" \
+    "$ROOT_DIR/scripts/replica-smoke.sh"
 fi
 
 if [[ "$RUN_CONCURRENCY_SMOKE" == "true" ]]; then
