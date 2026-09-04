@@ -5,7 +5,7 @@
 - 复制 `.env.production.example` 为 `.env.production`，替换所有默认密码、密钥、域名和邮箱。
 - 如同一台服务器存在多套环境，确保 `MAMOJI_COMPOSE_PROJECT_NAME` 不同，避免复用同名 volume。
 - 设置 `MAMOJI_RUNTIME_ENVIRONMENT=production`，启用生产启动 guard。guard 会拒绝 demo/open/localhost/default secret 等高风险配置。
-- 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。当前进程内读模型只支持一个后端实例；第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`。完成数据库直读仓储改造后才能解除该限制。
+- 保持 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED=true`。在线仓储已经数据库化，通知提醒也已使用持久化租约；当前剩余限制是首次管理员和首个公司仍由两个启动回调编排。第二个实例会因 PostgreSQL advisory lock 启动失败，禁止使用 `--scale backend=2`，直至 bootstrap 被收口为一个带 fencing 的数据库命令并完成双实例验证。
 - 设置 `MAMOJI_BOOTSTRAP_MODE=bootstrap`、`MAMOJI_BOOTSTRAP_ADMIN_EMAIL` 和 `MAMOJI_BOOTSTRAP_ADMIN_PASSWORD`。它只在首次空库初始化时创建管理员、公司主体和管理员员工档案；系统已有用户后，改密码请走应用内操作。
 - 设置 `MAMOJI_BOOTSTRAP_COMPANY_NAME`。生产 bootstrap 模式不会注册 demo 初始化器，也不会生成测试账号、演示账户、演示流水、演示员工、演示预算、演示周期事项、演示税费、演示票据或家庭资产主体。
 - 保持 `MAMOJI_FLYWAY_ENABLED=true`，由 Flyway 管理 PostgreSQL schema 版本；生产启动 guard 会拒绝关闭该配置。
@@ -25,6 +25,7 @@
 - 税务事项同样以 PostgreSQL 为唯一在线事实来源，不维护进程内税务副本；同一公司同一税种和期间只能有一条事项，申报/缴款状态和金额关系同时受应用规则与数据库约束保护。
 - 账本与账本成员同样只从 PostgreSQL 读写。企业默认账本由数据库唯一索引保证并发下只有一个；成员必须先是同公司的有效成员，账本 owner 成员不能被删除或降级。
 - 保持 `MAMOJI_OUTBOX_ENABLED=true`。当前项目先使用数据库 Outbox 承接异步事件，不直接引入 RocketMQ；详细说明见 `docs/OUTBOX_EVENTS.md`。
+- 通知提醒默认每 60 秒尝试一次，`MAMOJI_NOTIFICATION_REMINDER_LEASE_MS` 默认 600000。租约应明显大于生产数据量下一次完整税务、人员和票据提醒扫描的 P99 耗时；不要为了加快故障接管把它调到正常扫描时长以内。
 - 设置 `MAMOJI_SMOKE_EMAIL` 和 `MAMOJI_SMOKE_PASSWORD`，用于发布后自动冒烟验证。
 - 固定 `MAMOJI_CADDY_VERSION`、`MAMOJI_MINIO_VERSION`、`MAMOJI_PROMETHEUS_VERSION` 和 `MAMOJI_BACKUP_HELPER_IMAGE`，不要使用 `latest`。
 - 确认服务器只对外开放 `80/443`，Prometheus 端口默认绑定 `127.0.0.1:39090`。
@@ -45,6 +46,8 @@ V27 会一次性回填历史票据的税期、业务状态、会计分录、会�
 V28 会把历史公司的所有者成员关系规范为有效 founder，并只在公司完全没有账本时创建默认经营账本；已有账本不会被替换。迁移还会按公司所有者分别补齐缺失的收入或支出分类，已有自定义分类保持不变。升级后新公司由 `CompanyProvisioningService` 在同一业务事务中创建主体、成员、账本和分类，生产启动不再执行公司全表扫描。
 
 V29 为 `notification_deliveries` 增加 Webhook 消费租约令牌。每次认领都会生成新令牌，投递成功、失败重试和死信转换只接受当前令牌，避免超时旧实例覆盖新实例状态。正式 Webhook 请求携带稳定 `Idempotency-Key`；自建接收方必须按该值去重，第三方入口仍按至少一次投递预期处理。
+
+V30 创建 `scheduled_job_leases`。通知提醒先使用 PostgreSQL 时钟原子认领 `notification-reminders`，完成后才推进下一运行时间；实例崩溃后由租约超时允许其他实例接管，陈旧 token 不能写完成或失败状态。该表属于运行协调状态，不进入应用结构化备份，并在结构化恢复时清空。
 
 ```bash
 cp .env.production.example .env.production
@@ -187,6 +190,7 @@ scripts/smoke-prod.sh
 - 备份任务失败或 24 小时内没有新备份。
 - Outbox `dead` 状态事件数量大于 0，或 `pending/failed` 积压持续增长。
 - Webhook 投递出现 `dead`，或 `notification_deliveries` 的 `pending/failed` 持续积压。
+- `notification-reminders` 长期没有完成记录，或失败时间持续推进且 `last_error` 未消除。
 
 Prometheus 已内置后端不可抓取、5xx、堆内存和 HikariCP 等规则；生产通知仍需接入公司现有告警平台或 Alertmanager。
 
@@ -204,6 +208,14 @@ Webhook 投递积压检查：
 docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres \
   psql -U "$MAMOJI_POSTGRES_USER" -d "$MAMOJI_POSTGRES_DB" \
   -c "SELECT status, count(*) FROM notification_deliveries GROUP BY status ORDER BY status;"
+```
+
+定时任务租约检查：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec postgres \
+  psql -U "$MAMOJI_POSTGRES_USER" -d "$MAMOJI_POSTGRES_DB" \
+  -c "SELECT job_name, locked_until, next_run_at, last_completed_at, last_failed_at, last_error FROM scheduled_job_leases ORDER BY job_name;"
 ```
 
 ## 回滚
