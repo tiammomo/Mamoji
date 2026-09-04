@@ -4,18 +4,20 @@ import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
 import jakarta.annotation.PostConstruct;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
-/** Ensures every initialized company has one durable accounting workspace. */
-@Component
+/** Keeps local demo workspaces repairable without registering a production startup scan. */
+@Component("ledgerDataInitializer")
+@ConditionalOnProperty(name = "mamoji.bootstrap.mode", havingValue = "demo", matchIfMissing = true)
 @DependsOn("enterpriseDataInitializer")
-public class LedgerDataInitializer {
+public class DemoLedgerDataInitializer {
     private final FinanceRepository finances;
     private final CompanyRepository companies;
     private final CompanyMembershipRepository companyMemberships;
 
-    public LedgerDataInitializer(
+    public DemoLedgerDataInitializer(
         FinanceRepository finances,
         CompanyRepository companies,
         CompanyMembershipRepository companyMemberships

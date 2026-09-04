@@ -19,6 +19,7 @@ import com.mamoji.platform.identity.account.application.UserDirectory;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyRepository;
+import com.mamoji.service.CompanyProvisioningService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +30,7 @@ class EnterpriseDataInitializerTest {
         CompanyRepository companies = mock(CompanyRepository.class);
         EmployeeRepository employees = mock(EmployeeRepository.class);
         CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
+        CompanyProvisioningService provisioning = mock(CompanyProvisioningService.class);
         when(companies.existsAny()).thenReturn(true);
 
         initializer(
@@ -37,13 +39,14 @@ class EnterpriseDataInitializerTest {
             memberships,
             mock(UserDirectory.class),
             mock(DepartmentRepository.class),
-            mock(EmploymentEventRepository.class)
+            mock(EmploymentEventRepository.class),
+            provisioning
         ).initialize();
 
         verify(companies).existsAny();
         verify(companies, never()).findAll();
         verify(companies, never()).update(any());
-        verifyNoInteractions(employees, memberships);
+        verifyNoInteractions(employees, memberships, provisioning);
     }
 
     @Test
@@ -53,12 +56,13 @@ class EnterpriseDataInitializerTest {
         DepartmentRepository departments = mock(DepartmentRepository.class);
         EmploymentEventRepository events = mock(EmploymentEventRepository.class);
         CompanyMembershipRepository memberships = mock(CompanyMembershipRepository.class);
+        CompanyProvisioningService provisioning = mock(CompanyProvisioningService.class);
         UserDirectory users = mock(UserDirectory.class);
         when(companies.existsAny()).thenReturn(false);
         when(users.findAll()).thenReturn(List.of(
             new UserDirectory.Entry(7L, "owner@mamoji.test", "Owner", "", null, 1, 15)
         ));
-        when(companies.insert(any())).thenAnswer(invocation -> {
+        when(provisioning.create(any())).thenAnswer(invocation -> {
             Company company = invocation.getArgument(0);
             company.id = 101L;
             return company;
@@ -75,10 +79,10 @@ class EnterpriseDataInitializerTest {
         });
         when(events.append(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        initializer(companies, employees, memberships, users, departments, events).initialize();
+        initializer(companies, employees, memberships, users, departments, events, provisioning).initialize();
 
         ArgumentCaptor<Company> company = ArgumentCaptor.forClass(Company.class);
-        verify(memberships).ensureOwner(company.capture());
+        verify(provisioning).create(company.capture());
         assertEquals(101L, company.getValue().id);
         assertEquals(7L, company.getValue().ownerId);
 
@@ -105,7 +109,8 @@ class EnterpriseDataInitializerTest {
         CompanyMembershipRepository memberships,
         UserDirectory users,
         DepartmentRepository departments,
-        EmploymentEventRepository events
+        EmploymentEventRepository events,
+        CompanyProvisioningService provisioning
     ) {
         return new EnterpriseDataInitializer(
             users,
@@ -115,6 +120,7 @@ class EnterpriseDataInitializerTest {
             events,
             companies,
             memberships,
+            provisioning,
             "Company",
             null,
             "Industry",

@@ -13,6 +13,7 @@ import com.mamoji.platform.tenant.Company;
 import com.mamoji.platform.tenant.CompanyMembershipRepository;
 import com.mamoji.platform.tenant.CompanyProfilePolicy;
 import com.mamoji.platform.tenant.CompanyRepository;
+import com.mamoji.service.CompanyProvisioningService;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -36,6 +37,7 @@ public class EnterpriseDataInitializer {
     private final EmploymentEventRepository employmentEventRepository;
     private final CompanyRepository companyRepository;
     private final CompanyMembershipRepository companyMembershipRepository;
+    private final CompanyProvisioningService companyProvisioning;
     private final String companyName;
     private final String companyCreditCode;
     private final String companyIndustry;
@@ -50,6 +52,7 @@ public class EnterpriseDataInitializer {
         EmploymentEventRepository employmentEventRepository,
         CompanyRepository companyRepository,
         CompanyMembershipRepository companyMembershipRepository,
+        CompanyProvisioningService companyProvisioning,
         @Value("${mamoji.bootstrap.company-name:我的公司}") String companyName,
         @Value("${mamoji.bootstrap.company-credit-code:}") String companyCreditCode,
         @Value("${mamoji.bootstrap.company-industry:未设置}") String companyIndustry,
@@ -63,6 +66,7 @@ public class EnterpriseDataInitializer {
         this.employmentEventRepository = employmentEventRepository;
         this.companyRepository = companyRepository;
         this.companyMembershipRepository = companyMembershipRepository;
+        this.companyProvisioning = companyProvisioning;
         this.companyName = defaultIfBlank(companyName, "我的公司");
         this.companyCreditCode = blankToNull(companyCreditCode);
         this.companyIndustry = defaultIfBlank(companyIndustry, "未设置");
@@ -90,8 +94,7 @@ public class EnterpriseDataInitializer {
         company.currency = companyCurrency;
         CompanyProfilePolicy.initialize(company);
         stamp(company);
-        companyRepository.insert(company);
-        companyMembershipRepository.ensureOwner(company);
+        companyProvisioning.create(company);
 
         Department management = new Department();
         management.companyId = company.id;
