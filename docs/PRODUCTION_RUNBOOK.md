@@ -116,6 +116,8 @@ MAMOJI_REPLICA_SMOKE_ALLOW_RESTART=yes scripts/replica-smoke.sh
 - Bucket 保持私有，不要开启匿名读。
 - `MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY` 是单企业持久化票据容量硬上限，默认 10 GiB；`MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT` 默认 80。多副本上传通过 PostgreSQL 事务锁串行计算同企业已提交用量，超过硬上限返回 HTTP 507 且不会上传。
 - 数据库事务在对象上传后回滚，或批量上传中的单个文件没有完成数据库引用时，后端会补偿删除 MinIO 对象。Prometheus 指标 `mamoji_receipt_storage_capacity_warnings_total`、`mamoji_receipt_storage_capacity_rejections_total` 和带 `outcome` 标签的 `mamoji_receipt_storage_compensation_total` 分别记录水位预警、拒绝与补偿结果；补偿失败日志必须触发人工排查。
+- `MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED=true` 在生产为必需项。任务默认每 6 小时复用数据库租约选择一个副本，扫描当前 bucket 和历史引用 bucket 的 `receipts/` 前缀；1 小时内无引用对象视为在途并延后判断，引用或对象超过 `MAMOJI_RECEIPT_STORAGE_AUDIT_MAX_OBJECTS` 时整次任务失败，避免截断清单产生错误结论。
+- `mamoji_receipt_storage_audit_runs_total{outcome}` 记录执行结果，`mamoji_receipt_storage_audit_findings_total{type}` 记录 `orphan`、`missing`、`invalid_reference` 与 `duplicate_reference`。告警后先从后端日志提取有限的 bucket/objectKey 样本，再结合票据记录、备份/恢复窗口、保留期和法律冻结调查；盘点任务不会且不得自动删除孤立候选对象。
 - 应用配额只统计已提交的 MinIO 票据，不替代宿主机/volume 磁盘告警。上线前仍需为 MinIO volume 设置主机级容量阈值，并为数据库与 MinIO 使用同一维护窗口备份。
 
 ## 日常发布

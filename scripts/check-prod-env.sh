@@ -102,6 +102,7 @@ require_equals MAMOJI_FLYWAY_ENABLED true
 require_equals MAMOJI_OUTBOX_ENABLED true
 require_equals MAMOJI_OUTBOX_CONSUMER_ENABLED true
 require_equals MAMOJI_OBJECT_STORAGE_ENABLED true
+require_equals MAMOJI_RECEIPT_STORAGE_AUDIT_ENABLED true
 
 require_https_url MAMOJI_PUBLIC_API_BASE_URL
 require_https_origin MAMOJI_MINIO_EXTERNAL_URL
@@ -138,6 +139,12 @@ http_max_connections="${MAMOJI_HTTP_MAX_CONNECTIONS:-4096}"
 backend_replicas="${MAMOJI_BACKEND_REPLICAS:-1}"
 receipt_storage_max_bytes="${MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY:-10737418240}"
 receipt_storage_warning_percent="${MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT:-80}"
+receipt_storage_audit_poll_delay="${MAMOJI_RECEIPT_STORAGE_AUDIT_POLL_DELAY_MS:-60000}"
+receipt_storage_audit_cadence="${MAMOJI_RECEIPT_STORAGE_AUDIT_CADENCE_MS:-21600000}"
+receipt_storage_audit_lease="${MAMOJI_RECEIPT_STORAGE_AUDIT_LEASE_MS:-1800000}"
+receipt_storage_audit_max_objects="${MAMOJI_RECEIPT_STORAGE_AUDIT_MAX_OBJECTS:-100000}"
+receipt_storage_audit_orphan_grace="${MAMOJI_RECEIPT_STORAGE_AUDIT_ORPHAN_GRACE_MS:-3600000}"
+receipt_storage_audit_sample_size="${MAMOJI_RECEIPT_STORAGE_AUDIT_SAMPLE_SIZE:-10}"
 
 if ! [[ "$backend_replicas" =~ ^[1-9][0-9]*$ ]]; then
   fail "MAMOJI_BACKEND_REPLICAS must be a positive integer"
@@ -148,6 +155,30 @@ if ! [[ "$receipt_storage_max_bytes" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$receipt_storage_warning_percent" =~ ^([1-9]|[1-9][0-9])$ ]]; then
   fail "MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT must be between 1 and 99"
+fi
+for audit_duration in \
+  "$receipt_storage_audit_poll_delay" \
+  "$receipt_storage_audit_cadence" \
+  "$receipt_storage_audit_lease" \
+  "$receipt_storage_audit_orphan_grace"; do
+  if ! [[ "$audit_duration" =~ ^[1-9][0-9]*$ ]]; then
+    fail "Receipt storage audit durations must be integers of at least 60000 milliseconds"
+    break
+  fi
+  if (( audit_duration < 60000 )); then
+    fail "Receipt storage audit durations must be integers of at least 60000 milliseconds"
+    break
+  fi
+done
+if ! [[ "$receipt_storage_audit_max_objects" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_RECEIPT_STORAGE_AUDIT_MAX_OBJECTS must be between 1 and 1000000"
+elif (( receipt_storage_audit_max_objects > 1000000 )); then
+  fail "MAMOJI_RECEIPT_STORAGE_AUDIT_MAX_OBJECTS must be between 1 and 1000000"
+fi
+if ! [[ "$receipt_storage_audit_sample_size" =~ ^[1-9][0-9]*$ ]]; then
+  fail "MAMOJI_RECEIPT_STORAGE_AUDIT_SAMPLE_SIZE must be between 1 and 100"
+elif (( receipt_storage_audit_sample_size > 100 )); then
+  fail "MAMOJI_RECEIPT_STORAGE_AUDIT_SAMPLE_SIZE must be between 1 and 100"
 fi
 
 if ! [[ "$db_pool_max" =~ ^[1-9][0-9]*$ ]]; then
