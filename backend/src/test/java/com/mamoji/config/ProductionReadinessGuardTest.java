@@ -29,7 +29,9 @@ class ProductionReadinessGuardTest {
             "mamoji",
             "minioadmin",
             "minioadmin",
-            "http://localhost:9000"
+            "http://localhost:9000",
+            0,
+            100
         );
 
         assertThrows(IllegalStateException.class, guard::validate);
@@ -64,7 +66,32 @@ class ProductionReadinessGuardTest {
         }
     }
 
+    @Test
+    void rejectsInvalidReceiptStorageCapacityPolicy() {
+        ProductionReadinessGuard guard = hardenedProductionGuard(
+            "https://mamoji.company.test",
+            0,
+            100
+        );
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, guard::validate);
+        assertTrue(exception.getMessage().contains(
+            "MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY must be a positive integer"
+        ));
+        assertTrue(exception.getMessage().contains(
+            "MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT must be between 1 and 99"
+        ));
+    }
+
     private ProductionReadinessGuard hardenedProductionGuard(String minioExternalUrl) {
+        return hardenedProductionGuard(minioExternalUrl, 10737418240L, 80);
+    }
+
+    private ProductionReadinessGuard hardenedProductionGuard(
+        String minioExternalUrl,
+        long receiptStorageMaxBytesPerCompany,
+        int receiptStorageWarningPercent
+    ) {
         return new ProductionReadinessGuard(
             new MockEnvironment(),
             "production",
@@ -82,7 +109,9 @@ class ProductionReadinessGuardTest {
             "postgres-password-123!",
             "minio-access-123",
             "minio-secret-password-123!",
-            minioExternalUrl
+            minioExternalUrl,
+            receiptStorageMaxBytesPerCompany,
+            receiptStorageWarningPercent
         );
     }
 }

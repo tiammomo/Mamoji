@@ -29,6 +29,8 @@ public class ProductionReadinessGuard {
     private final String minioAccessKey;
     private final String minioSecretKey;
     private final String minioExternalUrl;
+    private final long receiptStorageMaxBytesPerCompany;
+    private final int receiptStorageWarningPercent;
 
     public ProductionReadinessGuard(
         Environment environment,
@@ -47,7 +49,9 @@ public class ProductionReadinessGuard {
         @Value("${spring.datasource.password:}") String datasourcePassword,
         @Value("${mamoji.object-storage.access-key:minioadmin}") String minioAccessKey,
         @Value("${mamoji.object-storage.secret-key:minioadmin}") String minioSecretKey,
-        @Value("${mamoji.object-storage.external-url:}") String minioExternalUrl
+        @Value("${mamoji.object-storage.external-url:}") String minioExternalUrl,
+        @Value("${mamoji.object-storage.max-bytes-per-company:10737418240}") long receiptStorageMaxBytesPerCompany,
+        @Value("${mamoji.object-storage.warning-percent:80}") int receiptStorageWarningPercent
     ) {
         this.production = isProduction(runtimeEnvironment, environment);
         this.bootstrapMode = value(bootstrapMode);
@@ -65,6 +69,8 @@ public class ProductionReadinessGuard {
         this.minioAccessKey = value(minioAccessKey);
         this.minioSecretKey = value(minioSecretKey);
         this.minioExternalUrl = value(minioExternalUrl);
+        this.receiptStorageMaxBytesPerCompany = receiptStorageMaxBytesPerCompany;
+        this.receiptStorageWarningPercent = receiptStorageWarningPercent;
     }
 
     @PostConstruct
@@ -97,6 +103,12 @@ public class ProductionReadinessGuard {
         requireStrongSecret(problems, "MAMOJI_MINIO_ACCESS_KEY", minioAccessKey, 12);
         requireStrongSecret(problems, "MAMOJI_MINIO_SECRET_KEY", minioSecretKey, 16);
         requireHttpsOrigin(problems, "MAMOJI_MINIO_EXTERNAL_URL", minioExternalUrl);
+        if (receiptStorageMaxBytesPerCompany <= 0) {
+            problems.add("MAMOJI_RECEIPT_STORAGE_MAX_BYTES_PER_COMPANY must be a positive integer");
+        }
+        if (receiptStorageWarningPercent <= 0 || receiptStorageWarningPercent >= 100) {
+            problems.add("MAMOJI_RECEIPT_STORAGE_WARNING_PERCENT must be between 1 and 99");
+        }
 
         if (!problems.isEmpty()) {
             throw new IllegalStateException("Production readiness check failed: " + String.join("; ", problems));
