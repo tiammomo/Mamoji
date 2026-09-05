@@ -70,6 +70,17 @@ const requestErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+const isConcurrentModification = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const response = "response" in error ? (error as { response?: { data?: unknown } }).response : undefined;
+  const data = response?.data;
+  return Boolean(
+    data
+    && typeof data === "object"
+    && (data as Record<string, unknown>).code === "concurrent_modification"
+  );
+};
+
 const isPendingCollection = (tx: Transaction) =>
   tx.type === 1 && /待回款|应收|未回款|尾款|分期|验收后|交付后|回款中/.test(transactionText(tx));
 
@@ -479,14 +490,20 @@ export default function TransactionsPage() {
         : "删除后会同步回滚账户余额，且无法撤销。确定继续吗？",
       onOk: async () => {
         try {
-          await transactionApi.delete(transaction.id);
+          await transactionApi.delete(transaction.id, transaction.version);
           Message.success(transaction.type === 3 ? "退款已撤销" : "流水已删除");
           if (closeDrawer) {
             setSelectedTransaction(null);
           }
           await fetchData();
         } catch (error) {
-          Message.error(requestErrorMessage(error, transaction.type === 3 ? "退款撤销失败" : "流水删除失败"));
+          if (isConcurrentModification(error)) {
+            Message.warning("流水已被其他操作更新，本次未删除，已刷新最新数据");
+            if (closeDrawer) setSelectedTransaction(null);
+            await fetchData();
+          } else {
+            Message.error(requestErrorMessage(error, transaction.type === 3 ? "退款撤销失败" : "流水删除失败"));
+          }
         }
       },
     });
