@@ -2,6 +2,7 @@ export type TransactionType = 1 | 2 | 3; // 1=income, 2=expense, 3=refund
 
 export interface Transaction {
   id: number;
+  version: number;
   userId: number;
   familyId: number | null;
   type: TransactionType;
@@ -32,6 +33,7 @@ export interface CreateTransactionDTO {
 }
 
 export interface UpdateTransactionDTO {
+  version: number;
   amount?: number;
   categoryId?: number;
   accountId?: number;
