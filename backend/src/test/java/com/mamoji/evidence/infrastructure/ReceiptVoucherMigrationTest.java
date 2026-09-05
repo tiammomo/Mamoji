@@ -173,7 +173,7 @@ class ReceiptVoucherMigrationTest {
                 assertEquals(1, result.getLong("version"));
             }
             assertEquals(7, version(statement, completeId));
-            assertEquals("32", latestVersion(statement));
+            assertEquals("33", latestVersion(statement));
 
             try (ResultSet types = statement.executeQuery("""
                 SELECT pg_typeof(amount)::TEXT AS amount_type,

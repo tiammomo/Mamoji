@@ -19,6 +19,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { accountApi } from "@/lib/api/accounts";
+import { problemCode } from "@/lib/api/problem";
 import { transactionApi } from "@/lib/api/transactions";
 import type { TransactionSummary } from "@/lib/api/transactions";
 import { useAppStore } from "@/lib/stores/appStore";
@@ -70,16 +71,9 @@ const requestErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
-const isConcurrentModification = (error: unknown) => {
-  if (!error || typeof error !== "object") return false;
-  const response = "response" in error ? (error as { response?: { data?: unknown } }).response : undefined;
-  const data = response?.data;
-  return Boolean(
-    data
-    && typeof data === "object"
-    && (data as Record<string, unknown>).code === "concurrent_modification"
-  );
-};
+const isConcurrentModification = (error: unknown) => problemCode(error) === "concurrent_modification";
+
+const isAccountingPeriodClosed = (error: unknown) => problemCode(error) === "accounting_period_closed";
 
 const isPendingCollection = (tx: Transaction) =>
   tx.type === 1 && /待回款|应收|未回款|尾款|分期|验收后|交付后|回款中/.test(transactionText(tx));
@@ -497,7 +491,10 @@ export default function TransactionsPage() {
           }
           await fetchData();
         } catch (error) {
-          if (isConcurrentModification(error)) {
+          if (isAccountingPeriodClosed(error)) {
+            Message.warning("该流水所属会计期间已关闭，本次未删除；如需更正请由财务管理员先反结账");
+            await fetchData();
+          } else if (isConcurrentModification(error)) {
             Message.warning("流水已被其他操作更新，本次未删除，已刷新最新数据");
             if (closeDrawer) setSelectedTransaction(null);
             await fetchData();

@@ -12,6 +12,7 @@ const SUBJECT_SCOPED_PATHS = [
   "/search",
   "/workspace",
   "/workforce-cost",
+  "/accounting-periods",
 ];
 
 const activeCompanyId = () => {

@@ -17,6 +17,7 @@ import {
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/common/PageHeader";
 import AmountDisplay from "@/components/common/AmountDisplay";
+import AccountingPeriodControlCard from "@/components/finance/AccountingPeriodControlCard";
 import { accountApi } from "@/lib/api/accounts";
 import { budgetApi } from "@/lib/api/budgets";
 import { receiptApi } from "@/lib/api/receipts";
@@ -828,35 +829,11 @@ export default function FinancePage() {
           )}
         </Card>
 
-        <Card style={{ borderRadius: 12 }} title="月结清单">
-          {loading ? (
-            <Skeleton />
-          ) : (
-            <div className="space-y-3">
-              {financeModel.closingTasks.map((task) => (
-                <div key={task.label} className="flex items-start gap-3 rounded-xl border p-3" style={{ borderColor: "var(--border-color-light)" }}>
-                  <span
-                    className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                    style={{
-                      backgroundColor: task.unavailable
-                        ? "var(--color-fill-2)"
-                        : task.done ? "rgba(16, 185, 129, 0.14)" : "var(--color-warning-soft)",
-                      color: task.unavailable
-                        ? "var(--text-color-3)"
-                        : task.done ? "var(--color-success)" : "var(--color-warning)",
-                    }}
-                  >
-                    {task.done ? <IconCheckCircle /> : <IconExclamationCircle />}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="font-medium" style={{ color: "var(--text-color-1)" }}>{task.label}</div>
-                    <div className="mt-1 text-xs" style={{ color: "var(--text-color-3)" }}>{task.detail}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+        <AccountingPeriodControlCard
+          loading={loading}
+          companyId={activeCompanyId}
+          tasks={financeModel.closingTasks}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">

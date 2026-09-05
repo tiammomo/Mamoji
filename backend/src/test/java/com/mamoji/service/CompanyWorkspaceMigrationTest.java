@@ -47,7 +47,7 @@ class CompanyWorkspaceMigrationTest {
         migrateLatest();
 
         try (Connection connection = connection(); Statement statement = connection.createStatement()) {
-            assertEquals("32", latestVersion(statement));
+            assertEquals("33", latestVersion(statement));
             assertMembership(statement, emptyCompanyId, emptyOwnerId);
             assertMembership(statement, customizedCompanyId, customizedOwnerId);
 
