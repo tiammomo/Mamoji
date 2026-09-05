@@ -86,6 +86,7 @@ demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生
 票据 typed schema、数据库完整性和维护式发布边界见 [ADR 0016：硬化票据凭证类型、租户关系与发布边界](adr/0016-harden-receipt-voucher-schema.md)。
 票据附件摘要、规范文件名、typed 时间与不可变证据边界见 [ADR 0017：类型化并固化票据附件指纹元数据](adr/0017-harden-receipt-file-metadata.md)。
 票据关联流水的最小身份投影、模块依赖与兼容语义见 [ADR 0018：收窄票据关联流水的查询契约](adr/0018-narrow-receipt-transaction-link-query.md)。
+票据人工更新的客户端版本前置条件、409 冲突和工作流并发边界见 [ADR 0021：票据更新必须携带客户端版本](adr/0021-require-receipt-update-version.md)。
 
 ## PostgreSQL 集成测试套件
 

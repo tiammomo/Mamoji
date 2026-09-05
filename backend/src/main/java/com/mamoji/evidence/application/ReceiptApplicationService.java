@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.Set;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -134,6 +135,9 @@ public class ReceiptApplicationService implements ReceiptApprovalStatusService {
         ReceiptVoucher voucher = requireReceiptVoucherForUpdate(id);
         accessControl.resolveCompany(user, voucher.companyId);
         requireReceiptWritePermission(user, voucher.companyId);
+        if (request.expectedVersion() != voucher.version) {
+            throw new OptimisticLockingFailureException("Receipt voucher was changed by another request: " + id);
+        }
         String previousSnapshot = workflowSnapshot(voucher);
         applyUpdateFields(user, voucher, request);
         validateVoucherBoundaries(

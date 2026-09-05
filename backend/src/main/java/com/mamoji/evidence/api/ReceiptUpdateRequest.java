@@ -7,6 +7,7 @@ import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Null;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -16,6 +17,10 @@ import java.time.LocalDate;
 
 /** Partial receipt update contract; explicit null clears nullable fields. */
 public class ReceiptUpdateRequest {
+    @NotNull
+    @PositiveOrZero
+    public Long version;
+
     @Size(max = 120)
     @Pattern(regexp = "(?s).*\\S.*")
     public String voucherNo;
@@ -263,7 +268,7 @@ public class ReceiptUpdateRequest {
 
     public ReceiptUpdateCommand toCommand() {
         return new ReceiptUpdateCommand(
-            transactionId, transactionIdPresent, voucherNo, title, voucherType, direction, counterparty,
+            version.longValue(), transactionId, transactionIdPresent, voucherNo, title, voucherType, direction, counterparty,
             amount, taxAmount, taxRate, taxPeriod, taxPeriodPresent, invoiceCheckStatus, deductionStatus,
             reimbursementStatus, accountingStatus, accountingVoucherNo, accountingVoucherNoPresent,
             accountingEntry, accountingEntryPresent, businessPurpose, businessPurposePresent,

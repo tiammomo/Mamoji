@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import axios from "axios";
 import {
   Button,
   Card,
@@ -111,6 +112,10 @@ const directionLabels: Record<string, { label: string; type: 1 | 2 }> = {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+const isConcurrentModification = (error: unknown) =>
+  axios.isAxiosError<{ code?: string }>(error)
+  && error.response?.data?.code === "concurrent_modification";
 
 const initialFilters: ReceiptQuery = {
   keyword: "",
@@ -302,6 +307,7 @@ export default function ReceiptsPage() {
         if (editingVoucher) {
           await receiptApi.update(editingVoucher.id, {
             ...payload,
+            version: editingVoucher.version,
             fileName: selectedFile?.name || payload.fileName,
             fileSize: selectedFile?.size || payload.fileSize,
             fileType: selectedFile?.type || payload.fileType,
@@ -318,8 +324,17 @@ export default function ReceiptsPage() {
         form.resetFields();
         setSelectedFile(null);
         await loadData(filters, true);
-      } catch {
-        Message.error("凭证保存失败");
+      } catch (error) {
+        if (isConcurrentModification(error)) {
+          Message.warning("凭证已被其他操作更新，已刷新最新数据，请重新确认后再保存");
+          setModalVisible(false);
+          form.resetFields();
+          setEditingVoucher(null);
+          setSelectedFile(null);
+          await loadData(filters, true);
+        } else {
+          Message.error("凭证保存失败");
+        }
       }
     });
   };
@@ -328,14 +343,20 @@ export default function ReceiptsPage() {
     await action.run(`workflow:${voucher.id}`, async () => {
       try {
         await receiptApi.update(voucher.id, {
+          version: voucher.version,
           status,
           invoiceCheckStatus: ["sales_invoice", "purchase_invoice"].includes(voucher.voucherType) ? "verified" : voucher.invoiceCheckStatus,
           deductionStatus: voucher.voucherType === "purchase_invoice" && voucher.deductionStatus === "pending" ? "deductible" : voucher.deductionStatus,
         });
         Message.success("状态已更新");
         await loadData(filters, true);
-      } catch {
-        Message.error("状态更新失败");
+      } catch (error) {
+        if (isConcurrentModification(error)) {
+          Message.warning("凭证状态已发生变化，已刷新最新数据");
+          await loadData(filters, true);
+        } else {
+          Message.error("状态更新失败");
+        }
       }
     });
   };
@@ -343,11 +364,16 @@ export default function ReceiptsPage() {
   const updateWorkflow = async (voucher: ReceiptVoucher, payload: Partial<ReceiptPayload>, successMessage: string) => {
     await action.run(`workflow:${voucher.id}`, async () => {
       try {
-        await receiptApi.update(voucher.id, payload);
+        await receiptApi.update(voucher.id, { ...payload, version: voucher.version });
         Message.success(successMessage);
         await loadData(filters, true);
-      } catch {
-        Message.error("流程状态更新失败");
+      } catch (error) {
+        if (isConcurrentModification(error)) {
+          Message.warning("凭证流程状态已发生变化，已刷新最新数据");
+          await loadData(filters, true);
+        } else {
+          Message.error("流程状态更新失败");
+        }
       }
     });
   };

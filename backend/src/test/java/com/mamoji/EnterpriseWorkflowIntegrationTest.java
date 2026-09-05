@@ -252,16 +252,22 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             Map.entry("note", "Keep until cleared")
         ), token);
         assertEquals(200, created.status(), created.body());
-        long voucherId = ((Number) parseMap(created.body()).get("id")).longValue();
-        long version = jdbc.queryForObject(
-            "SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId
-        );
+        Map<String, Object> createdVoucher = parseMap(created.body());
+        long voucherId = ((Number) createdVoucher.get("id")).longValue();
+        long version = ((Number) createdVoucher.get("version")).longValue();
+
+        ApiResponse missingVersion = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "title", "Missing version must not write"
+        ), token);
+        assertValidationFields(missingVersion, Set.of("version"));
 
         ApiResponse invalidAmountUpdate = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", version,
             "amount", 10
         ), token);
         assertEquals(400, invalidAmountUpdate.status(), invalidAmountUpdate.body());
         ApiResponse invalidDateUpdate = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", version,
             "dueDate", "2026-07-31"
         ), token);
         assertEquals(400, invalidDateUpdate.status(), invalidDateUpdate.body());
@@ -270,6 +276,7 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         ));
 
         Map<String, Object> clearFields = new LinkedHashMap<>();
+        clearFields.put("version", version);
         clearFields.put("taxPeriod", null);
         clearFields.put("dueDate", null);
         clearFields.put("note", null);
@@ -280,6 +287,63 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertNull(voucher.get("dueDate"));
         assertNull(voucher.get("note"));
         assertEquals("Project materials", voucher.get("businessPurpose"));
+        assertEquals(version + 1, ((Number) voucher.get("version")).longValue());
+
+        ApiResponse stale = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", version,
+            "title", "Stale overwrite"
+        ), token);
+        assertEquals(409, stale.status(), stale.body());
+        assertEquals("concurrent_modification", parseMap(stale.body()).get("code"));
+        assertEquals("Typed receipt contract", jdbc.queryForObject(
+            "SELECT title FROM receipt_vouchers WHERE id = ?", String.class, voucherId
+        ));
+        assertEquals(version + 1, jdbc.queryForObject(
+            "SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId
+        ));
+    }
+
+    @Test
+    void concurrentReceiptUpdatesAcceptOneWriterForTheExpectedVersion() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Concurrent receipt update " + System.nanoTime());
+        ApiResponse created = request("POST", "/api/v1/receipts", Map.of(
+            "companyId", companyId,
+            "title", "Concurrent receipt",
+            "voucherType", "purchase_invoice",
+            "direction", "expense",
+            "counterparty", "Supplier",
+            "amount", 100
+        ), token);
+        assertEquals(200, created.status(), created.body());
+        Map<String, Object> voucher = parseMap(created.body());
+        long voucherId = ((Number) voucher.get("id")).longValue();
+        long version = ((Number) voucher.get("version")).longValue();
+
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "PUT", "/api/v1/receipts/" + voucherId, Map.of("version", version, "title", "Writer A"), token
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "PUT", "/api/v1/receipts/" + voucherId, Map.of("version", version, "title", "Writer B"), token
+        );
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        ApiResponse conflict = firstResponse.status() == 409 ? firstResponse : secondResponse;
+        assertEquals("concurrent_modification", parseMap(conflict.body()).get("code"));
+        assertEquals(version + 1, jdbc.queryForObject(
+            "SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId
+        ));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_type = 'receipt_voucher' AND entity_id = ? AND action = 'update'",
+            Integer.class,
+            voucherId
+        ));
     }
 
     @Test
@@ -701,7 +765,8 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
             "amount", 88
         ), memberToken);
         assertEquals(200, reimbursement.status(), reimbursement.body());
-        long reimbursementId = ((Number) parseMap(reimbursement.body()).get("id")).longValue();
+        Map<String, Object> reimbursementVoucher = parseMap(reimbursement.body());
+        long reimbursementId = ((Number) reimbursementVoucher.get("id")).longValue();
 
         ApiResponse approvalSubmission = request("POST", "/api/v1/approvals", Map.of(
             "companyId", companyId,
@@ -727,6 +792,7 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals(403, financeVoucher.status(), financeVoucher.body());
 
         ApiResponse workflowUpdate = request("PUT", "/api/v1/receipts/" + reimbursementId, Map.of(
+            "version", reimbursementVoucher.get("version"),
             "status", "verified"
         ), memberToken);
         assertEquals(403, workflowUpdate.status(), workflowUpdate.body());
@@ -751,11 +817,13 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals("not_submitted", voucher.get("approvalStatus"));
 
         ApiResponse bypass = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", voucher.get("version"),
             "approvalStatus", "approved"
         ), token);
         assertEquals(400, bypass.status(), bypass.body());
 
         ApiResponse earlyPosting = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", voucher.get("version"),
             "accountingStatus", "posted"
         ), token);
         assertEquals(409, earlyPosting.status(), earlyPosting.body());
@@ -781,6 +849,7 @@ class EnterpriseWorkflowIntegrationTest extends AbstractPostgresIntegrationTest 
         assertEquals("approved", jdbc.queryForObject("SELECT approval_status FROM receipt_vouchers WHERE id = ?", String.class, voucherId));
 
         ApiResponse posted = request("PUT", "/api/v1/receipts/" + voucherId, Map.of(
+            "version", jdbc.queryForObject("SELECT version FROM receipt_vouchers WHERE id = ?", Long.class, voucherId),
             "accountingStatus", "posted"
         ), token);
         assertEquals(200, posted.status(), posted.body());
