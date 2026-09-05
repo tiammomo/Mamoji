@@ -6,6 +6,7 @@ import type {
   ReceiptAuditLog,
   ReceiptFileLink,
   ReceiptSummary,
+  ReceiptUpdatePayload,
   ReceiptVoucher,
 } from "@/lib/types";
 
@@ -33,7 +34,7 @@ export const receiptApi = {
     client.get<ReceiptSummary>("/receipts/summary", { params: withCompany(params) }),
   create: (data: ReceiptPayload) =>
     client.post<ReceiptVoucher>("/receipts", withCompany(data)),
-  update: (id: number, data: Partial<ReceiptPayload>) =>
+  update: (id: number, data: ReceiptUpdatePayload) =>
     client.put<ReceiptVoucher>(`/receipts/${id}`, data),
   auditLogs: (id: number) =>
     client.get<ReceiptAuditLog[]>(`/receipts/${id}/audit-logs`),

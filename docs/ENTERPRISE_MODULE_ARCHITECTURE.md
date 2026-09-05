@@ -165,7 +165,7 @@ workforce/
 
 - 关键创建请求接受 `Idempotency-Key`，数据库使用唯一索引保证最终防重。
 - 账户、交易、预算、票据和审批使用版本字段或行锁保护并发写入。
-- 客户端编辑预算时提交读取到的 `version`；过期版本返回 409。
+- 客户端编辑预算或票据时提交读取到的 `version`；过期版本返回 409，票据工作流更新同样会使已打开的旧表单失效。
 - 冲突、参数错误和约束错误由统一 `ProblemDetail` 响应处理。
 
 ### 6.3 可观测性
@@ -247,7 +247,7 @@ V32 将附件 SHA-256 收口为规范值对象和数据库 `VARCHAR(64)`，文�
 
 票据用例也已迁入 `evidence.api/application`：`ReceiptApplicationService` 只通过 `ReceiptVoucherRepository` 与 `ReceiptFileHashRepository` 访问票据数据，JDBC 与 SQL 位于对应 infrastructure 适配器。相同公司与 SHA-256 的并发上传先获取 PostgreSQL 事务 advisory lock，再检查重复文件，确保只创建一个凭证并让另一个请求稳定返回冲突。Approval 适配器只依赖 `ReceiptApprovalStatusService`，不再注入完整票据用例服务。
 
-`ReceiptVoucher` 已从共享 `Models` 迁入 `evidence.domain`。票据 JSON 创建与更新入口使用 Bean Validation DTO，并映射到 transport-independent application command；金额、日期、状态和长度在入库前校验，`approvalStatus` 禁止由公开票据接口写入，部分更新继续区分字段省略与显式 `null`。
+`ReceiptVoucher` 已从共享 `Models` 迁入 `evidence.domain`。票据 JSON 创建与更新入口使用 Bean Validation DTO，并映射到 transport-independent application command；金额、日期、状态和长度在入库前校验，`approvalStatus` 禁止由公开票据接口写入，部分更新继续区分字段省略与显式 `null`。公开更新还必须提交客户端读取到的 `version`；版本比较在租户和权限判断后、任何领域修改前执行，旧页面更新稳定返回 409。
 
 票据单文件与批量上传也共享 validated multipart DTO，并映射为不依赖 Web 的 `ReceiptUploadCommand`。应用层返回 typed voucher 或不可变批量结果，API 响应保持既有 JSON 结构；共享元数据在对象存储和数据库操作前校验，逐文件格式、存储及重复冲突仍按部分成功语义汇总。
 
