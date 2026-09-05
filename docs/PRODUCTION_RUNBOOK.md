@@ -54,6 +54,14 @@ V31 会先预检票据及文件哈希的租户引用、金额/税率、日期、
 
 V32 会先预检附件指纹的公司/票据引用、SHA-256、basename、文件大小和创建时间，并拒绝规范化后重复摘要；随后把摘要和文件名改为有界 `VARCHAR`、创建时间改为 `TIMESTAMPTZ`，增加检查约束、租户前缀索引和不可变触发器。可确定的大写摘要、首尾空白和客户端路径会规范化，其他非法历史行会使迁移回滚并保持 V31。该迁移同样需要维护窗口和 PostgreSQL/MinIO 一致性备份，且不得让 V31 应用与 V32 schema 重叠运行。
 
+V33 为所有历史公司新增默认开放的 `accounting_period_controls`，并为新公司自动创建控制行；该迁移不改写现有流水。流水 INSERT/UPDATE/DELETE 触发器会与关账操作锁定同一公司控制行，确保在途入账先完成或观察到最新关账水位。滚动升级期间不得执行首次关账，须等全部后端实例升级并就绪后，再由财务管理员在财务总览操作。关账后可通过以下只读查询核对状态：
+
+```sql
+SELECT company_id, version, closed_through, last_action, last_action_at, last_action_by
+FROM accounting_period_controls
+ORDER BY company_id;
+```
+
 生产 bootstrap 不新增 schema。`ProductionBootstrapCommand` 在一个数据库事务内取得固定 transaction advisory lock，并在持锁后重新检查公司是否存在；首次管理员和完整公司工作区要么一起提交，要么一起回滚。原生命周期级单实例连接锁和 `MAMOJI_SINGLE_INSTANCE_GUARD_ENABLED` 已删除。
 
 ```bash
@@ -187,7 +195,7 @@ scripts/backup-prod.sh
 - `SHA256SUMS`：恢复前校验文件。
 - `manifest.env`：备份时间和核心环境信息。
 
-应用内结构化备份当前格式为 `2.2`，包含权威 `company_memberships`、带公司范围的 `ledger_members` 和预算占用账本 `budget_reservations`。恢复器仍接受 `2.1` 与旧 `2.0` 文件：缺失的账本成员公司范围会从账本派生，旧邀请明文会在写回前摘要化；`2.0` 缺失的公司成员关系会在恢复账本前从公司负责人和员工档案重建。旧备份若含无公司账本、无公司分类、孤立或重复的税务事项，或无法重建的成员关系会拒绝恢复，不会静默删除；`2.0` 本身也未包含预算占用历史，因此关键生产恢复仍应优先使用 PostgreSQL + MinIO 完整备份。
+应用内结构化备份当前格式为 `2.3`，包含权威 `company_memberships`、带公司范围的 `ledger_members`、预算占用账本 `budget_reservations` 和会计期间关账水位。恢复器仍接受 `2.2`、`2.1` 与旧 `2.0` 文件：旧格式缺少账期控制时会为每家公司恢复为默认开放状态；缺失的账本成员公司范围会从账本派生，旧邀请明文会在写回前摘要化；`2.0` 缺失的公司成员关系会在恢复账本前从公司负责人和员工档案重建。旧备份若含无公司账本、无公司分类、孤立或重复的税务事项，或无法重建的成员关系会拒绝恢复，不会静默删除；`2.0` 本身也未包含预算占用历史，因此关键生产恢复仍应优先使用 PostgreSQL + MinIO 完整备份。
 
 ## 恢复
 
@@ -259,6 +267,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec postgr
 2. 先备份当前现场。
 3. 如果 schema 仍与上一版本兼容，切回上一版本代码或镜像并执行 `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`。
 4. 如果涉及 V31、V32 等破坏性 schema 变更，保持应用停止，先使用发布前一致性备份恢复 PostgreSQL 与 MinIO，再启动上一版本；不要让旧镜像直接访问新 schema。
+5. V33 若尚未执行任何关账，旧应用可以忽略新增表；若已存在非空 `closed_through`，先在 V33 应用中按审计流程反结账再回退。无法安全反结账时停止应用并恢复发布前数据库备份，不能通过删除触发器绕过账期保护。
 
 ## 审计
 

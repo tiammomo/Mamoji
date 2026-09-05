@@ -1,5 +1,6 @@
 package com.mamoji.platform.web;
 
+import com.mamoji.accountingperiod.domain.AccountingPeriodClosedException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
 import java.util.LinkedHashMap;
@@ -14,6 +15,19 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(AccountingPeriodClosedException.class)
+    ProblemDetail accountingPeriodClosed(AccountingPeriodClosedException exception) {
+        ProblemDetail problem = problem(
+            HttpStatus.CONFLICT,
+            "accounting_period_closed",
+            "The transaction date belongs to a closed accounting period"
+        );
+        problem.setProperty("companyId", exception.companyId());
+        problem.setProperty("transactionDate", exception.transactionDate());
+        problem.setProperty("closedThrough", exception.closedThrough());
+        return problem;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ProblemDetail validation(MethodArgumentNotValidException exception) {
         ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "validation_failed", "Request validation failed");

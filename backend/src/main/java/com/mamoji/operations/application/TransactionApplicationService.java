@@ -1,5 +1,6 @@
 package com.mamoji.operations.application;
 
+import com.mamoji.accountingperiod.application.AccountingPeriodService;
 import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
 import com.mamoji.budget.domain.BudgetReservation;
@@ -46,6 +47,7 @@ public class TransactionApplicationService {
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
+    private final AccountingPeriodService accountingPeriods;
 
     public TransactionApplicationService(
         TransactionWriteRepository transactions,
@@ -54,7 +56,8 @@ public class TransactionApplicationService {
         AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
-        BudgetApplicationService budgetService
+        BudgetApplicationService budgetService,
+        AccountingPeriodService accountingPeriods
     ) {
         this.transactions = transactions;
         this.transactionQueries = transactionQueries;
@@ -63,6 +66,7 @@ public class TransactionApplicationService {
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
+        this.accountingPeriods = accountingPeriods;
     }
 
     @Transactional
@@ -111,6 +115,7 @@ public class TransactionApplicationService {
                 );
             }
         }
+        accountingPeriods.requireWritable(company.id, transactionDate);
         Account account = accounting.findAccountForUpdate(command.accountId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid accountId is required"));
         Category category = validateRelations(user, company.id, account, command);
