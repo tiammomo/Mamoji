@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button, Message, Modal, Switch, Tag, Upload } from "@arco-design/web-react";
 import { IconCheckCircle, IconDownload, IconExclamationCircle, IconUpload } from "@arco-design/web-react/icon";
 import { transactionApi, type TransactionImportResult } from "@/lib/api/transactions";
+import { problemCode } from "@/lib/api/problem";
 import { formatAmount } from "@/lib/utils/format";
 
 type Props = {
@@ -81,8 +82,12 @@ export default function TransactionImportModal({ visible, onClose, onSuccess }: 
       Message.success(`已导入 ${response.data.importedRows} 笔流水${response.data.skippedRows ? `，跳过 ${response.data.skippedRows} 笔重复记录` : ""}`);
       onSuccess();
       onClose();
-    } catch {
-      Message.error("批量导入失败，数据未写入");
+    } catch (error) {
+      if (problemCode(error) === "accounting_period_closed") {
+        Message.warning("CSV 包含已关闭会计期间的流水，整批数据均未写入");
+      } else {
+        Message.error("批量导入失败，数据未写入");
+      }
     } finally {
       setImporting(false);
     }

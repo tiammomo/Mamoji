@@ -44,10 +44,16 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class BackupService {
     private static final String FORMAT = "mamoji-structured-backup";
-    private static final String VERSION = "2.2";
-    private static final String PREVIOUS_VERSION = "2.1";
+    private static final String VERSION = "2.3";
+    private static final String PREVIOUS_VERSION = "2.2";
+    private static final String INTERMEDIATE_VERSION = "2.1";
     private static final String LEGACY_VERSION = "2.0";
-    private static final Set<String> SUPPORTED_VERSIONS = Set.of(LEGACY_VERSION, PREVIOUS_VERSION, VERSION);
+    private static final Set<String> SUPPORTED_VERSIONS = Set.of(
+        LEGACY_VERSION,
+        INTERMEDIATE_VERSION,
+        PREVIOUS_VERSION,
+        VERSION
+    );
     private static final Set<String> LEGACY_OPTIONAL_TABLES = Set.of(
         "company_memberships",
         "budget_reservations"
@@ -80,6 +86,7 @@ public class BackupService {
         "budgets",
         "transactions",
         "budget_reservations",
+        "accounting_period_controls",
         "recurring_items",
         "tax_items",
         "entity_transfers",
@@ -210,6 +217,13 @@ public class BackupService {
         resetTables.addAll(RESET_ONLY_TABLES);
         jdbc.execute("TRUNCATE TABLE " + String.join(", ", resetTables) + " RESTART IDENTITY");
         for (String table : BACKUP_TABLES) {
+            if ("accounting_period_controls".equals(table)
+                && parsed.data().get(table) instanceof List<?> controls
+                && !controls.isEmpty()) {
+                // Company inserts provision an open control row. Replace those rows
+                // only after transactions have been restored through the open fence.
+                jdbc.update("DELETE FROM accounting_period_controls");
+            }
             restoreTable(table, parsed.data().get(table));
             if (LEGACY_VERSION.equals(parsed.version()) && "employees".equals(table)) {
                 rebuildLegacyMemberships();
@@ -311,6 +325,9 @@ public class BackupService {
                 if (LEGACY_VERSION.equals(sourceVersion) && LEGACY_OPTIONAL_TABLES.contains(table)) {
                     continue;
                 }
+                if (!VERSION.equals(sourceVersion) && "accounting_period_controls".equals(table)) {
+                    continue;
+                }
                 throw new IllegalArgumentException("备份缺少数据集: " + table);
             }
             if (((List<?>) data.get("users")).isEmpty() || ((List<?>) data.get("companies")).isEmpty()) {
@@ -325,9 +342,17 @@ public class BackupService {
                 throw new IllegalArgumentException("备份校验和不匹配，文件可能不完整或已被修改。" );
             }
             LEGACY_OPTIONAL_TABLES.forEach(table -> data.putIfAbsent(table, List.of()));
+            if (!VERSION.equals(sourceVersion)) {
+                data.putIfAbsent("accounting_period_controls", List.of());
+            }
             if (!LEGACY_VERSION.equals(sourceVersion)
                 && ((List<?>) data.get("company_memberships")).isEmpty()) {
                 throw new IllegalArgumentException("当前版本备份必须至少包含一个公司成员关系。" );
+            }
+            if (VERSION.equals(sourceVersion)
+                && ((List<?>) data.get("accounting_period_controls")).size()
+                    != ((List<?>) data.get("companies")).size()) {
+                throw new IllegalArgumentException("当前版本备份的会计期间控制记录与主体数量不一致。" );
             }
             return new ParsedBackup(data, actualChecksum, sourceVersion);
         } catch (IllegalArgumentException ex) {

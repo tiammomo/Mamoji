@@ -152,6 +152,19 @@ workforce/
 
 该模块不复制员工或薪酬写模型：正式口径读取 `payroll_run_items` 快照；未生成批次时读取员工成本估算，并在响应中返回明确的 `source`。
 
+会计期间控制同样采用纵向结构：
+
+```text
+accountingperiod/
+  api/AccountingPeriodController
+  application/AccountingPeriodService
+  application/AccountingPeriodRepository
+  domain/AccountingPeriodControl
+  infrastructure/JdbcAccountingPeriodRepository
+```
+
+Operations 的流水写用例只依赖该模块的应用服务，不读取其表；数据库触发器作为意外写入口的最终围栏。
+
 ## 6. API 与命令约束
 
 ### 6.1 DTO
@@ -166,6 +179,7 @@ workforce/
 - 关键创建请求接受 `Idempotency-Key`，数据库使用唯一索引保证最终防重。
 - 账户、交易、预算、票据和审批使用版本字段或行锁保护并发写入。
 - 客户端编辑预算、票据或流水时提交读取到的 `version`，流水删除同样要求版本；过期版本返回 409，票据审批或流水退款造成的版本变化会使已打开的旧意图失效。
+- 关账、反结账和流水写入锁定同一公司账期控制行；已关闭日期返回 `accounting_period_closed`，不能调整账户或预算副作用。
 - 冲突、参数错误和约束错误由统一 `ProblemDetail` 响应处理。
 
 ### 6.3 可观测性
@@ -238,6 +252,8 @@ V30 增加平台级 `scheduled_job_leases` 与 `DistributedJobCoordinator`。通
 V31 将票据金额、税率、日期和生命周期时间改为 `NUMERIC`、`DATE` 与 `TIMESTAMPTZ`，以状态/金额/日期检查、公司与流水复合外键、公司归属不可变触发器和文件哈希复合外键保护 Evidence 数据。列表筛选与汇总直接使用 typed 列及公司前缀索引，不再在查询期清理并转换历史文本。
 
 V32 将附件 SHA-256 收口为规范值对象和数据库 `VARCHAR(64)`，文件名统一为有界 basename，创建时间改为 `TIMESTAMPTZ`；附件登记使用 typed command，数据库拒绝非法摘要、路径、负大小、非有限时间和原位修改。上传在读取完整内容前完成大小、名称和文件真实性校验，结构化备份验证 typed 附件元数据可往返恢复。
+
+V33 为历史及新公司建立唯一会计期间控制行，以月末 `closed_through` 表示连续关账水位。关账/反结账与所有流水写入共享控制行锁，流水表 INSERT/UPDATE/DELETE 触发器提供数据库级第二道保护；只有公司级 founder、finance_admin 或全局管理员可改变水位，反结账原因、审计和 Outbox 与状态更新同事务提交。
 
 流水更新与删除必须携带客户端读取到的 `version`。`TransactionMutationService` 在公司和所有者范围判断后、账户余额和预算占用调整前比较锁定行版本；旧版本使用统一 409 拒绝，JDBC 带版本 SQL 继续提供第二层保护。退款仍作为新业务事件按原流水行锁串行，退款引起的版本递增会使旧编辑和旧删除意图失效。
 

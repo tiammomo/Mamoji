@@ -1,5 +1,6 @@
 package com.mamoji.operations.application;
 
+import com.mamoji.accountingperiod.application.AccountingPeriodService;
 import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.platform.tenant.Company;
 import com.mamoji.finance.domain.Account;
@@ -41,6 +42,7 @@ public class TransactionRefundService {
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
+    private final AccountingPeriodService accountingPeriods;
 
     public TransactionRefundService(
         TransactionWriteRepository transactions,
@@ -49,7 +51,8 @@ public class TransactionRefundService {
         AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
-        BudgetApplicationService budgetService
+        BudgetApplicationService budgetService,
+        AccountingPeriodService accountingPeriods
     ) {
         this.transactions = transactions;
         this.transactionQueries = transactionQueries;
@@ -58,6 +61,7 @@ public class TransactionRefundService {
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
+        this.accountingPeriods = accountingPeriods;
     }
 
     @Transactional(readOnly = true)
@@ -96,6 +100,11 @@ public class TransactionRefundService {
                 "Refund date cannot be before original transaction date"
             );
         }
+        accountingPeriods.requireWritable(
+            company.id,
+            LocalDate.parse(original.date),
+            refundDate
+        );
         Account account = accounting.findAccountForUpdate(original.accountId)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.CONFLICT,

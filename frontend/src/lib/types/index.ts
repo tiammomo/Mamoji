@@ -11,3 +11,4 @@ export * from "./notification";
 export * from "./approval";
 export * from "./workspace";
 export * from "./workforce";
+export * from "./accounting-period";
