@@ -827,7 +827,10 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         ApiResponse moved = request(
             "PUT",
             "/api/v1/transactions/" + originalId + "?companyId=" + companyId,
-            Map.of("accountId", accountB.get("id")),
+            Map.of(
+                "version", jdbc.queryForObject("SELECT version FROM transactions WHERE id = ?", Long.class, originalId),
+                "accountId", accountB.get("id")
+            ),
             token
         );
         assertEquals(409, moved.status(), moved.body());
@@ -850,6 +853,7 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             "PUT",
             "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
             Map.of(
+                "version", transaction.get("version"),
                 "amount", 0,
                 "categoryId", 0,
                 "accountId", 0,
@@ -867,6 +871,77 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         assertEquals(0, new BigDecimal("25").compareTo(jdbc.queryForObject(
             "SELECT amount FROM transactions WHERE id = ?", BigDecimal.class, transactionId
         )));
+    }
+
+    @Test
+    void transactionMutationsRequireCurrentVersionAndKeepAccountingSideEffectsAtomic() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Concurrent Transaction Mutation " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Concurrent mutation account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Concurrent mutation expense", "expense");
+        Map<String, Object> created = createTransaction(token, companyId, account, category, "100");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+        long transactionId = ((Number) transaction.get("id")).longValue();
+        long version = ((Number) transaction.get("version")).longValue();
+        String path = "/api/v1/transactions/" + transactionId + "?companyId=" + companyId;
+
+        ApiResponse missingUpdateVersion = request("PUT", path, Map.of("amount", 110), token);
+        assertValidationFields(missingUpdateVersion, Set.of("version"));
+        ApiResponse missingDeleteVersion = request("DELETE", path, null, token);
+        assertValidationFields(missingDeleteVersion, Set.of("version"));
+
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "PUT", path, Map.of("version", version, "amount", 120, "note", "Writer A"), token
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "PUT", path, Map.of("version", version, "amount", 130, "note", "Writer B"), token
+        );
+        ApiResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResponse.status(), secondResponse.status()).stream().sorted().toList(),
+            firstResponse.body() + " / " + secondResponse.body()
+        );
+        ApiResponse conflict = firstResponse.status() == 409 ? firstResponse : secondResponse;
+        assertEquals("concurrent_modification", parseMap(conflict.body()).get("code"));
+
+        Map<String, Object> durable = parseMap(request("GET", path, null, token).body());
+        long currentVersion = ((Number) durable.get("version")).longValue();
+        BigDecimal currentAmount = decimal(durable.get("amount"));
+        assertEquals(version + 1, currentVersion);
+        assertTrue(
+            currentAmount.compareTo(new BigDecimal("120")) == 0
+                || currentAmount.compareTo(new BigDecimal("130")) == 0
+        );
+        BigDecimal expectedBalance = new BigDecimal("1000").subtract(currentAmount);
+        assertAccountBalances(
+            token,
+            companyId,
+            ((Number) account.get("id")).longValue(),
+            expectedBalance.toPlainString(),
+            expectedBalance.toPlainString()
+        );
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_type = 'transaction' AND entity_id = ? AND action = 'update'",
+            Integer.class,
+            transactionId
+        ));
+
+        ApiResponse staleDelete = request("DELETE", path + "&version=" + version, null, token);
+        assertEquals(409, staleDelete.status(), staleDelete.body());
+        assertEquals("concurrent_modification", parseMap(staleDelete.body()).get("code"));
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE id = ?", Integer.class, transactionId
+        ));
+
+        ApiResponse deleted = request("DELETE", path + "&version=" + currentVersion, null, token);
+        assertEquals(200, deleted.status(), deleted.body());
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM transactions WHERE id = ?", Integer.class, transactionId
+        ));
+        assertAccountBalances(token, companyId, ((Number) account.get("id")).longValue(), "1000", "1000");
     }
 
     @Test
@@ -1106,7 +1181,12 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             "GET", "/api/v1/transactions/refundable?companyId=" + companyId, null, token
         ).body()).size());
 
-        ApiResponse deleted = request("DELETE", "/api/v1/transactions/" + refundId + "?companyId=" + companyId, null, token);
+        ApiResponse deleted = request(
+            "DELETE",
+            "/api/v1/transactions/" + refundId + "?companyId=" + companyId + "&version=" + refund.get("version"),
+            null,
+            token
+        );
         assertEquals(200, deleted.status(), deleted.body());
         assertAccountBalances(token, companyId, accountId, "920", "920");
         assertEquals(0, new BigDecimal("80").compareTo(budgetSpent(token, companyId)));
@@ -1160,7 +1240,7 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         ApiResponse overCapacity = request(
             "PUT",
             "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
-            Map.of("amount", 110),
+            Map.of("version", transaction.get("version"), "amount", 110),
             token
         );
         assertEquals(409, overCapacity.status(), overCapacity.body());
@@ -1173,7 +1253,7 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
         ApiResponse updated = request(
             "PUT",
             "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
-            Map.of("amount", 80),
+            Map.of("version", transaction.get("version"), "amount", 80),
             token
         );
         assertEquals(200, updated.status(), updated.body());
@@ -1196,7 +1276,8 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
 
         ApiResponse deleted = request(
             "DELETE",
-            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId
+                + "&version=" + parseMap(updated.body()).get("version"),
             null,
             token
         );

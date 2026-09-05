@@ -128,6 +128,7 @@ public class TransactionController {
         @Valid @RequestBody TransactionUpdateRequest request
     ) {
         return mutationService.update(actor, id, new UpdateTransactionCommand(
+            request.version().longValue(),
             companyId == null ? request.companyId() : companyId,
             request.amount(),
             request.categoryId(),
@@ -141,9 +142,9 @@ public class TransactionController {
     public void delete(
         @CurrentActor ActorContext actor,
         @PathVariable long id,
-        @RequestParam(value = "companyId", required = false) Long companyId
+        @Valid @ModelAttribute TransactionDeleteRequest request
     ) {
-        mutationService.delete(actor, id, companyId);
+        mutationService.delete(actor, id, request.companyId(), request.version().longValue());
     }
 
     @GetMapping("/refundable")

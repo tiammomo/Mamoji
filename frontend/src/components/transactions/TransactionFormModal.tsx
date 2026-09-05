@@ -53,6 +53,17 @@ const errorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+const isConcurrentModification = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const response = "response" in error ? (error as { response?: { data?: unknown } }).response : undefined;
+  const data = response?.data;
+  return Boolean(
+    data
+    && typeof data === "object"
+    && (data as Record<string, unknown>).code === "concurrent_modification"
+  );
+};
+
 export default function TransactionFormModal({
   visible,
   mode,
@@ -202,6 +213,7 @@ export default function TransactionFormModal({
     || missingAccounts
     || missingCategories
     || (!isRefund && (accountError || categoryError))
+    || (isEdit && !sourceTransaction)
     || (isRefund && (!sourceTransaction || !remainingRefundable))
   );
 
@@ -231,7 +243,7 @@ export default function TransactionFormModal({
           Message.warning(`记录已保存；风险提示：${response.data.risk.message}`);
         }
       } else {
-        const basePayload: UpdateTransactionDTO = {
+        const basePayload: Omit<UpdateTransactionDTO, "version"> = {
           amount: Number(values.amount),
           accountId: Number(values.accountId),
           categoryId: Number(selectedCategory ?? values.categoryId),
@@ -240,7 +252,10 @@ export default function TransactionFormModal({
         };
 
         if (isEdit && transactionId) {
-          await transactionApi.update(transactionId, basePayload);
+          await transactionApi.update(transactionId, {
+            ...basePayload,
+            version: sourceTransaction!.version,
+          });
           Message.success("流水已更新");
         } else {
           const createPayload: CreateTransactionDTO = {
@@ -261,8 +276,14 @@ export default function TransactionFormModal({
       onSuccess();
       onClose();
     } catch (error) {
-      const fallback = isRefund ? "退款失败" : isEdit ? "流水更新失败" : "流水录入失败";
-      Message.error(errorMessage(error, fallback));
+      if (isEdit && isConcurrentModification(error)) {
+        Message.warning("流水已被其他操作更新，正在加载最新数据，请重新确认后再保存");
+        setDetailReloadToken((current) => current + 1);
+        onSuccess();
+      } else {
+        const fallback = isRefund ? "退款失败" : isEdit ? "流水更新失败" : "流水录入失败";
+        Message.error(errorMessage(error, fallback));
+      }
     } finally {
       setSubmitting(false);
     }

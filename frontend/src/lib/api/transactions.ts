@@ -84,7 +84,7 @@ export const transactionApi = {
     }),
   update: (id: number, data: UpdateTransactionDTO) =>
     client.put<Transaction>(`/transactions/${id}`, data),
-  delete: (id: number) => client.delete(`/transactions/${id}`),
+  delete: (id: number, version: number) => client.delete(`/transactions/${id}`, { params: { version } }),
   refund: (id: number, data: RefundDTO) =>
     client.post<{ transaction: Transaction; risk: RiskAssessment }>(`/transactions/${id}/refund`, data),
   refundable: () => client.get<Transaction[]>("/transactions/refundable"),

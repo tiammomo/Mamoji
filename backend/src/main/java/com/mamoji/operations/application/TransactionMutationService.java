@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +61,7 @@ public class TransactionMutationService {
         ScopedTransaction scoped = requireScopedTransactionForUpdate(user, id, command.companyId());
         TransactionRecord current = scoped.transaction();
         Company company = scoped.company();
+        requireExpectedVersion(current, command.expectedVersion());
         if (current.type == 3) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Refund transactions cannot be edited");
         }
@@ -112,6 +114,9 @@ public class TransactionMutationService {
     }
 
     private void validateCommand(UpdateTransactionCommand command) {
+        if (command.expectedVersion() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "version must be non-negative");
+        }
         if (command.companyId() != null && command.companyId() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "companyId must be positive");
         }
@@ -130,11 +135,15 @@ public class TransactionMutationService {
     }
 
     @Transactional
-    public void delete(ActorContext actor, long id, Long companyId) {
+    public void delete(ActorContext actor, long id, Long companyId, long expectedVersion) {
         User user = accessControl.requireUser(actor.legacyAuthorization());
+        if (expectedVersion < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "version must be non-negative");
+        }
         ScopedTransaction scoped = requireScopedTransactionForUpdate(user, id, companyId);
         TransactionRecord transaction = scoped.transaction();
         Company company = scoped.company();
+        requireExpectedVersion(transaction, expectedVersion);
         if (transaction.type != 3 && transactions.hasRefunds(transaction.id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction has refunds and cannot be deleted");
         }
@@ -177,6 +186,14 @@ public class TransactionMutationService {
         );
         assertScopedOwner(transaction.userId, transaction.companyId, user.id, company.id);
         return new ScopedTransaction(transaction, company);
+    }
+
+    private void requireExpectedVersion(TransactionRecord transaction, long expectedVersion) {
+        if (transaction.version != expectedVersion) {
+            throw new OptimisticLockingFailureException(
+                "Transaction was changed by another request: " + transaction.id
+            );
+        }
     }
 
     private void validateRefundedTransactionChanges(TransactionRecord current, TransactionRecord updated) {
