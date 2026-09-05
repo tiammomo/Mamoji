@@ -5,6 +5,7 @@ import java.time.LocalDate;
 
 /** Transport-independent partial update command with explicit-null presence markers. */
 public record ReceiptUpdateCommand(
+    long expectedVersion,
     Long transactionId,
     boolean transactionIdPresent,
     String voucherNo,

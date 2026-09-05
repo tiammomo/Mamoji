@@ -18,6 +18,7 @@ export type AccountingStatus = "not_started" | "draft" | "posted" | "reversed";
 
 export interface ReceiptVoucher {
   id: number;
+  version: number;
   companyId: number;
   transactionId: number | null;
   voucherNo: string;
@@ -129,6 +130,8 @@ export interface ReceiptPayload {
   fileType?: string | null;
   note?: string | null;
 }
+
+export type ReceiptUpdatePayload = Partial<ReceiptPayload> & { version: number };
 
 export interface PaginatedResponse<T> {
   content: T[];
