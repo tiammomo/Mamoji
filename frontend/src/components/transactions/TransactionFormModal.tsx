@@ -6,6 +6,7 @@ import { IconExclamationCircle, IconRefresh } from "@arco-design/web-react/icon"
 import { useRouter } from "next/navigation";
 import { transactionApi } from "@/lib/api/transactions";
 import { accountApi } from "@/lib/api/accounts";
+import { problemCode } from "@/lib/api/problem";
 import { useAppStore } from "@/lib/stores/appStore";
 import { useCategoryStore } from "@/lib/stores/categoryStore";
 import { formatAmount } from "@/lib/utils/format";
@@ -53,16 +54,9 @@ const errorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
-const isConcurrentModification = (error: unknown) => {
-  if (!error || typeof error !== "object") return false;
-  const response = "response" in error ? (error as { response?: { data?: unknown } }).response : undefined;
-  const data = response?.data;
-  return Boolean(
-    data
-    && typeof data === "object"
-    && (data as Record<string, unknown>).code === "concurrent_modification"
-  );
-};
+const isConcurrentModification = (error: unknown) => problemCode(error) === "concurrent_modification";
+
+const isAccountingPeriodClosed = (error: unknown) => problemCode(error) === "accounting_period_closed";
 
 export default function TransactionFormModal({
   visible,
@@ -276,7 +270,9 @@ export default function TransactionFormModal({
       onSuccess();
       onClose();
     } catch (error) {
-      if (isEdit && isConcurrentModification(error)) {
+      if (isAccountingPeriodClosed(error)) {
+        Message.warning("所选日期属于已关闭会计期间；请修改日期，或联系财务管理员反结账后重试");
+      } else if (isEdit && isConcurrentModification(error)) {
         Message.warning("流水已被其他操作更新，正在加载最新数据，请重新确认后再保存");
         setDetailReloadToken((current) => current + 1);
         onSuccess();

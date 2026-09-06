@@ -27,6 +27,7 @@ import com.mamoji.service.BackupService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.HexFormat;
@@ -258,6 +259,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         ));
         data.remove("company_memberships");
         data.remove("budget_reservations");
+        data.remove("accounting_period_controls");
         payload.put("version", "2.0");
         ObjectMapper backupMapper = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
@@ -285,7 +287,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
         assertEquals(true, restored.get("restored"));
         assertEquals("2.0", restored.get("sourceVersion"));
-        assertEquals("2.2", restored.get("targetVersion"));
+        assertEquals("2.3", restored.get("targetVersion"));
         assertEquals(digest, jdbc.queryForObject(
             "SELECT token FROM registration_invites WHERE id = ?",
             String.class,
@@ -320,6 +322,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "is_default",
             Boolean.parseBoolean(String.valueOf(row.get("is_default"))) ? 1 : 0
         ));
+        data.remove("accounting_period_controls");
         payload.put("version", "2.1");
 
         ObjectMapper backupMapper = new ObjectMapper()
@@ -347,7 +350,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
         );
 
         assertEquals("2.1", restored.get("sourceVersion"));
-        assertEquals("2.2", restored.get("targetVersion"));
+        assertEquals("2.3", restored.get("targetVersion"));
         assertEquals(0, jdbc.queryForObject(
             "SELECT COUNT(*) FROM ledger_members WHERE company_id IS NULL",
             Integer.class
@@ -356,8 +359,58 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Test
     @Transactional
+    void previousStructuredBackupWithoutPeriodControlsRestoresOpenPeriods() throws Exception {
+        String administratorToken = adminToken();
+        ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
+        Map<String, Object> payload = exported.getBody();
+        assertNotNull(payload);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) payload.get("data");
+        data.remove("accounting_period_controls");
+        payload.put("version", "2.2");
+
+        ObjectMapper backupMapper = new ObjectMapper()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .enable(DeserializationFeature.USE_LONG_FOR_INTS);
+        Map<String, Object> normalizedPayload = backupMapper.readValue(
+            backupMapper.writeValueAsBytes(payload),
+            new TypeReference<>() {}
+        );
+        @SuppressWarnings("unchecked")
+        Map<String, Object> normalizedData = (Map<String, Object>) normalizedPayload.get("data");
+        normalizedPayload.put("checksum", sha256(backupMapper.writeValueAsBytes(normalizedData)));
+        MockMultipartFile previousBackup = new MockMultipartFile(
+            "file",
+            "previous-period-backup.json",
+            "application/json",
+            backupMapper.writeValueAsBytes(normalizedPayload)
+        );
+
+        Map<String, Object> restored = backupService.restore(
+            "Bearer " + administratorToken,
+            previousBackup,
+            "RESTORE",
+            false
+        );
+
+        assertEquals("2.2", restored.get("sourceVersion"));
+        assertEquals("2.3", restored.get("targetVersion"));
+        assertEquals(jdbc.queryForObject("SELECT COUNT(*) FROM companies", Integer.class),
+            jdbc.queryForObject("SELECT COUNT(*) FROM accounting_period_controls", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM accounting_period_controls WHERE closed_through IS NOT NULL",
+            Integer.class
+        ));
+    }
+
+    @Test
+    @Transactional
     void currentStructuredBackupCoversEveryTableAndRoundTripsMemberships() throws Exception {
         String administratorToken = adminToken();
+        long administratorId = jdbc.queryForObject(
+            "SELECT id FROM users WHERE email = 'test@mamoji.com'",
+            Long.class
+        );
         int membershipsBefore = jdbc.queryForObject(
             "SELECT COUNT(*) FROM company_memberships",
             Integer.class
@@ -388,11 +441,28 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             512L,
             attachmentCreatedAt
         );
+        long closedCompanyId = jdbc.queryForObject(
+            "SELECT company_id FROM accounting_period_controls ORDER BY company_id LIMIT 1",
+            Long.class
+        );
+        LocalDate closedThrough = LocalDate.of(2025, 12, 31);
+        OffsetDateTime closedAt = OffsetDateTime.now();
+        jdbc.update("""
+            UPDATE accounting_period_controls
+            SET version = 7,
+                closed_through = ?,
+                last_action = 'CLOSE',
+                last_action_at = ?,
+                last_action_by = ?,
+                last_action_reason = NULL,
+                updated_at = ?
+            WHERE company_id = ?
+            """, closedThrough, closedAt, administratorId, closedAt, closedCompanyId);
 
         ResponseEntity<Map<String, Object>> exported = backupService.export("Bearer " + administratorToken);
         Map<String, Object> payload = exported.getBody();
         assertNotNull(payload);
-        assertEquals("2.2", payload.get("version"));
+        assertEquals("2.3", payload.get("version"));
         @SuppressWarnings("unchecked")
         Map<String, Object> data = (Map<String, Object>) payload.get("data");
         Set<String> coveredTables = new java.util.HashSet<>(data.keySet());
@@ -422,7 +492,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             false
         );
 
-        assertEquals("2.2", restored.get("sourceVersion"));
+        assertEquals("2.3", restored.get("sourceVersion"));
         assertEquals(membershipsBefore, jdbc.queryForObject(
             "SELECT COUNT(*) FROM company_memberships",
             Integer.class
@@ -443,6 +513,18 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             OffsetDateTime.class,
             attachmentDigest
         ));
+        Map<String, Object> restoredPeriod = jdbc.queryForMap("""
+            SELECT version, last_action, last_action_by
+            FROM accounting_period_controls WHERE company_id = ?
+            """, closedCompanyId);
+        assertEquals(7L, ((Number) restoredPeriod.get("version")).longValue());
+        assertEquals(closedThrough, jdbc.queryForObject(
+            "SELECT closed_through FROM accounting_period_controls WHERE company_id = ?",
+            LocalDate.class,
+            closedCompanyId
+        ));
+        assertEquals("CLOSE", restoredPeriod.get("last_action"));
+        assertEquals(administratorId, ((Number) restoredPeriod.get("last_action_by")).longValue());
     }
 
     @Test
@@ -845,7 +927,7 @@ class IdentityAndAccessIntegrationTest extends AbstractPostgresIntegrationTest {
             "fk_transactions_category",
             "fk_transactions_original"
         ), accountingConstraints);
-        assertEquals("32", jdbc.queryForObject("""
+        assertEquals("33", jdbc.queryForObject("""
             SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1
             """, String.class));
         assertEquals(Set.of("created_at", "updated_at"), Set.copyOf(jdbc.queryForList("""

@@ -2,13 +2,16 @@ package com.mamoji;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mamoji.accountingperiod.domain.AccountingPeriodClosedException;
 import com.mamoji.finance.application.FinanceRepository;
 import com.mamoji.operations.application.CategoryRepository;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -942,6 +946,266 @@ class AccountingOperationsIntegrationTest extends AbstractPostgresIntegrationTes
             "SELECT COUNT(*) FROM transactions WHERE id = ?", Integer.class, transactionId
         ));
         assertAccountBalances(token, companyId, ((Number) account.get("id")).longValue(), "1000", "1000");
+    }
+
+    @Test
+    void accountingPeriodCloseRequiresFinanceAuthorityAndSerializesConcurrentAdministrators() throws Exception {
+        String ownerToken = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(ownerToken, "Accounting close authority " + System.nanoTime());
+        String path = "/api/v1/accounting-periods/control?companyId=" + companyId;
+        Map<String, Object> initial = parseMap(request("GET", path, null, ownerToken).body());
+        assertEquals(0L, ((Number) initial.get("version")).longValue());
+        assertEquals(null, initial.get("closedThrough"));
+        assertEquals("INITIAL", initial.get("lastAction"));
+
+        String viewerEmail = uniqueEmail("period-viewer");
+        String viewerToken = registerInvitedUser(viewerEmail);
+        long viewerId = ((Number) parseMap(
+            request("GET", "/api/v1/auth/me", null, viewerToken).body()
+        ).get("id")).longValue();
+        createEmployee(ownerToken, companyId, viewerId, viewerEmail, "viewer", "readonly");
+        assertEquals(200, request("GET", path, null, viewerToken).status());
+
+        String previousMonth = YearMonth.now().minusMonths(1).toString();
+        ApiResponse forbidden = request(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "version", 0, "throughMonth", previousMonth),
+            viewerToken
+        );
+        assertEquals(403, forbidden.status(), forbidden.body());
+
+        ApiResponse missingVersion = request(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "throughMonth", previousMonth),
+            ownerToken
+        );
+        assertValidationFields(missingVersion, Set.of("version"));
+        ApiResponse currentMonth = request(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "version", 0, "throughMonth", YearMonth.now().toString()),
+            ownerToken
+        );
+        assertEquals(400, currentMonth.status(), currentMonth.body());
+
+        CompletableFuture<ApiResponse> first = requestAsync(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "version", 0, "throughMonth", previousMonth),
+            ownerToken
+        );
+        CompletableFuture<ApiResponse> second = requestAsync(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "version", 0, "throughMonth", YearMonth.now().minusMonths(2).toString()),
+            ownerToken
+        );
+        ApiResponse firstResult = first.get(10, TimeUnit.SECONDS);
+        ApiResponse secondResult = second.get(10, TimeUnit.SECONDS);
+        assertEquals(
+            List.of(200, 409),
+            List.of(firstResult.status(), secondResult.status()).stream().sorted().toList(),
+            firstResult.body() + " / " + secondResult.body()
+        );
+        ApiResponse conflict = firstResult.status() == 409 ? firstResult : secondResult;
+        assertEquals("concurrent_modification", parseMap(conflict.body()).get("code"));
+
+        Map<String, Object> closed = parseMap(request("GET", path, null, ownerToken).body());
+        assertEquals(1L, ((Number) closed.get("version")).longValue());
+        assertEquals("CLOSE", closed.get("lastAction"));
+        ApiResponse invalidReason = request(
+            "POST",
+            "/api/v1/accounting-periods/control/reopen",
+            Map.of("companyId", companyId, "version", 1, "reason", "bad"),
+            ownerToken
+        );
+        assertValidationFields(invalidReason, Set.of("reason"));
+        assertEquals(403, request(
+            "POST",
+            "/api/v1/accounting-periods/control/reopen",
+            Map.of("companyId", companyId, "version", 1, "reason", "审计员无权执行反结账"),
+            viewerToken
+        ).status());
+
+        ApiResponse reopenedResponse = request(
+            "POST",
+            "/api/v1/accounting-periods/control/reopen",
+            Map.of("companyId", companyId, "version", 1, "reason", "补录银行回单并重新核对余额"),
+            ownerToken
+        );
+        assertEquals(200, reopenedResponse.status(), reopenedResponse.body());
+        Map<String, Object> reopened = parseMap(reopenedResponse.body());
+        assertEquals(2L, ((Number) reopened.get("version")).longValue());
+        assertEquals(null, reopened.get("closedThrough"));
+        assertEquals("REOPEN", reopened.get("lastAction"));
+        assertEquals("补录银行回单并重新核对余额", reopened.get("lastActionReason"));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'accounting_period_control' AND action = 'close'
+            """, Integer.class, companyId));
+        assertEquals(1, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE company_id = ? AND entity_type = 'accounting_period_control' AND action = 'reopen'
+            """, Integer.class, companyId));
+        assertEquals(2, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM outbox_events
+            WHERE company_id = ? AND event_type IN ('accounting.period.close', 'accounting.period.reopen')
+            """, Integer.class, companyId));
+    }
+
+    @Test
+    void closedAccountingPeriodRejectsAllTransactionMutationPathsWithoutSideEffects() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Closed transaction period " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Closed period account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Closed period expense", "expense");
+        YearMonth closedMonth = YearMonth.now().minusMonths(1);
+        String transactionDate = closedMonth.atDay(10).toString();
+        Map<String, Object> created = createTransaction(token, companyId, account, category, "100", transactionDate);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> transaction = (Map<String, Object>) created.get("transaction");
+        long transactionId = ((Number) transaction.get("id")).longValue();
+        long transactionVersion = ((Number) transaction.get("version")).longValue();
+
+        ApiResponse closed = request(
+            "POST",
+            "/api/v1/accounting-periods/control/close",
+            Map.of("companyId", companyId, "version", 0, "throughMonth", closedMonth.toString()),
+            token
+        );
+        assertEquals(200, closed.status(), closed.body());
+
+        ApiResponse blockedCreate = request("POST", "/api/v1/transactions", Map.of(
+            "companyId", companyId,
+            "type", 2,
+            "amount", 25,
+            "accountId", account.get("id"),
+            "categoryId", category.get("id"),
+            "date", transactionDate,
+            "note", "blocked create"
+        ), token);
+        assertAccountingPeriodClosed(blockedCreate, transactionDate, closedMonth.atEndOfMonth().toString());
+
+        ApiResponse blockedUpdate = request(
+            "PUT",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId,
+            Map.of("version", transactionVersion, "amount", 120, "date", LocalDate.now().toString()),
+            token
+        );
+        assertAccountingPeriodClosed(blockedUpdate, transactionDate, closedMonth.atEndOfMonth().toString());
+
+        ApiResponse blockedDelete = request(
+            "DELETE",
+            "/api/v1/transactions/" + transactionId + "?companyId=" + companyId
+                + "&version=" + transactionVersion,
+            null,
+            token
+        );
+        assertAccountingPeriodClosed(blockedDelete, transactionDate, closedMonth.atEndOfMonth().toString());
+
+        ApiResponse blockedRefund = request(
+            "POST",
+            "/api/v1/transactions/" + transactionId + "/refund",
+            Map.of("companyId", companyId, "amount", 10, "date", LocalDate.now().toString()),
+            token
+        );
+        assertAccountingPeriodClosed(blockedRefund, transactionDate, closedMonth.atEndOfMonth().toString());
+
+        String csv = "date,type,amount,category,account,note\n"
+            + transactionDate + ",expense,12.34,Closed period expense,Closed period account,blocked import\n";
+        MockMultipartFile file = new MockMultipartFile(
+            "file",
+            "closed-period.csv",
+            "text/csv",
+            csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        );
+        assertThrows(AccountingPeriodClosedException.class, () -> transactionImportService.commit(
+            "Bearer " + token,
+            file,
+            companyId,
+            true
+        ));
+
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
+            "UPDATE transactions SET note = ? WHERE id = ?",
+            "database bypass",
+            transactionId
+        ));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
+            "UPDATE transactions SET date = ? WHERE id = ?",
+            LocalDate.now(),
+            transactionId
+        ));
+        assertEquals(1, transactionCount(token, companyId));
+        assertEquals(0, new BigDecimal("100").compareTo(jdbc.queryForObject(
+            "SELECT amount FROM transactions WHERE id = ?", BigDecimal.class, transactionId
+        )));
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT version FROM transactions WHERE id = ?", Long.class, transactionId
+        ));
+        assertAccountBalances(token, companyId, ((Number) account.get("id")).longValue(), "900", "900");
+        assertEquals(0, jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs
+            WHERE entity_type = 'transaction' AND entity_id = ? AND action IN ('update', 'delete', 'refund')
+            """, Integer.class, transactionId));
+    }
+
+    @Test
+    void accountingPeriodCloseWaitsForInFlightTransactionBeforeAdvancingWatermark() throws Exception {
+        String token = text(login("test@mamoji.com", "123456").get("token"));
+        long companyId = createCompany(token, "Serialized accounting close " + System.nanoTime());
+        Map<String, Object> account = createAccount(token, companyId, "Serialized close account", "1000");
+        Map<String, Object> category = createCategory(token, companyId, "Serialized close expense", "expense");
+        long accountId = ((Number) account.get("id")).longValue();
+        YearMonth closingMonth = YearMonth.now().minusMonths(1);
+
+        CompletableFuture<ApiResponse> create;
+        CompletableFuture<ApiResponse> close;
+        try (Connection blocker = lockRow("SELECT id FROM accounts WHERE id = ? FOR UPDATE", accountId)) {
+            create = requestAsync("POST", "/api/v1/transactions", Map.of(
+                "companyId", companyId,
+                "type", 2,
+                "amount", 40,
+                "accountId", accountId,
+                "categoryId", category.get("id"),
+                "date", closingMonth.atDay(12).toString(),
+                "note", "in-flight before close"
+            ), token);
+            awaitBlockedQuery("accounts");
+
+            close = requestAsync(
+                "POST",
+                "/api/v1/accounting-periods/control/close",
+                Map.of("companyId", companyId, "version", 0, "throughMonth", closingMonth.toString()),
+                token
+            );
+            awaitBlockedQuery("accounting_period_controls");
+            assertFalse(create.isDone());
+            assertFalse(close.isDone());
+            blocker.commit();
+        }
+
+        ApiResponse created = create.get(10, TimeUnit.SECONDS);
+        ApiResponse closed = close.get(10, TimeUnit.SECONDS);
+        assertEquals(200, created.status(), created.body());
+        assertEquals(200, closed.status(), closed.body());
+        assertEquals(1, transactionCount(token, companyId));
+        assertEquals(closingMonth.atEndOfMonth().toString(), parseMap(closed.body()).get("closedThrough"));
+        assertAccountBalances(token, companyId, accountId, "960", "960");
+    }
+
+    private void assertAccountingPeriodClosed(
+        ApiResponse response,
+        String transactionDate,
+        String closedThrough
+    ) throws Exception {
+        assertEquals(409, response.status(), response.body());
+        Map<String, Object> problem = parseMap(response.body());
+        assertEquals("accounting_period_closed", problem.get("code"));
+        assertEquals(transactionDate, problem.get("transactionDate"));
+        assertEquals(closedThrough, problem.get("closedThrough"));
     }
 
     @Test

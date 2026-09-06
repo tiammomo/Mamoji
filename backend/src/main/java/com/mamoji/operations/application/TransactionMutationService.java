@@ -1,5 +1,6 @@
 package com.mamoji.operations.application;
 
+import com.mamoji.accountingperiod.application.AccountingPeriodService;
 import com.mamoji.budget.application.BudgetApplicationService;
 import com.mamoji.budget.domain.BudgetCapacity.BudgetCapacityExceededException;
 import com.mamoji.budget.domain.BudgetReservation;
@@ -37,6 +38,7 @@ public class TransactionMutationService {
     private final AccessControlService accessControl;
     private final OutboxEventService outboxEventService;
     private final BudgetApplicationService budgetService;
+    private final AccountingPeriodService accountingPeriods;
 
     public TransactionMutationService(
         TransactionWriteRepository transactions,
@@ -44,7 +46,8 @@ public class TransactionMutationService {
         AuditTrailService auditTrail,
         AccessControlService accessControl,
         OutboxEventService outboxEventService,
-        BudgetApplicationService budgetService
+        BudgetApplicationService budgetService,
+        AccountingPeriodService accountingPeriods
     ) {
         this.transactions = transactions;
         this.accounting = accounting;
@@ -52,6 +55,7 @@ public class TransactionMutationService {
         this.accessControl = accessControl;
         this.outboxEventService = outboxEventService;
         this.budgetService = budgetService;
+        this.accountingPeriods = accountingPeriods;
     }
 
     @Transactional
@@ -73,6 +77,11 @@ public class TransactionMutationService {
         if (command.date() != null) updated.date = command.date().toString();
         if (command.note() != null) updated.note = command.note();
         validateRefundedTransactionChanges(current, updated);
+        accountingPeriods.requireWritable(
+            company.id,
+            LocalDate.parse(current.date),
+            LocalDate.parse(updated.date)
+        );
 
         Map<Long, Account> lockedAccounts = lockAccounts(current.accountId, updated.accountId);
         Account oldAccount = lockedAccounts.get(current.accountId);
@@ -144,6 +153,7 @@ public class TransactionMutationService {
         TransactionRecord transaction = scoped.transaction();
         Company company = scoped.company();
         requireExpectedVersion(transaction, expectedVersion);
+        accountingPeriods.requireWritable(company.id, LocalDate.parse(transaction.date));
         if (transaction.type != 3 && transactions.hasRefunds(transaction.id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction has refunds and cannot be deleted");
         }
@@ -155,6 +165,7 @@ public class TransactionMutationService {
                     HttpStatus.CONFLICT,
                     "Original transaction no longer exists"
                 ));
+            accountingPeriods.requireWritable(company.id, LocalDate.parse(original.date));
         }
         Account account = accounting.findAccountForUpdate(transaction.accountId)
             .orElseThrow(() -> new ResponseStatusException(

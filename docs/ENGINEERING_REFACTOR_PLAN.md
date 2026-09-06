@@ -88,6 +88,7 @@ demo 初始化器与生产 Spring 上下文的条件隔离见 [ADR 0004：从生
 票据关联流水的最小身份投影、模块依赖与兼容语义见 [ADR 0018：收窄票据关联流水的查询契约](adr/0018-narrow-receipt-transaction-link-query.md)。
 票据人工更新的客户端版本前置条件、409 冲突和工作流并发边界见 [ADR 0021：票据更新必须携带客户端版本](adr/0021-require-receipt-update-version.md)。
 经营流水更新/删除的客户端版本、账户与预算副作用原子边界见 [ADR 0022：流水更新与删除必须携带客户端版本](adr/0022-require-transaction-mutation-version.md)。
+公司级连续关账水位、反结账审计和流水数据库写入围栏见 [ADR 0023：增加公司级会计期间关账控制](adr/0023-add-accounting-period-close-control.md)。
 
 ## PostgreSQL 集成测试套件
 
